@@ -118,4 +118,69 @@ if st.button("Sprint 8 yatırım tezi taramasını başlat", type="primary"):
         f"Sprint 8.2 tamamlandı. {updated} araştırma adayı güncellendi, "
         f"{excluded} özel menkul kıymet elendi."
     )
-    st.dataframe(pd.DataFrame(output), use_container_width=True, hide_index=True)
+    result_df = pd.DataFrame(output)
+
+    st.dataframe(
+        result_df,
+        use_container_width=True,
+        hide_index=True,
+        height=min(720, 82 + len(result_df) * 96),
+        column_config={
+            "Sembol": st.column_config.TextColumn(
+                "Sembol",
+                width="small",
+            ),
+            "Şirket": st.column_config.TextColumn(
+                "Şirket",
+                width="medium",
+            ),
+            "Tez Tipi": st.column_config.TextColumn(
+                "Tez Tipi",
+                width="medium",
+            ),
+            "NABI Score": st.column_config.NumberColumn(
+                "NABI Score",
+                format="%.1f",
+                width="small",
+            ),
+            "Confidence": st.column_config.NumberColumn(
+                "Confidence",
+                format="%.1f",
+                width="small",
+            ),
+            "Conviction": st.column_config.NumberColumn(
+                "Conviction",
+                format="%.1f",
+                width="small",
+            ),
+            "Opportunity": st.column_config.NumberColumn(
+                "Opportunity",
+                format="%.1f",
+                width="small",
+            ),
+            "Karar": st.column_config.TextColumn(
+                "Karar",
+                width="medium",
+            ),
+            "Tez Özeti": st.column_config.TextColumn(
+                "Tez Özeti",
+                width="large",
+                help=(
+                    "Yatırım tezinin tam özeti. Hücreye tıklayarak "
+                    "metnin tamamını açabilirsiniz."
+                ),
+            ),
+            "Kaydedildi": st.column_config.TextColumn(
+                "Kaydedildi",
+                width="small",
+            ),
+        },
+    )
+
+    with st.expander("📑 Tez özetlerini tam metin göster"):
+        for row in output:
+            st.markdown(
+                f"### {row['Sembol']} — {row['Şirket']}"
+            )
+            st.write(row.get("Tez Özeti") or "Tez özeti yok.")
+            st.divider()
