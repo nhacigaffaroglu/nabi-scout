@@ -1,15 +1,14 @@
 {
-  "release": "NABI Scout Scanner v3 Intelligence",
+  "release": "NABI Score v4 Intelligence",
   "features": [
-    "SPAC and special security classification",
-    "3-year FCF CAGR",
-    "3-year share count change",
-    "payout ratio",
-    "capital allocation score",
-    "strict candidate save rules",
-    "NABI Score v5"
+    "explainable score reasons",
+    "investment profiles",
+    "data confidence",
+    "hard financial risk penalties",
+    "quality, growth, value and risk calibration",
+    "candidate detail explanation screen"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 5
+  "python_files": 4
 }

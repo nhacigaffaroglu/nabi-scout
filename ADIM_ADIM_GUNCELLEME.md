@@ -1,10 +1,10 @@
-# NABI Scout — Scout Scanner v3
+# NABI Scout — NABI Score v4 Intelligence
 
 ## 1. Supabase
 
 SQL Editor'da:
 
-database/migration_scanner_v3.sql
+database/migration_score_v4.sql
 
 dosyasını çalıştır.
 
@@ -12,39 +12,46 @@ dosyasını çalıştır.
 
 Şu dosyaları yükle/değiştir:
 
+- services/nabi_score_v4.py
+- services/scanner_v4_engine.py
+- pages/2_Scout_Tarama.py
+- pages/4_Aday_Detayi.py
+- database/migration_score_v4.sql
+
+Önceki sürümden şu dosyalar da repoda bulunmalıdır:
+
 - services/security_classifier.py
 - services/sec_financial_client.py
-- services/scanner_v3_scoring.py
-- services/scanner_v3_engine.py
-- pages/2_Scout_Tarama.py
-- database/migration_scanner_v3.sql
+- services/fmp_client.py
 
 Commit mesajı:
 
-Release NABI Scout Scanner v3 Intelligence
+Release NABI Score v4 Intelligence
 
 Deploy sonrası Streamlit uygulamasını reboot et.
 
 ## 3. İlk test
 
-Scout Scanner v3:
+Scanner v4:
 
-- Tarama evreni: Dinamik ABD Temiz Hisse Evreni v2
+- Tarama evreni: ABD Temiz Hisse Evreni v2
 - Başlangıç sırası: 1
 - Sembol sayısı: 5
-- Aday havuzuna yazma eşiği: 0
+- Aday eşiği: 0
 - Minimum veri tamlığı: 50
 - Portföy uyumu: 55
 
-Beklenen:
+Kontrol edilecekler:
 
-- Acquisition Corp / SPAC benzeri kayıtlar ELENDİ görünmeli.
-- AAL, AAOI gibi normal şirketlerde skorlar hesaplanmalı.
-- FCF CAGR, hisse adedi değişimi ve sermaye tahsisi skoru üretilmeli.
-- Veri tamlığı ve karar eşikleri sağlanmıyorsa aday havuzuna yazılmamalı.
+- Profil alanı dolmalı.
+- Güven seviyesi dolmalı.
+- En Güçlü Neden ve Ana Risk alanları görünmeli.
+- Borç, negatif FCF veya sulandırma varsa puan cezası oluşmalı.
+- Acquisition Corp türleri tarama öncesinde elenmeli.
+- Aday Detayı sayfasında güçlü yönler ve riskler gösterilmeli.
 
 ## Not
 
-Scanner v3 bir araştırma önceliklendirme motorudur.
-Ürettiği skorlar yatırım tavsiyesi değildir.
-Katılım uygunluğu ayrı ve doğrulanabilir bir modül olarak geliştirilecektir.
+NABI Score v4 araştırma önceliklendirme sistemidir.
+Tek başına alım veya satım kararı değildir.
+Katılım uygunluğu doğrulanmadan kayıt yatırım önerisi sayılmaz.

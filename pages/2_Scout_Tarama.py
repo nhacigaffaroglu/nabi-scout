@@ -9,18 +9,18 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
 from services.fmp_client import FMPClient
-from services.scanner_v3_engine import ScannerV3Engine
+from services.scanner_v4_engine import ScannerV4Engine
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
-configure_page("Scout Scanner v3 | NABI Scout", "🛰️")
+configure_page("Scout Scanner v4 | NABI Scout", "🧠")
 render_sidebar()
 
-st.title("🛰️ Scout Scanner v3")
+st.title("🧠 Scout Scanner v4")
 st.caption(
-    "SEC finansallarını, fiyat/değerleme verilerini ve güvenlik "
-    "sınıflandırmasını tek araştırma akışında birleştirir."
+    "Finansal kalite, büyüme, değerleme, risk ve açıklanabilir "
+    "NABI Score v4 üretir."
 )
 
 client = get_supabase_client()
@@ -77,13 +77,13 @@ threshold = st.slider(
     "Aday havuzuna yazma eşiği",
     0,
     100,
-    58,
+    60,
 )
 minimum_completeness = st.slider(
     "Minimum veri tamlığı",
     0,
     100,
-    60,
+    65,
 )
 portfolio_fit = st.slider(
     "Varsayılan portföy uyumu",
@@ -108,10 +108,10 @@ st.info(
     f"Taranan aralık: {start + 1}–{start + len(selected_rows)}"
 )
 
-if st.button("Scanner v3 taramasını başlat", type="primary"):
+if st.button("Scanner v4 taramasını başlat", type="primary"):
     fmp = FMPClient.from_streamlit_secrets()
     sec = SECFinancialClient(contact_email=sec_email)
-    engine = ScannerV3Engine(fmp, sec)
+    engine = ScannerV4Engine(fmp, sec)
 
     run_id = scan_repo.create_run(
         f"{universe_name} [{start + 1}-{start + len(selected_rows)}]",
@@ -149,7 +149,7 @@ if st.button("Scanner v3 taramasını başlat", type="primary"):
             and candidate.get("nabi_score", 0)
             >= threshold
             and candidate.get("decision")
-            not in {"ELE", "VERİ EKSİK", "UZAK DUR"}
+            in {"GÜÇLÜ ADAY", "ADAY", "İZLE"}
         )
 
         if should_write:
@@ -165,24 +165,29 @@ if st.button("Scanner v3 taramasını başlat", type="primary"):
 
         scan_repo.add_result(run_id, result)
 
+        positive = candidate.get("positive_reasons") or []
+        negative = candidate.get("negative_reasons") or []
+
         results.append({
             "Sembol": symbol,
             "Şirket": candidate.get("company_name"),
-            "Durum": result["status"],
+            "Profil": candidate.get("investment_profile"),
+            "Güven": candidate.get("score_confidence"),
             "Veri Tamlığı": candidate.get("data_completeness"),
             "Kalite": candidate.get("quality_score"),
             "Büyüme": candidate.get("growth_score"),
             "Değerleme": candidate.get("valuation_score"),
-            "Finansal Güç": candidate.get(
-                "financial_health_score"
-            ),
-            "Sermaye Tahsisi": candidate.get(
-                "capital_allocation_score"
-            ),
+            "Finansal Güç": candidate.get("financial_health_score"),
             "Risk": candidate.get("risk_score"),
+            "Ceza": candidate.get("score_penalty"),
             "NABI Score": candidate.get("nabi_score"),
             "Karar": candidate.get("decision"),
-            "Elendi": "Evet" if result["excluded"] else "Hayır",
+            "En Güçlü Neden": (
+                positive[0]["detail"] if positive else "—"
+            ),
+            "Ana Risk": (
+                negative[0]["detail"] if negative else "—"
+            ),
             "Kaydedildi": "Evet" if should_write else "Hayır",
         })
 
@@ -198,7 +203,7 @@ if st.button("Scanner v3 taramasını başlat", type="primary"):
     )
 
     st.success(
-        f"Scanner v3 tamamlandı. "
+        f"Scanner v4 tamamlandı. "
         f"{updated} aday kaydı güncellendi, "
         f"{excluded_count} özel menkul kıymet elendi."
     )
