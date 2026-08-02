@@ -1,9 +1,13 @@
-# NABI Scout v0.2 Candidate Manager
+# NABI Scout v0.3 — Candidate Intelligence
 
-- Aday ekleme
-- Arama ve filtreleme
-- Düzenleme
-- Silme
-- Aday detay sayfası
-- Dashboard sayaçları
-- Repository pattern
+## Yeni özellikler
+
+- NABI Score v2
+- Finansal sağlık skoru
+- Güncel fiyat / adil değer karşılaştırması
+- İskonto oranı
+- F/K, PEG, ROIC, marj ve borçluluk alanları
+- Yatırım tezi
+- Büyüme katalizörleri
+- Gelişmiş aday detay ekranı
+- Katılım filtresi

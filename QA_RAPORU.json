@@ -1,17 +1,15 @@
 {
-  "release": "NABI Scout v0.2 Candidate Manager",
+  "release": "NABI Scout v0.3 Candidate Intelligence",
   "python_syntax_check": "passed",
   "python_files": 13,
-  "migration": "database/migration_v0_2.sql",
+  "database_migration": "database/migration_v0_3.sql",
   "features": [
-    "create",
-    "read",
-    "update",
-    "delete",
-    "search",
-    "filters",
-    "candidate detail",
-    "dashboard"
+    "NABI Score v2",
+    "financial health score",
+    "fair value discount",
+    "financial metrics",
+    "investment thesis",
+    "candidate detail upgrade"
   ],
   "secrets_included": false
 }
