@@ -1,30 +1,17 @@
-# NABI Scout v0.3 Güncelleme
+# NABI Scout v0.4 Modüler Güncelleme
 
-## 1. Supabase migration
+1. Supabase SQL Editor'da `database/migration_v0_4.sql` çalıştır.
+2. GitHub'a paket içindeki yeni/değişen dosyaları yükle.
+3. `requirements.txt` dosyasını değiştir.
+4. Commit: `Release NABI Scout v0.4 Scout Collector`
+5. Streamlit deploy tamamlanınca yeni `Scout Tarama` sayfasını aç.
 
-Supabase → SQL Editor → New query.
+İlk test:
+- Tarama evreni: Katılım ETF 3
+- Aday eşiği: 0
+- Portföy uyumu: 55
+- Taramayı başlat
 
-`database/migration_v0_3.sql` dosyasının tamamını çalıştırın.
-
-Başarılı sonuç:
-`Success. No rows returned`
-
-## 2. GitHub
-
-GitHub `nabi-scout` repository'sinde `Add file → Upload files`.
-
-Paket içindeki tüm dosya ve klasörleri yükleyin.
-
-Commit mesajı:
-`Release NABI Scout v0.3 Candidate Intelligence`
-
-## 3. Streamlit
-
-Streamlit otomatik deploy eder. Yaklaşık 1–2 dakika sonra uygulamayı yenileyin.
-
-## 4. Test
-
-Aday Havuzu'ndan bir aday ekleyin.
-Güncel fiyat ve adil değer girin.
-İskonto ve NABI Score'un oluştuğunu kontrol edin.
-Aday Detayı sayfasında finansal profil ve puan grafiğini görün.
+Ücretsiz planda bazı FMP endpointleri kapalıysa sonuçta erişim sorunu
+görünebilir. Tarama tamamlanıyor ve en az bazı alanlar geliyorsa collector
+altyapısı çalışıyor demektir.

@@ -1,15 +1,15 @@
 {
-  "release": "NABI Scout v0.3 Candidate Intelligence",
-  "python_syntax_check": "passed",
-  "python_files": 13,
-  "database_migration": "database/migration_v0_3.sql",
-  "features": [
-    "NABI Score v2",
-    "financial health score",
-    "fair value discount",
-    "financial metrics",
-    "investment thesis",
-    "candidate detail upgrade"
+  "release": "NABI Scout v0.4 Scout Collector Patch",
+  "scope": "modular patch",
+  "fmp_endpoints": [
+    "profile",
+    "quote",
+    "income-statement",
+    "balance-sheet-statement",
+    "cash-flow-statement",
+    "ratios-ttm",
+    "key-metrics-ttm",
+    "income-statement-growth"
   ],
   "secrets_included": false
 }
