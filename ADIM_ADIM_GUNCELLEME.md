@@ -1,17 +1,38 @@
-# NABI Scout v0.4 Modüler Güncelleme
+# NABI Scout v0.5 Universe Engine
 
-1. Supabase SQL Editor'da `database/migration_v0_4.sql` çalıştır.
-2. GitHub'a paket içindeki yeni/değişen dosyaları yükle.
-3. `requirements.txt` dosyasını değiştir.
-4. Commit: `Release NABI Scout v0.4 Scout Collector`
-5. Streamlit deploy tamamlanınca yeni `Scout Tarama` sayfasını aç.
+## 1. Supabase
 
-İlk test:
-- Tarama evreni: Katılım ETF 3
-- Aday eşiği: 0
-- Portföy uyumu: 55
-- Taramayı başlat
+SQL Editor'da `database/migration_v0_5.sql` çalıştır.
 
-Ücretsiz planda bazı FMP endpointleri kapalıysa sonuçta erişim sorunu
-görünebilir. Tarama tamamlanıyor ve en az bazı alanlar geliyorsa collector
-altyapısı çalışıyor demektir.
+## 2. GitHub
+
+Paketteki dosyaları yükle:
+
+- services/universe_engine.py
+- repositories/universe_repository.py
+- pages/2_Evren_Motoru.py
+- pages/2_Scout_Tarama.py
+- database/migration_v0_5.sql
+
+Commit:
+`Release NABI Scout v0.5 Universe Engine`
+
+## 3. İlk test
+
+Evren Motoru:
+- Ad: ABD Kaliteli Büyük Şirketler
+- NASDAQ: açık
+- NYSE: açık
+- Minimum piyasa değeri: 2 milyar USD
+- Minimum fiyat: 5 USD
+- Minimum hacim: 500.000
+- Maksimum sembol: 50
+
+Evreni keşfet.
+
+Sonra Scout Tarama:
+- Dinamik: ABD Kaliteli Büyük Şirketler
+- Sembol sayısı: 5
+- Eşik: 0
+
+Ücretsiz API limitini korumak için ilk testte yalnızca 5 sembol tara.

@@ -1,15 +1,9 @@
 {
-  "release": "NABI Scout v0.4 Scout Collector Patch",
-  "scope": "modular patch",
-  "fmp_endpoints": [
-    "profile",
-    "quote",
-    "income-statement",
-    "balance-sheet-statement",
-    "cash-flow-statement",
-    "ratios-ttm",
-    "key-metrics-ttm",
-    "income-statement-growth"
-  ],
-  "secrets_included": false
+  "release": "NABI Scout v0.5 Universe Engine",
+  "python_syntax_check": "passed",
+  "primary_endpoint": "company-screener",
+  "fallback_endpoint": "stock-list",
+  "batch_scan_limit_ui": 50,
+  "secrets_included": false,
+  "python_files": 4
 }
