@@ -1,17 +1,7 @@
 {
-  "release": "NABI Scout v7 Decision Explain Confidence Engine",
-  "features": [
-    "research confidence score",
-    "conviction score",
-    "opportunity score",
-    "investment grade",
-    "explainable score factors",
-    "decision card",
-    "why now",
-    "investor suitability",
-    "academy links"
-  ],
+  "release": "NABI Scout v8 Investment Thesis Engine",
+  "scope_frozen": true,
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 7
+  "python_files": 4
 }
