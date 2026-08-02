@@ -1,10 +1,13 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 import time
+
 import requests
 import streamlit as st
 
+
 class FMPError(RuntimeError):
     pass
+
 
 class FMPClient:
     BASE_URL = "https://financialmodelingprep.com/stable"
@@ -13,6 +16,7 @@ class FMPClient:
         self.api_key = api_key.strip()
         self.timeout = timeout
         self.session = requests.Session()
+
         if not self.api_key:
             raise FMPError("FMP API key boş.")
 
@@ -21,31 +25,65 @@ class FMPClient:
         try:
             key = str(st.secrets["fmp"]["api_key"]).strip()
         except KeyError as exc:
-            raise FMPError("Streamlit Secrets içinde [fmp] api_key bulunamadı.") from exc
+            raise FMPError(
+                "Streamlit Secrets içinde [fmp] api_key bulunamadı."
+            ) from exc
         return cls(key)
 
-    def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None):
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ):
         query = dict(params or {})
         query["apikey"] = self.api_key
-        response = self.session.get(
-            f"{self.BASE_URL}/{endpoint}",
-            params=query,
-            timeout=self.timeout,
-        )
+
+        try:
+            response = self.session.get(
+                f"{self.BASE_URL}/{endpoint}",
+                params=query,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise FMPError(
+                f"FMP bağlantı hatası: {endpoint}"
+            ) from exc
+
         if response.status_code == 401:
             raise FMPError("FMP API key geçersiz.")
+        if response.status_code == 402:
+            raise FMPError(
+                f"FMP endpoint ücretsiz planda kapalı: {endpoint}"
+            )
         if response.status_code == 403:
-            raise FMPError(f"Endpoint planınızda kapalı: {endpoint}")
+            raise FMPError(
+                f"FMP endpoint erişimi reddedildi: {endpoint}"
+            )
         if response.status_code == 429:
             raise FMPError("FMP çağrı limiti aşıldı.")
-        response.raise_for_status()
-        data = response.json()
+        if response.status_code >= 400:
+            raise FMPError(
+                f"FMP HTTP {response.status_code}: {endpoint}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise FMPError(
+                f"FMP geçersiz JSON döndürdü: {endpoint}"
+            ) from exc
+
         if isinstance(data, dict):
             if data.get("Error Message"):
-                raise FMPError(str(data["Error Message"]))
+                raise FMPError(
+                    f"FMP hata döndürdü: {endpoint}"
+                )
             if data.get("message") and len(data) <= 3:
-                raise FMPError(str(data["message"]))
+                raise FMPError(
+                    f"FMP erişim mesajı döndürdü: {endpoint}"
+                )
             data = [data]
+
         return data if isinstance(data, list) else []
 
     def profile(self, symbol: str):
@@ -57,24 +95,39 @@ class FMPClient:
         return rows[0] if rows else {}
 
     def income_statement(self, symbol: str):
-        return self._get("income-statement", {"symbol": symbol, "limit": 5})
+        return self._get(
+            "income-statement",
+            {"symbol": symbol, "limit": 5},
+        )
 
     def balance_sheet(self, symbol: str):
-        return self._get("balance-sheet-statement", {"symbol": symbol, "limit": 5})
+        return self._get(
+            "balance-sheet-statement",
+            {"symbol": symbol, "limit": 5},
+        )
 
     def cash_flow(self, symbol: str):
-        return self._get("cash-flow-statement", {"symbol": symbol, "limit": 5})
+        return self._get(
+            "cash-flow-statement",
+            {"symbol": symbol, "limit": 5},
+        )
 
     def ratios_ttm(self, symbol: str):
         rows = self._get("ratios-ttm", {"symbol": symbol})
         return rows[0] if rows else {}
 
     def key_metrics_ttm(self, symbol: str):
-        rows = self._get("key-metrics-ttm", {"symbol": symbol})
+        rows = self._get(
+            "key-metrics-ttm",
+            {"symbol": symbol},
+        )
         return rows[0] if rows else {}
 
     def income_growth(self, symbol: str):
-        rows = self._get("income-statement-growth", {"symbol": symbol, "limit": 1})
+        rows = self._get(
+            "income-statement-growth",
+            {"symbol": symbol, "limit": 1},
+        )
         return rows[0] if rows else {}
 
     def pause(self, seconds: float = 0.15):

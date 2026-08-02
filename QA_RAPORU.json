@@ -1,9 +1,12 @@
 {
-  "release": "NABI Scout v0.5 Universe Engine",
+  "release": "NABI Scout v0.5.1 Free Universe Hotfix",
+  "universe_sources": [
+    "SEC company_tickers_exchange.json",
+    "Nasdaq Trader nasdaqlisted.txt",
+    "Nasdaq Trader otherlisted.txt"
+  ],
+  "fmp_api_key_masking": true,
   "python_syntax_check": "passed",
-  "primary_endpoint": "company-screener",
-  "fallback_endpoint": "stock-list",
-  "batch_scan_limit_ui": 50,
   "secrets_included": false,
   "python_files": 4
 }

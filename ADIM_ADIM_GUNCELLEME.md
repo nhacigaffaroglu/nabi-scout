@@ -1,38 +1,39 @@
-# NABI Scout v0.5 Universe Engine
+# NABI Scout v0.5.1 Ücretsiz Universe Hotfix
 
 ## 1. Supabase
 
-SQL Editor'da `database/migration_v0_5.sql` çalıştır.
+SQL Editor'da `database/migration_v0_5_1.sql` çalıştır.
 
 ## 2. GitHub
 
-Paketteki dosyaları yükle:
+Şu dosyaları yükle/değiştir:
 
+- services/free_universe_client.py
 - services/universe_engine.py
-- repositories/universe_repository.py
+- services/fmp_client.py
 - pages/2_Evren_Motoru.py
-- pages/2_Scout_Tarama.py
-- database/migration_v0_5.sql
+- database/migration_v0_5_1.sql
 
 Commit:
-`Release NABI Scout v0.5 Universe Engine`
+`Hotfix v0.5.1 Free Universe and API masking`
 
 ## 3. İlk test
 
 Evren Motoru:
-- Ad: ABD Kaliteli Büyük Şirketler
+- Evren adı: ABD Hisse Evreni
 - NASDAQ: açık
 - NYSE: açık
-- Minimum piyasa değeri: 2 milyar USD
-- Minimum fiyat: 5 USD
-- Minimum hacim: 500.000
-- Maksimum sembol: 50
+- Hisseler: açık
+- ETF: kapalı
+- Maksimum sembol: 100
+- SEC e-postası: kendi e-posta adresiniz veya uygulama için geçerli iletişim adresi
 
 Evreni keşfet.
 
-Sonra Scout Tarama:
-- Dinamik: ABD Kaliteli Büyük Şirketler
-- Sembol sayısı: 5
-- Eşik: 0
+Beklenen:
+- Kaynak: Nasdaq Trader + SEC
+- Sembol sayısı: 100
+- FMP 402 hatası görünmemeli
+- FMP API key hiçbir hata mesajında görünmemeli
 
-Ücretsiz API limitini korumak için ilk testte yalnızca 5 sembol tara.
+Sonra Scout Tarama ekranından dinamik evreni seçip yalnızca 5 sembol tara.

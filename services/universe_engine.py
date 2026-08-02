@@ -3,175 +3,134 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from services.fmp_client import FMPError
+from services.free_universe_client import (
+    FreeUniverseClient,
+    UniverseSourceError,
+)
 
 
 class UniverseEngine:
-    def __init__(self, fmp_client) -> None:
-        self.client = fmp_client
-
-    def _raw_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None):
-        return self.client._get(endpoint, params or {})
-
-    def discover_with_screener(
-        self,
-        *,
-        exchanges: List[str],
-        country: str,
-        min_market_cap: float,
-        min_price: float,
-        min_volume: float,
-        limit: int,
-    ) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
-
-        for exchange in exchanges:
-            params = {
-                "exchange": exchange,
-                "country": country,
-                "marketCapMoreThan": int(min_market_cap),
-                "priceMoreThan": float(min_price),
-                "volumeMoreThan": int(min_volume),
-                "isActivelyTrading": "true",
-                "isEtf": "false",
-                "limit": int(limit),
-            }
-            batch = self._raw_get("company-screener", params)
-            if batch:
-                rows.extend(batch)
-
-        return self._normalize_and_dedupe(rows)
-
-    def discover_with_stock_list(
-        self,
-        *,
-        exchanges: List[str],
-        min_price: float,
-        limit: int,
-    ) -> List[Dict[str, Any]]:
-        rows = self._raw_get("stock-list")
-        allowed = {item.upper() for item in exchanges}
-        filtered: List[Dict[str, Any]] = []
-
-        for row in rows:
-            exchange = str(
-                row.get("exchangeShortName")
-                or row.get("exchange")
-                or ""
-            ).upper()
-            symbol = str(row.get("symbol") or "").strip().upper()
-            price = self._number(row.get("price"))
-
-            if not symbol:
-                continue
-            if allowed and exchange not in allowed:
-                continue
-            if price is not None and price < min_price:
-                continue
-
-            filtered.append(row)
-            if len(filtered) >= limit:
-                break
-
-        return self._normalize_and_dedupe(filtered)
+    def __init__(self, client: FreeUniverseClient) -> None:
+        self.client = client
 
     def discover(
         self,
         *,
         exchanges: List[str],
-        country: str = "US",
-        min_market_cap: float = 2_000_000_000,
-        min_price: float = 5,
-        min_volume: float = 500_000,
-        limit: int = 100,
+        include_etfs: bool,
+        include_common_stocks: bool,
+        limit: int,
+        name_contains: str = "",
     ) -> Dict[str, Any]:
         errors: List[str] = []
-        source = "company-screener"
 
         try:
-            rows = self.discover_with_screener(
-                exchanges=exchanges,
-                country=country,
-                min_market_cap=min_market_cap,
-                min_price=min_price,
-                min_volume=min_volume,
-                limit=limit,
-            )
-        except Exception as exc:
-            errors.append(f"company-screener: {exc}")
-            rows = []
+            nasdaq_rows = self.client.get_nasdaq_listed()
+        except UniverseSourceError as exc:
+            nasdaq_rows = []
+            errors.append(f"Nasdaq listed: {exc}")
 
-        if not rows:
-            source = "stock-list"
-            try:
-                rows = self.discover_with_stock_list(
-                    exchanges=exchanges,
-                    min_price=min_price,
-                    limit=limit,
-                )
-            except Exception as exc:
-                errors.append(f"stock-list: {exc}")
-                rows = []
+        try:
+            other_rows = self.client.get_other_listed()
+        except UniverseSourceError as exc:
+            other_rows = []
+            errors.append(f"Other listed: {exc}")
 
-        now = datetime.now(timezone.utc).isoformat()
-        for row in rows:
-            row["universe_source"] = source
-            row["discovered_at"] = now
+        try:
+            sec_rows = self.client.get_sec_companies()
+        except UniverseSourceError as exc:
+            sec_rows = []
+            errors.append(f"SEC: {exc}")
 
-        return {
-            "source": source,
-            "rows": rows,
-            "errors": errors,
+        sec_map = {
+            row["symbol"]: row
+            for row in sec_rows
         }
 
-    def _normalize_and_dedupe(
-        self,
-        rows: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        unique: Dict[str, Dict[str, Any]] = {}
+        allowed = {
+            self._normalize_exchange(value)
+            for value in exchanges
+        }
 
-        for row in rows:
-            symbol = str(row.get("symbol") or "").strip().upper()
-            if not symbol:
+        combined = nasdaq_rows + other_rows
+        unique: Dict[str, Dict[str, Any]] = {}
+        search_text = name_contains.strip().lower()
+
+        for row in combined:
+            symbol = row["symbol"]
+            exchange = self._normalize_exchange(
+                row.get("exchange")
+            )
+            is_etf = bool(row.get("is_etf"))
+
+            if allowed and exchange not in allowed:
+                continue
+            if is_etf and not include_etfs:
+                continue
+            if not is_etf and not include_common_stocks:
                 continue
 
-            exchange = (
-                row.get("exchangeShortName")
-                or row.get("exchange")
+            sec = sec_map.get(symbol, {})
+            company_name = (
+                sec.get("company_name")
+                or row.get("company_name")
+                or symbol
             )
+
+            if search_text:
+                haystack = f"{symbol} {company_name}".lower()
+                if search_text not in haystack:
+                    continue
 
             unique[symbol] = {
                 "symbol": symbol,
-                "company_name": (
-                    row.get("companyName")
-                    or row.get("name")
-                    or symbol
-                ),
+                "company_name": company_name,
                 "exchange": exchange,
-                "country": row.get("country"),
-                "sector": row.get("sector"),
-                "industry": row.get("industry"),
-                "market_cap": self._number(
-                    row.get("marketCap")
-                    or row.get("marketCapitalization")
+                "country": "US",
+                "sector": None,
+                "industry": None,
+                "market_cap": None,
+                "price": None,
+                "volume": None,
+                "beta": None,
+                "is_etf": is_etf,
+                "is_actively_trading": True,
+                "cik": sec.get("cik"),
+                "universe_source": (
+                    "Nasdaq Trader + SEC"
+                    if sec else "Nasdaq Trader"
                 ),
-                "price": self._number(row.get("price")),
-                "volume": self._number(
-                    row.get("volume")
-                    or row.get("avgVolume")
-                ),
-                "beta": self._number(row.get("beta")),
-                "is_etf": bool(row.get("isEtf", False)),
-                "is_actively_trading": row.get(
-                    "isActivelyTrading", True
+                "discovered_at": (
+                    datetime.now(timezone.utc).isoformat()
                 ),
             }
 
-        return list(unique.values())
+            if len(unique) >= limit:
+                break
+
+        return {
+            "source": "Nasdaq Trader + SEC",
+            "rows": list(unique.values()),
+            "errors": errors,
+        }
 
     @staticmethod
-    def _number(value):
-        try:
-            return None if value in (None, "") else float(value)
-        except (TypeError, ValueError):
-            return None
+    def _normalize_exchange(value: Optional[str]) -> str:
+        text = str(value or "").strip().upper()
+
+        mapping = {
+            "NASDAQ": "NASDAQ",
+            "NASDAQ GLOBAL SELECT MARKET": "NASDAQ",
+            "NASDAQ GLOBAL MARKET": "NASDAQ",
+            "NASDAQ CAPITAL MARKET": "NASDAQ",
+            "NYSE": "NYSE",
+            "NEW YORK STOCK EXCHANGE": "NYSE",
+            "NYSE AMERICAN": "AMEX",
+            "NYSE MKT": "AMEX",
+            "AMEX": "AMEX",
+            "NYSE ARCA": "ARCA",
+            "ARCA": "ARCA",
+            "CBOE BZX": "BZX",
+            "IEX": "IEX",
+        }
+        return mapping.get(text, text)
