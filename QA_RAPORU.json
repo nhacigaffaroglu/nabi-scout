@@ -1,0 +1,13 @@
+{
+  "project": "NABI Scout Web v0.1",
+  "stack": [
+    "Streamlit",
+    "Supabase",
+    "GitHub"
+  ],
+  "pages": 6,
+  "database_tables": 4,
+  "contains_secrets": false,
+  "deployment_target": "Streamlit Community Cloud",
+  "note": "Temporary anon RLS policies are included for first deployment testing."
+}
