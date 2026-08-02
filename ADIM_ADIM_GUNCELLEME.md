@@ -1,52 +1,50 @@
-# NABI Scout v0.6 SEC Financial Engine
+# NABI Scout — Scout Scanner v2
 
 ## 1. Supabase
 
-SQL Editor'da `database/migration_v0_6.sql` çalıştır.
+SQL Editor'da `database/migration_scanner_v2.sql` çalıştır.
 
 ## 2. GitHub
 
 Şu dosyaları yükle/değiştir:
 
+- services/scanner_v2_scoring.py
 - services/sec_financial_client.py
-- services/free_universe_client.py
-- services/universe_engine.py
-- services/collector_engine.py
+- services/scanner_v2_engine.py
 - pages/2_Scout_Tarama.py
-- database/migration_v0_6.sql
+- database/migration_scanner_v2.sql
 
 Commit:
-`Release NABI Scout v0.6 SEC Financial Engine`
+`Release NABI Scout Scout Scanner v2`
 
-## 3. Evreni yeniden oluştur
+Deploy sonrasında uygulamayı reboot et.
 
-Eski evren warrant/unit sembolleri içerdiği için:
-- Evren adı: ABD Temiz Hisse Evreni
-- NASDAQ ve NYSE açık
-- Hisseler açık
-- ETF kapalı
-- Maksimum sembol 100
-- Evreni keşfet
+## 3. İlk test
 
-Yeni evrende warrant, unit, right ve preferred share isimleri
-ayıklanacaktır.
+Önce büyük ve bilinen şirketleri içeren sıraya ulaşmak için
+Başlangıç sırası alanını kullanabilirsin. Alternatif olarak Evren
+Motoru'nda isim/sembol filtresiyle örneğin Microsoft veya AAPL için
+küçük bir test evreni oluşturabilirsin.
 
-## 4. İlk finansal test
-
-Scout Tarama:
-- Dinamik: ABD Temiz Hisse Evreni
+Önerilen ilk test:
+- Tarama evreni: Dinamik ABD Temiz Hisse Evreni
+- Başlangıç sırası: 1
 - Sembol sayısı: 5
-- Eşik: 0
+- Aday eşiği: 0
+- Veri eksikleri kaydet: kapalı
 - Portföy uyumu: 55
-- SEC e-postası: geçerli iletişim adresi
 
 Beklenen:
-- CIK sütunu dolu
-- SEC Company Facts erişimi çalışıyor
-- Veri tamlığı şirketlere göre yaklaşık %50–90 arasında
-- Gelir büyümesi, marjlar, FCF ve ROIC alanlarından bir kısmı dolu
-- FMP ücretli endpoint hataları artık ana finansal veriyi engellemiyor
+- CIK dolu olmalı.
+- Veri tamlığı şirketlere göre yaklaşık %50–95 aralığında olmalı.
+- Kalite, Büyüme, Değerleme, Finansal Güç ve Risk skorları birbirinden farklılaşmalı.
+- Veri tamlığı %50'nin altındaki kayıtlar aday havuzuna yazılmamalı.
+- Tarama geçmişi scan_runs ve scan_results tablolarına yazılmalı.
 
-Not:
-XBRL etiketleri şirketler arasında farklılaşabilir. Eksik kalan etiketler
-sonraki sürümde eşleme kütüphanesi genişletilerek artırılacaktır.
+## Bilinen sınırlar
+
+- Bankalar ve sigorta şirketleri klasik sanayi şirketlerinden farklı finansal
+  etiketler kullanır; ilk sürümde skorları daha düşük veri tamlığı gösterebilir.
+- SEC Company Facts yalnızca SEC raporlaması bulunan şirketlerde çalışır.
+- Katılım uygunluğu bu sürümde otomatik ve kesin olarak belirlenmez.
+- NABI Score yatırım tavsiyesi değil, araştırma önceliklendirme skorudur.

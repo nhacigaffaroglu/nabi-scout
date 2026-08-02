@@ -31,10 +31,11 @@ class SECFinancialClient:
 
     def company_facts(self, cik: int | str) -> Dict[str, Any]:
         cik_text = str(cik).strip().zfill(10)
-        url = f"{self.BASE_URL}/CIK{cik_text}.json"
-
         try:
-            response = self.session.get(url, timeout=self.timeout)
+            response = self.session.get(
+                f"{self.BASE_URL}/CIK{cik_text}.json",
+                timeout=self.timeout,
+            )
         except requests.RequestException as exc:
             raise SECFinancialError(
                 "SEC Company Facts bağlantı hatası."
@@ -60,12 +61,9 @@ class SECFinancialClient:
         self,
         payload: Dict[str, Any],
     ) -> Dict[str, Optional[float]]:
-        facts = (
-            payload.get("facts", {})
-            .get("us-gaap", {})
-        )
+        facts = payload.get("facts", {}).get("us-gaap", {})
 
-        revenue_series = self._series(
+        revenue = self._annual_series(
             facts,
             [
                 "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -74,22 +72,22 @@ class SECFinancialClient:
             ],
             ["USD"],
         )
-        net_income_series = self._series(
+        net_income = self._annual_series(
             facts,
             ["NetIncomeLoss", "ProfitLoss"],
             ["USD"],
         )
-        operating_income_series = self._series(
+        operating_income = self._annual_series(
             facts,
             ["OperatingIncomeLoss"],
             ["USD"],
         )
-        gross_profit_series = self._series(
+        gross_profit = self._annual_series(
             facts,
             ["GrossProfit"],
             ["USD"],
         )
-        operating_cash_series = self._series(
+        operating_cash = self._annual_series(
             facts,
             [
                 "NetCashProvidedByUsedInOperatingActivities",
@@ -97,7 +95,7 @@ class SECFinancialClient:
             ],
             ["USD"],
         )
-        capex_series = self._series(
+        capex = self._annual_series(
             facts,
             [
                 "PaymentsToAcquirePropertyPlantAndEquipment",
@@ -105,62 +103,7 @@ class SECFinancialClient:
             ],
             ["USD"],
         )
-        pretax_series = self._series(
-            facts,
-            [
-                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-            ],
-            ["USD"],
-        )
-        tax_series = self._series(
-            facts,
-            ["IncomeTaxExpenseBenefit"],
-            ["USD"],
-        )
-        equity_series = self._series(
-            facts,
-            [
-                "StockholdersEquity",
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-            ],
-            ["USD"],
-            instant=True,
-        )
-        cash_series = self._series(
-            facts,
-            [
-                "CashAndCashEquivalentsAtCarryingValue",
-                "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-            ],
-            ["USD"],
-            instant=True,
-        )
-        current_assets_series = self._series(
-            facts,
-            ["AssetsCurrent"],
-            ["USD"],
-            instant=True,
-        )
-        current_liabilities_series = self._series(
-            facts,
-            ["LiabilitiesCurrent"],
-            ["USD"],
-            instant=True,
-        )
-        debt_series = self._series(
-            facts,
-            [
-                "LongTermDebtAndFinanceLeaseObligationsCurrent",
-                "LongTermDebtCurrent",
-                "LongTermDebtNoncurrent",
-                "LongTermDebt",
-            ],
-            ["USD"],
-            instant=True,
-            combine_same_end=True,
-        )
-        eps_series = self._series(
+        eps = self._annual_series(
             facts,
             [
                 "EarningsPerShareDiluted",
@@ -168,256 +111,378 @@ class SECFinancialClient:
             ],
             ["USD/shares", "USD / shares"],
         )
+        interest_expense = self._annual_series(
+            facts,
+            [
+                "InterestExpenseNonOperating",
+                "InterestAndDebtExpense",
+                "InterestExpense",
+            ],
+            ["USD"],
+        )
+        pretax_income = self._annual_series(
+            facts,
+            [
+                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+            ],
+            ["USD"],
+        )
+        tax_expense = self._annual_series(
+            facts,
+            ["IncomeTaxExpenseBenefit"],
+            ["USD"],
+        )
 
-        revenue_latest, revenue_previous = self._latest_two(
-            revenue_series
+        assets = self._instant_series(
+            facts,
+            ["Assets"],
+            ["USD"],
         )
-        net_income_latest, _ = self._latest_two(
-            net_income_series
+        equity = self._instant_series(
+            facts,
+            [
+                "StockholdersEquity",
+                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+            ],
+            ["USD"],
         )
-        operating_income_latest, _ = self._latest_two(
-            operating_income_series
+        cash = self._instant_series(
+            facts,
+            [
+                "CashAndCashEquivalentsAtCarryingValue",
+                "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+            ],
+            ["USD"],
         )
-        gross_profit_latest, _ = self._latest_two(
-            gross_profit_series
+        current_assets = self._instant_series(
+            facts,
+            ["AssetsCurrent"],
+            ["USD"],
         )
-        operating_cash_latest, _ = self._latest_two(
-            operating_cash_series
+        current_liabilities = self._instant_series(
+            facts,
+            ["LiabilitiesCurrent"],
+            ["USD"],
         )
-        capex_latest, _ = self._latest_two(capex_series)
-        pretax_latest, _ = self._latest_two(pretax_series)
-        tax_latest, _ = self._latest_two(tax_series)
-        eps_latest, eps_previous = self._latest_two(eps_series)
+        debt = self._debt_series(facts)
 
-        equity_latest, _ = self._latest_two(equity_series)
-        cash_latest, _ = self._latest_two(cash_series)
-        current_assets_latest, _ = self._latest_two(
-            current_assets_series
-        )
-        current_liabilities_latest, _ = self._latest_two(
-            current_liabilities_series
-        )
-        debt_latest, _ = self._latest_two(debt_series)
+        revenue_latest = self._value(revenue, 0)
+        net_income_latest = self._value(net_income, 0)
+        operating_income_latest = self._value(operating_income, 0)
+        gross_profit_latest = self._value(gross_profit, 0)
+        operating_cash_latest = self._value(operating_cash, 0)
+        capex_latest = self._value(capex, 0)
+        eps_latest = self._value(eps, 0)
+        interest_latest = self._value(interest_expense, 0)
+        pretax_latest = self._value(pretax_income, 0)
+        tax_latest = self._value(tax_expense, 0)
 
-        free_cash_flow = None
-        if operating_cash_latest is not None:
-            free_cash_flow = (
-                operating_cash_latest
-                - abs(capex_latest or 0)
+        assets_latest = self._value(assets, 0)
+        equity_latest = self._value(equity, 0)
+        cash_latest = self._value(cash, 0)
+        current_assets_latest = self._value(current_assets, 0)
+        current_liabilities_latest = self._value(
+            current_liabilities, 0
+        )
+        debt_latest = self._value(debt, 0)
+
+        free_cash_flow = (
+            operating_cash_latest - abs(capex_latest or 0)
+            if operating_cash_latest is not None
+            else None
+        )
+
+        current_ratio = (
+            current_assets_latest / current_liabilities_latest
+            if (
+                current_assets_latest is not None
+                and current_liabilities_latest
             )
-
-        revenue_growth = self._growth(
-            revenue_latest,
-            revenue_previous,
+            else None
         )
-        eps_growth = self._growth(
-            eps_latest,
-            eps_previous,
+        debt_to_equity = (
+            debt_latest / equity_latest
+            if debt_latest is not None and equity_latest
+            else None
         )
-
-        gross_margin = self._margin(
-            gross_profit_latest,
-            revenue_latest,
+        net_debt = (
+            debt_latest - (cash_latest or 0)
+            if debt_latest is not None
+            else None
         )
-        operating_margin = self._margin(
-            operating_income_latest,
-            revenue_latest,
+        net_debt_to_fcf = (
+            net_debt / free_cash_flow
+            if net_debt is not None and free_cash_flow
+            and free_cash_flow > 0
+            else None
         )
-        net_margin = self._margin(
-            net_income_latest,
-            revenue_latest,
+        interest_coverage = (
+            operating_income_latest / abs(interest_latest)
+            if operating_income_latest is not None
+            and interest_latest
+            else None
         )
-        fcf_margin = self._margin(
-            free_cash_flow,
-            revenue_latest,
-        )
-
-        current_ratio = None
-        if (
-            current_assets_latest is not None
-            and current_liabilities_latest
-        ):
-            current_ratio = (
-                current_assets_latest
-                / current_liabilities_latest
-            )
 
         tax_rate = 0.21
         if pretax_latest and tax_latest is not None:
-            calculated = tax_latest / pretax_latest
-            if 0 <= calculated <= 0.5:
-                tax_rate = calculated
+            candidate_tax_rate = tax_latest / pretax_latest
+            if 0 <= candidate_tax_rate <= 0.5:
+                tax_rate = candidate_tax_rate
 
-        nopat = None
-        if operating_income_latest is not None:
-            nopat = operating_income_latest * (1 - tax_rate)
-
-        invested_capital = None
-        if equity_latest is not None:
-            invested_capital = (
-                equity_latest
-                + (debt_latest or 0)
-                - (cash_latest or 0)
-            )
-
-        roic = None
-        if nopat is not None and invested_capital:
-            roic = (nopat / invested_capital) * 100
-
-        debt_to_equity = None
-        if debt_latest is not None and equity_latest:
-            debt_to_equity = debt_latest / equity_latest
-
-        net_debt = None
-        if debt_latest is not None:
-            net_debt = debt_latest - (cash_latest or 0)
+        invested_capital = (
+            equity_latest + (debt_latest or 0) - (cash_latest or 0)
+            if equity_latest is not None
+            else None
+        )
+        nopat = (
+            operating_income_latest * (1 - tax_rate)
+            if operating_income_latest is not None
+            else None
+        )
+        roic = (
+            nopat / invested_capital * 100
+            if nopat is not None and invested_capital
+            else None
+        )
+        roe = (
+            net_income_latest / equity_latest * 100
+            if net_income_latest is not None and equity_latest
+            else None
+        )
+        roa = (
+            net_income_latest / assets_latest * 100
+            if net_income_latest is not None and assets_latest
+            else None
+        )
 
         return {
             "revenue": revenue_latest,
-            "revenue_growth": revenue_growth,
+            "revenue_growth_1y": self._growth(revenue, 1),
+            "revenue_cagr_3y": self._cagr(revenue, 3),
             "eps": eps_latest,
-            "eps_growth": eps_growth,
-            "gross_margin": gross_margin,
-            "operating_margin": operating_margin,
-            "net_margin": net_margin,
+            "eps_growth_1y": self._growth(eps, 1),
+            "eps_cagr_3y": self._cagr(eps, 3),
+            "gross_margin": self._margin(
+                gross_profit_latest, revenue_latest
+            ),
+            "operating_margin": self._margin(
+                operating_income_latest, revenue_latest
+            ),
+            "net_margin": self._margin(
+                net_income_latest, revenue_latest
+            ),
             "operating_cash_flow": operating_cash_latest,
             "capital_expenditure": capex_latest,
             "free_cash_flow": free_cash_flow,
-            "free_cash_flow_margin": fcf_margin,
+            "free_cash_flow_margin": self._margin(
+                free_cash_flow, revenue_latest
+            ),
+            "total_assets": assets_latest,
             "equity": equity_latest,
             "cash": cash_latest,
             "total_debt": debt_latest,
             "net_debt": net_debt,
             "current_ratio": current_ratio,
             "debt_to_equity": debt_to_equity,
+            "net_debt_to_fcf": net_debt_to_fcf,
+            "interest_coverage": interest_coverage,
             "roic": roic,
-            "financial_period_end": self._latest_end(
-                revenue_series
+            "roe": roe,
+            "roa": roa,
+            "financial_period_end": (
+                revenue[0]["end"] if revenue else None
             ),
+            "annual_periods_found": len(revenue),
         }
 
-    def _series(
+    def _annual_series(
         self,
         facts: Dict[str, Any],
         tags: Sequence[str],
         units: Sequence[str],
-        *,
-        instant: bool = False,
-        combine_same_end: bool = False,
     ) -> List[Dict[str, Any]]:
-        collected: List[Dict[str, Any]] = []
-
         for tag in tags:
-            fact = facts.get(tag, {})
-            unit_map = fact.get("units", {})
-
-            entries = []
-            for unit in units:
-                if unit in unit_map:
-                    entries = unit_map[unit]
-                    break
+            entries = self._entries(facts, tag, units)
+            selected = []
 
             for item in entries:
-                form = str(item.get("form") or "")
-                fp = str(item.get("fp") or "")
-                if form not in {"10-K", "10-K/A", "20-F", "40-F"}:
-                    continue
-                if not instant and fp not in {"FY", ""}:
+                if item.get("form") not in {
+                    "10-K", "10-K/A", "20-F", "40-F"
+                }:
                     continue
 
-                value = self._number(item.get("val"))
+                start = item.get("start")
                 end = item.get("end")
-                if value is None or not end:
+                value = self._number(item.get("val"))
+                if not start or not end or value is None:
                     continue
 
-                if not instant:
-                    start = item.get("start")
-                    if start:
-                        try:
-                            days = (
-                                date.fromisoformat(end)
-                                - date.fromisoformat(start)
-                            ).days
-                        except ValueError:
-                            days = 365
-                        if days < 300 or days > 430:
-                            continue
+                try:
+                    days = (
+                        date.fromisoformat(end)
+                        - date.fromisoformat(start)
+                    ).days
+                except ValueError:
+                    continue
 
-                collected.append({
+                if 300 <= days <= 430:
+                    selected.append({
+                        "value": value,
+                        "end": end,
+                        "filed": item.get("filed") or "",
+                    })
+
+            result = self._dedupe(selected)
+            if result:
+                return result
+
+        return []
+
+    def _instant_series(
+        self,
+        facts: Dict[str, Any],
+        tags: Sequence[str],
+        units: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        for tag in tags:
+            entries = self._entries(facts, tag, units)
+            selected = []
+
+            for item in entries:
+                if item.get("form") not in {
+                    "10-K", "10-K/A", "20-F", "40-F"
+                }:
+                    continue
+
+                end = item.get("end")
+                value = self._number(item.get("val"))
+                if not end or value is None:
+                    continue
+
+                selected.append({
                     "value": value,
                     "end": end,
                     "filed": item.get("filed") or "",
-                    "tag": tag,
                 })
 
-            if collected and not combine_same_end:
-                break
+            result = self._dedupe(selected)
+            if result:
+                return result
 
-        if combine_same_end:
-            totals: Dict[str, Dict[str, Any]] = {}
-            for item in collected:
-                end = item["end"]
-                if end not in totals:
-                    totals[end] = {
-                        "value": 0.0,
-                        "end": end,
-                        "filed": item["filed"],
-                    }
-                totals[end]["value"] += item["value"]
-                totals[end]["filed"] = max(
-                    totals[end]["filed"],
-                    item["filed"],
+        return []
+
+    def _debt_series(
+        self,
+        facts: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        tags = [
+            "LongTermDebtAndFinanceLeaseObligationsCurrent",
+            "LongTermDebtCurrent",
+            "ShortTermBorrowings",
+            "LongTermDebtNoncurrent",
+            "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
+        ]
+        by_end: Dict[str, Dict[str, Any]] = {}
+
+        for tag in tags:
+            for item in self._entries(facts, tag, ["USD"]):
+                if item.get("form") not in {
+                    "10-K", "10-K/A", "20-F", "40-F"
+                }:
+                    continue
+
+                end = item.get("end")
+                value = self._number(item.get("val"))
+                if not end or value is None:
+                    continue
+
+                row = by_end.setdefault(
+                    end,
+                    {"value": 0.0, "end": end, "filed": ""},
                 )
-            collected = list(totals.values())
-
-        deduped: Dict[str, Dict[str, Any]] = {}
-        for item in collected:
-            end = item["end"]
-            current = deduped.get(end)
-            if (
-                current is None
-                or item["filed"] > current["filed"]
-            ):
-                deduped[end] = item
+                row["value"] += value
+                row["filed"] = max(
+                    row["filed"],
+                    item.get("filed") or "",
+                )
 
         return sorted(
-            deduped.values(),
-            key=lambda item: item["end"],
+            by_end.values(),
+            key=lambda row: row["end"],
             reverse=True,
         )
 
     @staticmethod
-    def _latest_two(
-        series: List[Dict[str, Any]],
-    ):
-        latest = (
-            series[0]["value"]
-            if len(series) >= 1 else None
-        )
-        previous = (
-            series[1]["value"]
-            if len(series) >= 2 else None
-        )
-        return latest, previous
+    def _entries(
+        facts: Dict[str, Any],
+        tag: str,
+        units: Sequence[str],
+    ) -> List[Dict[str, Any]]:
+        unit_map = facts.get(tag, {}).get("units", {})
+        for unit in units:
+            if unit in unit_map:
+                return unit_map[unit]
+        return []
 
     @staticmethod
-    def _latest_end(
-        series: List[Dict[str, Any]],
-    ) -> Optional[str]:
-        return series[0]["end"] if series else None
+    def _dedupe(
+        rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        by_end: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            current = by_end.get(row["end"])
+            if (
+                current is None
+                or row["filed"] > current["filed"]
+            ):
+                by_end[row["end"]] = row
+
+        return sorted(
+            by_end.values(),
+            key=lambda row: row["end"],
+            reverse=True,
+        )
 
     @staticmethod
-    def _growth(
-        latest: Optional[float],
-        previous: Optional[float],
+    def _value(
+        series: List[Dict[str, Any]],
+        index: int,
     ) -> Optional[float]:
+        return (
+            series[index]["value"]
+            if len(series) > index
+            else None
+        )
+
+    def _growth(
+        self,
+        series: List[Dict[str, Any]],
+        years_back: int,
+    ) -> Optional[float]:
+        latest = self._value(series, 0)
+        previous = self._value(series, years_back)
+        if latest is None or previous is None or previous == 0:
+            return None
+        return (latest - previous) / abs(previous) * 100
+
+    def _cagr(
+        self,
+        series: List[Dict[str, Any]],
+        years: int,
+    ) -> Optional[float]:
+        latest = self._value(series, 0)
+        previous = self._value(series, years)
+
         if (
             latest is None
             or previous is None
-            or previous == 0
+            or latest <= 0
+            or previous <= 0
         ):
             return None
-        return ((latest - previous) / abs(previous)) * 100
+
+        return ((latest / previous) ** (1 / years) - 1) * 100
 
     @staticmethod
     def _margin(
@@ -426,7 +491,7 @@ class SECFinancialClient:
     ) -> Optional[float]:
         if numerator is None or not denominator:
             return None
-        return (numerator / denominator) * 100
+        return numerator / denominator * 100
 
     @staticmethod
     def _number(value: Any) -> Optional[float]:

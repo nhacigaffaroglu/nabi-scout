@@ -8,19 +8,19 @@ from config.scan_universe import (
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
-from services.collector_engine import CollectorEngine
 from services.fmp_client import FMPClient
+from services.scanner_v2_engine import ScannerV2Engine
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
-configure_page("Scout Tarama | NABI Scout", "🛰️")
+configure_page("Scout Scanner v2 | NABI Scout", "🛰️")
 render_sidebar()
 
-st.title("🛰️ Scout Financial Engine")
+st.title("🛰️ Scout Scanner v2")
 st.caption(
-    "Fiyat/profil için FMP, resmi finansal tablolar için "
-    "SEC Company Facts kullanır."
+    "SEC'in çok yıllı resmi finansal verilerini FMP fiyat ve "
+    "profil verileriyle birleştirir."
 )
 
 client = get_supabase_client()
@@ -33,34 +33,47 @@ options = (
     [f"Sabit: {name}" for name in SCAN_UNIVERSES]
     + [f"Dinamik: {name}" for name in dynamic_names]
 )
-
 selected = st.selectbox("Tarama evreni", options)
 
-symbol_rows = []
 if selected.startswith("Sabit: "):
     universe_name = selected.replace("Sabit: ", "", 1)
-    symbol_rows = [
-        {"symbol": symbol, "cik": None}
+    all_rows = [
+        {
+            "symbol": symbol,
+            "cik": None,
+            "company_name": symbol,
+            "exchange": None,
+        }
         for symbol in SCAN_UNIVERSES[universe_name]
     ]
 else:
     universe_name = selected.replace("Dinamik: ", "", 1)
-    symbol_rows = universe_repo.get_symbols(
+    all_rows = universe_repo.get_symbols(
         universe_name,
-        limit=100,
+        limit=1000,
     )
 
-batch_size = st.slider(
+if not all_rows:
+    st.warning("Seçilen evrende sembol bulunmuyor.")
+    st.stop()
+
+c1, c2 = st.columns(2)
+start_index = c1.number_input(
+    "Başlangıç sırası",
+    min_value=1,
+    max_value=len(all_rows),
+    value=1,
+    step=1,
+    help=(
+        "Örneğin 101 seçilirse evrendeki 101. sembolden "
+        "itibaren tarama başlar."
+    ),
+)
+batch_size = c2.slider(
     "Bu çalışmada taranacak sembol sayısı",
     min_value=1,
-    max_value=max(
-        1,
-        min(25, len(symbol_rows)),
-    ),
-    value=min(
-        5,
-        max(1, len(symbol_rows)),
-    ),
+    max_value=min(25, len(all_rows)),
+    value=min(5, len(all_rows)),
 )
 
 threshold = st.slider(
@@ -75,57 +88,76 @@ portfolio_fit = st.slider(
     100,
     55,
 )
+save_incomplete = st.checkbox(
+    "Veri eksik kayıtları da aday havuzuna yaz",
+    value=False,
+)
 sec_email = st.text_input(
     "SEC iletişim e-postası",
     value="nabi-scout@example.com",
 )
 
-symbol_rows = symbol_rows[:batch_size]
+start = int(start_index) - 1
+selected_rows = all_rows[start:start + batch_size]
+
 st.write(
     "**Bu çalışmadaki semboller:**",
-    ", ".join(row["symbol"] for row in symbol_rows),
+    ", ".join(row["symbol"] for row in selected_rows),
+)
+st.info(
+    f"Evren büyüklüğü: {len(all_rows)} · "
+    f"Taranan aralık: {start + 1}–{start + len(selected_rows)}"
 )
 st.warning(
     "Katılım durumu kesinleşmeyen hisseler 'Kontrol Et' "
-    "olarak tutulur ve doğrudan yatırım önerisi sayılmaz."
+    "olarak tutulur; bu kayıtlar doğrudan yatırım önerisi değildir."
 )
 
-if st.button("Finansal taramayı başlat", type="primary"):
+if st.button("Scanner v2 taramasını başlat", type="primary"):
     fmp = FMPClient.from_streamlit_secrets()
     sec = SECFinancialClient(contact_email=sec_email)
-    engine = CollectorEngine(fmp, sec)
+    engine = ScannerV2Engine(fmp, sec)
 
     run_id = scan_repo.create_run(
-        universe_name,
-        len(symbol_rows),
+        f"{universe_name} [{start + 1}-{start + len(selected_rows)}]",
+        len(selected_rows),
     )
     progress = st.progress(0)
     results = []
     updated = strong = error_count = 0
 
-    for index, row in enumerate(symbol_rows, 1):
+    for index, row in enumerate(selected_rows, 1):
         symbol = row["symbol"]
-        cik = row.get("cik")
-
-        status, participation_score = (
+        participation_status, participation_score = (
             PARTICIPATION_DEFAULTS.get(
                 symbol,
                 ("Kontrol Et", 60),
             )
         )
 
-        result = engine.collect(
-            symbol,
-            cik=cik,
-            participation_status=status,
+        result = engine.analyze(
+            symbol=symbol,
+            cik=row.get("cik"),
+            company_name=row.get("company_name"),
+            exchange=row.get("exchange"),
+            participation_status=participation_status,
             participation_score=participation_score,
             portfolio_fit=portfolio_fit,
         )
         candidate = result["candidate"]
 
-        should_write = (
+        has_sufficient_data = (
+            candidate.get("data_completeness", 0) >= 50
+        )
+        passes_score = (
             candidate.get("nabi_score", 0) >= threshold
-            or candidate.get("decision") == "VERİ EKSİK"
+        )
+        should_write = (
+            passes_score
+            and (
+                has_sufficient_data
+                or save_incomplete
+            )
         )
 
         if should_write:
@@ -134,7 +166,6 @@ if st.button("Finansal taramayı başlat", type="primary"):
 
         if candidate.get("decision") == "GÜÇLÜ ADAY":
             strong += 1
-
         if result["errors"]:
             error_count += 1
 
@@ -142,38 +173,36 @@ if st.button("Finansal taramayı başlat", type="primary"):
 
         results.append({
             "Sembol": symbol,
-            "CIK": cik,
+            "Şirket": candidate.get("company_name"),
+            "CIK": row.get("cik"),
             "Durum": result["status"],
-            "NABI Score": candidate.get("nabi_score"),
+            "Veri Tamlığı": candidate.get("data_completeness"),
             "Kalite": candidate.get("quality_score"),
             "Büyüme": candidate.get("growth_score"),
-            "ROIC": candidate.get("roic"),
-            "Gelir Büy.": candidate.get(
-                "revenue_growth"
+            "Değerleme": candidate.get("valuation_score"),
+            "Finansal Güç": candidate.get(
+                "financial_health_score"
             ),
-            "Veri Tamlığı": candidate.get(
-                "data_completeness"
-            ),
+            "Risk": candidate.get("risk_score"),
+            "NABI Score": candidate.get("nabi_score"),
             "Karar": candidate.get("decision"),
-            "Kaydedildi": (
-                "Evet" if should_write else "Hayır"
-            ),
+            "Kaydedildi": "Evet" if should_write else "Hayır",
         })
 
-        progress.progress(index / len(symbol_rows))
+        progress.progress(index / len(selected_rows))
         fmp.pause(0.2)
 
     scan_repo.complete_run(
         run_id,
-        len(symbol_rows),
+        len(selected_rows),
         updated,
         strong,
         error_count,
     )
 
     st.success(
-        f"Finansal tarama tamamlandı. "
-        f"{updated} kayıt güncellendi."
+        f"Scanner v2 tamamlandı. "
+        f"{updated} aday kaydı güncellendi."
     )
     st.dataframe(
         pd.DataFrame(results),

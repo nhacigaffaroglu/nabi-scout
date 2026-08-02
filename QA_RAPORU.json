@@ -1,16 +1,32 @@
 {
-  "release": "NABI Scout v0.6 SEC Financial Engine",
-  "financial_source": "SEC Company Facts XBRL",
-  "price_profile_source": "FMP when available",
-  "universe_cleaning": [
-    "warrants",
-    "units",
-    "rights",
-    "preferred shares",
-    "depositary shares",
-    "notes and bonds"
+  "release": "NABI Scout Scout Scanner v2",
+  "financial_source": "SEC Company Facts annual XBRL",
+  "market_source": "FMP quote/profile where available",
+  "score_dimensions": [
+    "quality",
+    "growth",
+    "valuation",
+    "financial_strength",
+    "risk",
+    "liquidity",
+    "portfolio_fit",
+    "participation"
+  ],
+  "features": [
+    "1-year growth",
+    "3-year CAGR",
+    "ROIC",
+    "ROE",
+    "ROA",
+    "FCF margin",
+    "net debt to FCF",
+    "interest coverage",
+    "price to sales",
+    "price to book",
+    "batch start index",
+    "do not save incomplete records by default"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 5
+  "python_files": 4
 }
