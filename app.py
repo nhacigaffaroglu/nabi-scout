@@ -1,43 +1,32 @@
 import streamlit as st
-
+from repositories.candidate_repository import CandidateRepository
 from services.supabase_client import get_supabase_client
-from services.ui import configure_page, sidebar_navigation, show_connection_status
+from services.ui import configure_page, render_sidebar, show_connection_status
 
 configure_page("NABI Scout", "🔭")
-sidebar_navigation()
-
+render_sidebar()
 st.title("🔭 NABI Scout")
 st.caption("Nabi için doğru yatırım araçlarını araştıran bağımsız yatırım araştırma platformu.")
-
 show_connection_status()
 
-st.subheader("Başlangıç sürümü")
-st.info(
-    "Bu ilk sürümde uygulama ve veritabanı bağlantısını kuruyoruz. "
-    "Canlı fiyat, bilanço, haber ve yapay zekâ araştırması sonraki aşamalarda eklenecek."
-)
+repo = CandidateRepository(get_supabase_client())
+stats = repo.get_dashboard_stats()
+cols = st.columns(4)
+cols[0].metric("Toplam aday", stats["total"])
+cols[1].metric("Güçlü aday", stats["strong"])
+cols[2].metric("İzle", stats["watch"])
+cols[3].metric("Araştırılıyor", stats["researching"])
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Aday havuzu", "Hazırlanıyor")
-col2.metric("NABI Score", "v0.1")
-col3.metric("Katılım filtresi", "Aktif")
-
-st.subheader("İlk çalışma akışı")
-st.markdown(
-    """
-1. Aday Havuzu'na yatırım aracı ekle.
-2. Kalite, büyüme, değerleme ve risk puanlarını gir.
-3. NABI Score sonucunu incele.
-4. Güçlü adayları İzleme Listesi'ne al.
-5. Sonraki sürümlerde verileri otomatik kaynaklardan güncelle.
-"""
-)
-
-with st.expander("Supabase bağlantı testi"):
-    try:
-        supabase = get_supabase_client()
-        response = supabase.table("investment_candidates").select("id", count="exact").limit(1).execute()
-        count = getattr(response, "count", None)
-        st.success(f"Bağlantı başarılı. Aday tablosu erişilebilir. Kayıt sayısı: {count or 0}")
-    except Exception as exc:
-        st.error(f"Bağlantı testi başarısız: {exc}")
+st.subheader("En yüksek puanlı adaylar")
+rows = repo.get_all(limit=5, order_by="nabi_score", descending=True)
+if not rows:
+    st.info("Henüz aday eklenmedi.")
+else:
+    for c in rows:
+        with st.container(border=True):
+            a, b, d = st.columns([2.4, 1, 1.2])
+            a.markdown(f"### {c['symbol']} — {c.get('company_name') or c['symbol']}")
+            a.caption(f"{c.get('asset_type','—')} · {c.get('market','—')} · {c.get('sector_theme') or 'Tema yok'}")
+            b.metric("NABI Score", f"{c['nabi_score']:.1f}" if c.get("nabi_score") is not None else "—")
+            d.markdown(f"**{c.get('decision') or 'VERİ EKSİK'}**")
+            d.caption(c.get("participation_status") or "Kontrol Et")

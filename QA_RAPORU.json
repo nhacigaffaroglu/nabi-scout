@@ -1,13 +1,17 @@
 {
-  "project": "NABI Scout Web v0.1",
-  "stack": [
-    "Streamlit",
-    "Supabase",
-    "GitHub"
+  "release": "NABI Scout v0.2 Candidate Manager",
+  "python_syntax_check": "passed",
+  "python_files": 13,
+  "migration": "database/migration_v0_2.sql",
+  "features": [
+    "create",
+    "read",
+    "update",
+    "delete",
+    "search",
+    "filters",
+    "candidate detail",
+    "dashboard"
   ],
-  "pages": 6,
-  "database_tables": 4,
-  "contains_secrets": false,
-  "deployment_target": "Streamlit Community Cloud",
-  "note": "Temporary anon RLS policies are included for first deployment testing."
+  "secrets_included": false
 }

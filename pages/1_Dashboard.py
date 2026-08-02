@@ -1,32 +1,23 @@
-import streamlit as st
 import pandas as pd
-
+import streamlit as st
+from repositories.candidate_repository import CandidateRepository
 from services.supabase_client import get_supabase_client
-from services.ui import configure_page, sidebar_navigation
+from services.ui import configure_page, render_sidebar
 
 configure_page("Dashboard | NABI Scout", "📊")
-sidebar_navigation()
-
+render_sidebar()
 st.title("📊 Scout Dashboard")
-
-supabase = get_supabase_client()
-response = (
-    supabase.table("investment_candidates")
-    .select("symbol,asset_type,market,nabi_score,decision,research_status")
-    .order("nabi_score", desc=True)
-    .execute()
-)
-rows = response.data or []
-df = pd.DataFrame(rows)
-
+repo = CandidateRepository(get_supabase_client())
+stats = repo.get_dashboard_stats()
+cols = st.columns(4)
+cols[0].metric("Toplam aday", stats["total"])
+cols[1].metric("Güçlü aday", stats["strong"])
+cols[2].metric("İzle", stats["watch"])
+cols[3].metric("Veri eksik", stats["missing"])
+df = pd.DataFrame(repo.get_all(order_by="nabi_score", descending=True))
 if df.empty:
-    st.info("Henüz aday eklenmedi. Aday Havuzu sayfasından ilk yatırım aracını ekleyin.")
+    st.info("Aday havuzu boş.")
 else:
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Toplam aday", len(df))
-    c2.metric("Güçlü aday", int((df["decision"] == "GÜÇLÜ ADAY").sum()))
-    c3.metric("İzle", int((df["decision"] == "İZLE").sum()))
-    c4.metric("Veri eksik", int((df["decision"] == "VERİ EKSİK").sum()))
-
-    st.subheader("En yüksek puanlı adaylar")
-    st.dataframe(df.head(10), use_container_width=True, hide_index=True)
+    st.subheader("Karar dağılımı")
+    st.bar_chart(df["decision"].fillna("VERİ EKSİK").value_counts())
+    st.dataframe(df[[c for c in ["symbol","company_name","asset_type","market","participation_status","nabi_score","decision","research_status"] if c in df.columns]], use_container_width=True, hide_index=True)
