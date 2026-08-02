@@ -1,10 +1,10 @@
-# NABI Scout v6 — Research Detail & NABI Akademi
+# NABI Scout v7 — Decision, Explain & Confidence Engine
 
 ## 1. Supabase
 
 SQL Editor'da:
 
-database/migration_v6_academy.sql
+database/migration_v7_decision.sql
 
 dosyasını çalıştır.
 
@@ -12,28 +12,43 @@ dosyasını çalıştır.
 
 Şu dosyaları yükle/değiştir:
 
-- services/financial_glossary.py
-- services/academy_renderer.py
-- pages/8_NABI_Akademi.py
+- services/confidence_engine.py
+- services/explain_engine.py
+- services/decision_engine.py
+- services/research_intelligence_engine.py
+- services/scanner_v7_engine.py
+- pages/2_Scout_Tarama.py
 - pages/4_Aday_Detayi.py
-- database/migration_v6_academy.sql
+- database/migration_v7_decision.sql
+
+Önceki sürümden şu dosyalar kalmalıdır:
+
+- services/scanner_v5_engine.py
+- services/scanner_v4_engine.py
+- services/advanced_metrics.py
+- services/investment_memo.py
+- services/academy_renderer.py
+- services/financial_glossary.py
 
 Commit:
 
-Release NABI Scout v6 Research Detail and Academy
+Release NABI Scout v7 Decision Explain Confidence
 
-Deploy tamamlandıktan sonra Streamlit uygulamasını reboot et.
+Deploy sonrası Streamlit uygulamasını reboot et.
 
-## 3. Test
+## 3. İlk test
 
-- Sol menüde NABI Akademi sayfası görünmeli.
-- ROIC, CAGR, FCF, borç ve değerleme kavramları aranabilmeli.
-- Aday Detayı 2.0 ekranında her metrik için:
-  - sade anlatım,
-  - neden önemli,
-  - iyi değer aralığı,
-  - bu şirketteki yorum,
-  - günlük hayattan örnek
-  gösterilmeli.
-- Finansal verisi eksik olan alanlarda sistem değer uydurmamalı;
-  “yeterli veri bulunamadı” demeli.
+- Evren: ABD Temiz Hisse Evreni v2
+- Başlangıç: 1
+- Sembol: 5
+- Minimum veri tamlığı: 50
+- Minimum Conviction: 0
+- Portföy uyumu: 55
+
+Beklenen:
+
+- Confidence, Conviction, Opportunity ve Yatırım Notu sütunları görünmeli.
+- Aday Detayı ekranı Decision Center olarak açılmalı.
+- Kararı destekleyen nedenler ve başlıca riskler gösterilmeli.
+- "Neden şimdi?", uygun yatırımcı ve uygun olmayan yatırımcı alanları görünmeli.
+- Eski adaylarda bu alanlar boş olabilir; Scanner v7 ile yeniden taranmalıdır.

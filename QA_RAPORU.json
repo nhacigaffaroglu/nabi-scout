@@ -1,15 +1,17 @@
 {
-  "release": "NABI Scout v6 Research Detail & NABI Akademi",
+  "release": "NABI Scout v7 Decision Explain Confidence Engine",
   "features": [
-    "plain Turkish financial glossary",
-    "company-specific metric interpretation",
-    "Aday Detayı 2.0",
-    "searchable NABI Academy",
-    "good-value ranges",
-    "daily-life analogies",
-    "data-missing transparency"
+    "research confidence score",
+    "conviction score",
+    "opportunity score",
+    "investment grade",
+    "explainable score factors",
+    "decision card",
+    "why now",
+    "investor suitability",
+    "academy links"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 4
+  "python_files": 7
 }
