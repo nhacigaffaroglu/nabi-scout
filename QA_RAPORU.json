@@ -1,13 +1,15 @@
 {
-  "release": "Universe Engine v2 CIK Sync Hotfix",
-  "fixes": [
-    "persist CIK to universe_symbols",
-    "replace stale universe rows before save",
-    "filter SPAC/acquisition securities",
-    "show CIK coverage after universe build",
-    "chunk database inserts"
+  "release": "NABI Scout Scanner v3 Intelligence",
+  "features": [
+    "SPAC and special security classification",
+    "3-year FCF CAGR",
+    "3-year share count change",
+    "payout ratio",
+    "capital allocation score",
+    "strict candidate save rules",
+    "NABI Score v5"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 3
+  "python_files": 5
 }

@@ -1,59 +1,50 @@
-# NABI Scout — Universe Engine v2 CIK Sync Hotfix
+# NABI Scout — Scout Scanner v3
 
 ## 1. Supabase
 
-SQL Editor'da şunu çalıştır:
+SQL Editor'da:
 
-database/migration_universe_v2_hotfix.sql
+database/migration_scanner_v3.sql
+
+dosyasını çalıştır.
 
 ## 2. GitHub
 
-Şu dosyaları yükle veya değiştir:
+Şu dosyaları yükle/değiştir:
 
-- repositories/universe_repository.py
-- services/free_universe_client.py
-- pages/2_Evren_Motoru.py
-- database/migration_universe_v2_hotfix.sql
+- services/security_classifier.py
+- services/sec_financial_client.py
+- services/scanner_v3_scoring.py
+- services/scanner_v3_engine.py
+- pages/2_Scout_Tarama.py
+- database/migration_scanner_v3.sql
 
-Commit:
+Commit mesajı:
 
-Hotfix Universe Engine v2 CIK Sync
+Release NABI Scout Scanner v3 Intelligence
 
-Deploy bittikten sonra Streamlit uygulamasını reboot et.
+Deploy sonrası Streamlit uygulamasını reboot et.
 
-## 3. Yeni evren oluştur
+## 3. İlk test
 
-Evren Motoru v2:
+Scout Scanner v3:
 
-- Evren adı: ABD Temiz Hisse Evreni v2
-- NASDAQ: Açık
-- NYSE: Açık
-- Hisseler: Açık
-- ETF: Kapalı
-- Maksimum sembol: 100
-- SEC iletişim e-postası: geçerli adres
-
-Evreni oluştur ve CIK eşleştir düğmesine bas.
-
-Beklenen:
-
-- CIK kapsamı yaklaşık %100'e yakın olmalı.
-- CIK sütununda sayısal değerler görünmeli.
-- Acquisition Corp, warrant, unit ve preferred share sembolleri büyük ölçüde ayıklanmalı.
-
-## 4. Scanner v2 testi
-
-Scout Scanner v2:
-
-- Tarama evreni: Dinamik: ABD Temiz Hisse Evreni v2
+- Tarama evreni: Dinamik ABD Temiz Hisse Evreni v2
 - Başlangıç sırası: 1
 - Sembol sayısı: 5
-- Aday eşiği: 0
-- Veri eksik kayıtları kaydet: Kapalı
+- Aday havuzuna yazma eşiği: 0
+- Minimum veri tamlığı: 50
+- Portföy uyumu: 55
 
 Beklenen:
 
-- CIK artık None olmamalı.
-- SEC Company Facts çağrısı çalışmalı.
-- Veri tamlığı belirgin şekilde yükselmeli.
-- Kalite, büyüme ve finansal güç skorları 50 sabitinde kalmamalı.
+- Acquisition Corp / SPAC benzeri kayıtlar ELENDİ görünmeli.
+- AAL, AAOI gibi normal şirketlerde skorlar hesaplanmalı.
+- FCF CAGR, hisse adedi değişimi ve sermaye tahsisi skoru üretilmeli.
+- Veri tamlığı ve karar eşikleri sağlanmıyorsa aday havuzuna yazılmamalı.
+
+## Not
+
+Scanner v3 bir araştırma önceliklendirme motorudur.
+Ürettiği skorlar yatırım tavsiyesi değildir.
+Katılım uygunluğu ayrı ve doğrulanabilir bir modül olarak geliştirilecektir.

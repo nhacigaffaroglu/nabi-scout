@@ -111,6 +111,14 @@ class SECFinancialClient:
             ],
             ["USD/shares", "USD / shares"],
         )
+        shares = self._annual_series(
+            facts,
+            [
+                "WeightedAverageNumberOfDilutedSharesOutstanding",
+                "WeightedAverageNumberOfSharesOutstandingBasic",
+            ],
+            ["shares"],
+        )
         interest_expense = self._annual_series(
             facts,
             [
@@ -133,12 +141,16 @@ class SECFinancialClient:
             ["IncomeTaxExpenseBenefit"],
             ["USD"],
         )
-
-        assets = self._instant_series(
+        dividends = self._annual_series(
             facts,
-            ["Assets"],
+            [
+                "PaymentsOfDividends",
+                "PaymentsOfDividendsCommonStock",
+            ],
             ["USD"],
         )
+
+        assets = self._instant_series(facts, ["Assets"], ["USD"])
         equity = self._instant_series(
             facts,
             [
@@ -167,25 +179,27 @@ class SECFinancialClient:
         )
         debt = self._debt_series(facts)
 
-        revenue_latest = self._value(revenue, 0)
-        net_income_latest = self._value(net_income, 0)
-        operating_income_latest = self._value(operating_income, 0)
-        gross_profit_latest = self._value(gross_profit, 0)
-        operating_cash_latest = self._value(operating_cash, 0)
-        capex_latest = self._value(capex, 0)
-        eps_latest = self._value(eps, 0)
-        interest_latest = self._value(interest_expense, 0)
-        pretax_latest = self._value(pretax_income, 0)
-        tax_latest = self._value(tax_expense, 0)
+        latest = lambda series: self._value(series, 0)
 
-        assets_latest = self._value(assets, 0)
-        equity_latest = self._value(equity, 0)
-        cash_latest = self._value(cash, 0)
-        current_assets_latest = self._value(current_assets, 0)
-        current_liabilities_latest = self._value(
-            current_liabilities, 0
-        )
-        debt_latest = self._value(debt, 0)
+        revenue_latest = latest(revenue)
+        net_income_latest = latest(net_income)
+        operating_income_latest = latest(operating_income)
+        gross_profit_latest = latest(gross_profit)
+        operating_cash_latest = latest(operating_cash)
+        capex_latest = latest(capex)
+        eps_latest = latest(eps)
+        shares_latest = latest(shares)
+        interest_latest = latest(interest_expense)
+        pretax_latest = latest(pretax_income)
+        tax_latest = latest(tax_expense)
+        dividends_latest = latest(dividends)
+
+        assets_latest = latest(assets)
+        equity_latest = latest(equity)
+        cash_latest = latest(cash)
+        current_assets_latest = latest(current_assets)
+        current_liabilities_latest = latest(current_liabilities)
+        debt_latest = latest(debt)
 
         free_cash_flow = (
             operating_cash_latest - abs(capex_latest or 0)
@@ -195,10 +209,8 @@ class SECFinancialClient:
 
         current_ratio = (
             current_assets_latest / current_liabilities_latest
-            if (
-                current_assets_latest is not None
-                and current_liabilities_latest
-            )
+            if current_assets_latest is not None
+            and current_liabilities_latest
             else None
         )
         debt_to_equity = (
@@ -213,7 +225,8 @@ class SECFinancialClient:
         )
         net_debt_to_fcf = (
             net_debt / free_cash_flow
-            if net_debt is not None and free_cash_flow
+            if net_debt is not None
+            and free_cash_flow
             and free_cash_flow > 0
             else None
         )
@@ -231,7 +244,9 @@ class SECFinancialClient:
                 tax_rate = candidate_tax_rate
 
         invested_capital = (
-            equity_latest + (debt_latest or 0) - (cash_latest or 0)
+            equity_latest
+            + (debt_latest or 0)
+            - (cash_latest or 0)
             if equity_latest is not None
             else None
         )
@@ -256,6 +271,16 @@ class SECFinancialClient:
             else None
         )
 
+        payout_ratio = (
+            abs(dividends_latest) / net_income_latest * 100
+            if dividends_latest is not None
+            and net_income_latest
+            and net_income_latest > 0
+            else None
+        )
+
+        share_change_3y = self._change(shares, 3)
+
         return {
             "revenue": revenue_latest,
             "revenue_growth_1y": self._growth(revenue, 1),
@@ -264,19 +289,28 @@ class SECFinancialClient:
             "eps_growth_1y": self._growth(eps, 1),
             "eps_cagr_3y": self._cagr(eps, 3),
             "gross_margin": self._margin(
-                gross_profit_latest, revenue_latest
+                gross_profit_latest,
+                revenue_latest,
             ),
             "operating_margin": self._margin(
-                operating_income_latest, revenue_latest
+                operating_income_latest,
+                revenue_latest,
             ),
             "net_margin": self._margin(
-                net_income_latest, revenue_latest
+                net_income_latest,
+                revenue_latest,
             ),
             "operating_cash_flow": operating_cash_latest,
             "capital_expenditure": capex_latest,
             "free_cash_flow": free_cash_flow,
             "free_cash_flow_margin": self._margin(
-                free_cash_flow, revenue_latest
+                free_cash_flow,
+                revenue_latest,
+            ),
+            "fcf_cagr_3y": self._derived_fcf_cagr(
+                operating_cash,
+                capex,
+                years=3,
             ),
             "total_assets": assets_latest,
             "equity": equity_latest,
@@ -290,6 +324,9 @@ class SECFinancialClient:
             "roic": roic,
             "roe": roe,
             "roa": roa,
+            "shares_outstanding_sec": shares_latest,
+            "share_change_3y": share_change_3y,
+            "payout_ratio": payout_ratio,
             "financial_period_end": (
                 revenue[0]["end"] if revenue else None
             ),
@@ -308,7 +345,10 @@ class SECFinancialClient:
 
             for item in entries:
                 if item.get("form") not in {
-                    "10-K", "10-K/A", "20-F", "40-F"
+                    "10-K",
+                    "10-K/A",
+                    "20-F",
+                    "40-F",
                 }:
                     continue
 
@@ -346,12 +386,13 @@ class SECFinancialClient:
         units: Sequence[str],
     ) -> List[Dict[str, Any]]:
         for tag in tags:
-            entries = self._entries(facts, tag, units)
             selected = []
-
-            for item in entries:
+            for item in self._entries(facts, tag, units):
                 if item.get("form") not in {
-                    "10-K", "10-K/A", "20-F", "40-F"
+                    "10-K",
+                    "10-K/A",
+                    "20-F",
+                    "40-F",
                 }:
                     continue
 
@@ -388,7 +429,10 @@ class SECFinancialClient:
         for tag in tags:
             for item in self._entries(facts, tag, ["USD"]):
                 if item.get("form") not in {
-                    "10-K", "10-K/A", "20-F", "40-F"
+                    "10-K",
+                    "10-K/A",
+                    "20-F",
+                    "40-F",
                 }:
                     continue
 
@@ -399,7 +443,11 @@ class SECFinancialClient:
 
                 row = by_end.setdefault(
                     end,
-                    {"value": 0.0, "end": end, "filed": ""},
+                    {
+                        "value": 0.0,
+                        "end": end,
+                        "filed": "",
+                    },
                 )
                 row["value"] += value
                 row["filed"] = max(
@@ -412,6 +460,37 @@ class SECFinancialClient:
             key=lambda row: row["end"],
             reverse=True,
         )
+
+    def _derived_fcf_cagr(
+        self,
+        operating_cash: List[Dict[str, Any]],
+        capex: List[Dict[str, Any]],
+        *,
+        years: int,
+    ) -> Optional[float]:
+        by_end = {
+            item["end"]: item["value"]
+            for item in operating_cash
+        }
+        capex_by_end = {
+            item["end"]: item["value"]
+            for item in capex
+        }
+
+        series = []
+        for end, ocf in by_end.items():
+            fcf = ocf - abs(capex_by_end.get(end, 0))
+            series.append({
+                "end": end,
+                "value": fcf,
+            })
+
+        series = sorted(
+            series,
+            key=lambda row: row["end"],
+            reverse=True,
+        )
+        return self._cagr(series, years)
 
     @staticmethod
     def _entries(
@@ -432,10 +511,7 @@ class SECFinancialClient:
         by_end: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             current = by_end.get(row["end"])
-            if (
-                current is None
-                or row["filed"] > current["filed"]
-            ):
+            if current is None or row["filed"] > current["filed"]:
                 by_end[row["end"]] = row
 
         return sorted(
@@ -465,6 +541,13 @@ class SECFinancialClient:
         if latest is None or previous is None or previous == 0:
             return None
         return (latest - previous) / abs(previous) * 100
+
+    def _change(
+        self,
+        series: List[Dict[str, Any]],
+        years_back: int,
+    ) -> Optional[float]:
+        return self._growth(series, years_back)
 
     def _cagr(
         self,
