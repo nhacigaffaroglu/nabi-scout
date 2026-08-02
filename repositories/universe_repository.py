@@ -15,6 +15,13 @@ class UniverseRepository:
         return response.data[0]["id"]
 
     def save_symbols(self, run_id, universe_name, rows):
+        # Aynı isimli evren yeniden oluşturulduğunda eski ve eksik
+        # sembolleri kaldır. Böylece CIK=None olan eski satırlar kalmaz.
+        self.client.table("universe_symbols").delete().eq(
+            "universe_name",
+            universe_name,
+        ).execute()
+
         payload = []
         for rank, row in enumerate(rows, start=1):
             payload.append({
@@ -32,19 +39,27 @@ class UniverseRepository:
                 "beta": row.get("beta"),
                 "is_etf": row.get("is_etf", False),
                 "is_actively_trading": row.get(
-                    "is_actively_trading", True
+                    "is_actively_trading",
+                    True,
                 ),
+                "cik": row.get("cik"),
                 "universe_source": row.get("universe_source"),
                 "rank": rank,
                 "is_selected": True,
                 "discovered_at": row.get("discovered_at"),
+                "updated_at": datetime.now(
+                    timezone.utc
+                ).isoformat(),
             })
 
         if payload:
-            self.client.table("universe_symbols").upsert(
-                payload,
-                on_conflict="universe_name,symbol",
-            ).execute()
+            # Supabase/PostgREST için büyük payloadları küçük partilerle yaz.
+            chunk_size = 250
+            for index in range(0, len(payload), chunk_size):
+                chunk = payload[index:index + chunk_size]
+                self.client.table("universe_symbols").insert(
+                    chunk
+                ).execute()
 
     def complete_run(self, run_id, source, total, errors):
         self.client.table("universe_runs").update({
@@ -52,7 +67,18 @@ class UniverseRepository:
             "source": source,
             "total_symbols": total,
             "errors": errors,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
+        }).eq("id", run_id).execute()
+
+    def fail_run(self, run_id, errors):
+        self.client.table("universe_runs").update({
+            "status": "FAILED",
+            "errors": errors,
+            "completed_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
         }).eq("id", run_id).execute()
 
     def get_symbols(self, universe_name, limit=100):
@@ -89,3 +115,33 @@ class UniverseRepository:
             .execute()
         )
         return response.data or []
+
+    def get_universe_health(self, universe_name):
+        rows = (
+            self.client.table("universe_symbols")
+            .select("symbol,cik,is_etf")
+            .eq("universe_name", universe_name)
+            .eq("is_selected", True)
+            .execute()
+            .data or []
+        )
+
+        stocks = [
+            row for row in rows
+            if not row.get("is_etf", False)
+        ]
+        with_cik = [
+            row for row in stocks
+            if row.get("cik") is not None
+        ]
+
+        return {
+            "total": len(rows),
+            "stocks": len(stocks),
+            "with_cik": len(with_cik),
+            "without_cik": len(stocks) - len(with_cik),
+            "cik_coverage": (
+                round(len(with_cik) / len(stocks) * 100, 1)
+                if stocks else 0.0
+            ),
+        }

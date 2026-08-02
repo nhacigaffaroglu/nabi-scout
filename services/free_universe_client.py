@@ -12,12 +12,16 @@ class UniverseSourceError(RuntimeError):
 
 
 class FreeUniverseClient:
-    SEC_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
+    SEC_URL = (
+        "https://www.sec.gov/files/company_tickers_exchange.json"
+    )
     NASDAQ_LISTED_URL = (
-        "https://www.nasdaqtrader.com/dynamic/symdir/nasdaqlisted.txt"
+        "https://www.nasdaqtrader.com/dynamic/"
+        "symdir/nasdaqlisted.txt"
     )
     OTHER_LISTED_URL = (
-        "https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt"
+        "https://www.nasdaqtrader.com/dynamic/"
+        "symdir/otherlisted.txt"
     )
 
     EXCLUDED_NAME_TERMS = (
@@ -34,6 +38,12 @@ class FreeUniverseClient:
         "notes due",
         "bond",
         "debenture",
+        "acquisition corp",
+        "acquisition corporation",
+        "acquisition company",
+        "blank check",
+        "special purpose acquisition",
+        "spac",
     )
 
     def __init__(
@@ -46,7 +56,7 @@ class FreeUniverseClient:
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": (
-                f"NABI Scout investment research app "
+                "NABI Scout investment research app "
                 f"contact={contact_email}"
             ),
             "Accept-Encoding": "gzip, deflate",
@@ -59,26 +69,46 @@ class FreeUniverseClient:
         )
         if response.status_code != 200:
             raise UniverseSourceError(
-                f"SEC kaynağı HTTP {response.status_code} döndürdü."
+                f"SEC kaynağı HTTP "
+                f"{response.status_code} döndürdü."
             )
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise UniverseSourceError(
+                "SEC kaynağı geçerli JSON döndürmedi."
+            ) from exc
+
         fields = payload.get("fields") or []
         data = payload.get("data") or []
+
+        if not fields or not data:
+            raise UniverseSourceError(
+                "SEC ticker dosyası boş veya beklenmeyen biçimde."
+            )
 
         rows = []
         for values in data:
             row = dict(zip(fields, values))
-            ticker = str(row.get("ticker") or "").strip().upper()
+            ticker = str(
+                row.get("ticker") or ""
+            ).strip().upper()
+            name = str(row.get("name") or "").strip()
+
             if not ticker:
                 continue
+            if self._excluded_security_name(name):
+                continue
+
             rows.append({
                 "symbol": ticker,
-                "company_name": row.get("name"),
+                "company_name": name or ticker,
                 "exchange": row.get("exchange"),
                 "cik": row.get("cik"),
                 "source_sec": True,
             })
+
         return rows
 
     def get_nasdaq_listed(self) -> List[Dict[str, Any]]:
@@ -88,8 +118,12 @@ class FreeUniverseClient:
         result = []
 
         for row in rows:
-            symbol = str(row.get("Symbol") or "").strip().upper()
-            name = str(row.get("Security Name") or "").strip()
+            symbol = str(
+                row.get("Symbol") or ""
+            ).strip().upper()
+            name = str(
+                row.get("Security Name") or ""
+            ).strip()
 
             if not symbol or row.get("Test Issue") == "Y":
                 continue
@@ -105,6 +139,7 @@ class FreeUniverseClient:
                 "is_etf": row.get("ETF") == "Y",
                 "source_nasdaq": True,
             })
+
         return result
 
     def get_other_listed(self) -> List[Dict[str, Any]]:
@@ -126,7 +161,9 @@ class FreeUniverseClient:
                 or row.get("ACT Symbol")
                 or ""
             ).strip().upper()
-            name = str(row.get("Security Name") or "").strip()
+            name = str(
+                row.get("Security Name") or ""
+            ).strip()
 
             if not symbol or row.get("Test Issue") == "Y":
                 continue
@@ -145,18 +182,25 @@ class FreeUniverseClient:
                 "is_etf": row.get("ETF") == "Y",
                 "source_nasdaq": True,
             })
+
         return result
 
     def _download_text(self, url: str) -> str:
-        response = self.session.get(url, timeout=self.timeout)
+        response = self.session.get(
+            url,
+            timeout=self.timeout,
+        )
         if response.status_code != 200:
             raise UniverseSourceError(
-                f"Nasdaq Trader HTTP {response.status_code}."
+                f"Nasdaq Trader HTTP "
+                f"{response.status_code}."
             )
         return response.text
 
     @staticmethod
-    def _parse_pipe_file(text: str) -> List[Dict[str, str]]:
+    def _parse_pipe_file(
+        text: str,
+    ) -> List[Dict[str, str]]:
         return list(csv.DictReader(
             io.StringIO(text),
             delimiter="|",

@@ -7,13 +7,13 @@ from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 from services.universe_engine import UniverseEngine
 
-configure_page("Evren Motoru | NABI Scout", "🌍")
+configure_page("Evren Motoru v2 | NABI Scout", "🌍")
 render_sidebar()
 
-st.title("🌍 Scout Universe Engine")
+st.title("🌍 Scout Universe Engine v2")
 st.caption(
     "ABD yatırım evrenini ücretsiz SEC ve Nasdaq Trader "
-    "kaynaklarından oluşturur."
+    "kaynaklarından oluşturur ve CIK bilgilerini Supabase'e kaydeder."
 )
 
 client = get_supabase_client()
@@ -22,10 +22,11 @@ repo = UniverseRepository(client)
 with st.form("universe_form"):
     universe_name = st.text_input(
         "Evren adı",
-        value="ABD Hisse Evreni",
+        value="ABD Temiz Hisse Evreni v2",
     )
 
     c1, c2 = st.columns(2)
+
     nasdaq = c1.checkbox("NASDAQ", value=True)
     nyse = c1.checkbox("NYSE", value=True)
     amex = c1.checkbox("AMEX", value=False)
@@ -47,7 +48,7 @@ with st.form("universe_form"):
     limit = st.slider(
         "Maksimum sembol",
         min_value=10,
-        max_value=1000,
+        max_value=2000,
         value=100,
         step=10,
     )
@@ -55,14 +56,10 @@ with st.form("universe_form"):
     contact_email = st.text_input(
         "SEC iletişim e-postası",
         value="nabi-scout@example.com",
-        help=(
-            "SEC isteklerinde tanımlayıcı User-Agent için kullanılır. "
-            "API anahtarı değildir."
-        ),
     )
 
     submitted = st.form_submit_button(
-        "Evreni keşfet",
+        "Evreni oluştur ve CIK eşleştir",
         type="primary",
     )
 
@@ -82,7 +79,9 @@ if submitted:
         st.stop()
 
     if not include_common and not include_etfs:
-        st.error("Hisse veya ETF türlerinden en az birini seçin.")
+        st.error(
+            "Hisse veya ETF türlerinden en az birini seçin."
+        )
         st.stop()
 
     source_client = FreeUniverseClient(
@@ -100,31 +99,53 @@ if submitted:
 
     run_id = repo.create_run(universe_name, filters)
 
-    with st.spinner("Ücretsiz yatırım evreni oluşturuluyor..."):
-        result = engine.discover(**filters)
+    try:
+        with st.spinner(
+            "Evren oluşturuluyor ve CIK eşleştiriliyor..."
+        ):
+            result = engine.discover(**filters)
+            rows = result["rows"]
 
-    rows = result["rows"]
-    repo.save_symbols(run_id, universe_name, rows)
-    repo.complete_run(
-        run_id,
-        result["source"],
-        len(rows),
-        result["errors"],
-    )
+            repo.save_symbols(
+                run_id,
+                universe_name,
+                rows,
+            )
+            repo.complete_run(
+                run_id,
+                result["source"],
+                len(rows),
+                result["errors"],
+            )
 
-    st.success(
-        f"{len(rows)} sembol bulundu. "
-        f"Kaynak: {result['source']}"
-    )
+        health = repo.get_universe_health(universe_name)
 
-    if result["errors"]:
-        st.warning(" | ".join(result["errors"]))
+        st.success(
+            f"{health['total']} sembol kaydedildi. "
+            f"CIK kapsamı: %{health['cik_coverage']}"
+        )
 
-    st.dataframe(
-        pd.DataFrame(rows),
-        use_container_width=True,
-        hide_index=True,
-    )
+        if health["without_cik"] > 0:
+            st.warning(
+                f"{health['without_cik']} hisse için CIK bulunamadı."
+            )
+
+        if result["errors"]:
+            st.warning(" | ".join(result["errors"]))
+
+        display_rows = repo.get_symbols(
+            universe_name,
+            limit=limit,
+        )
+        st.dataframe(
+            pd.DataFrame(display_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    except Exception as exc:
+        repo.fail_run(run_id, [str(exc)])
+        st.error(f"Evren oluşturulamadı: {exc}")
 
 st.subheader("Son evren çalışmaları")
 st.dataframe(

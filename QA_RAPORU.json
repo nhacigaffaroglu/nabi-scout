@@ -1,32 +1,13 @@
 {
-  "release": "NABI Scout Scout Scanner v2",
-  "financial_source": "SEC Company Facts annual XBRL",
-  "market_source": "FMP quote/profile where available",
-  "score_dimensions": [
-    "quality",
-    "growth",
-    "valuation",
-    "financial_strength",
-    "risk",
-    "liquidity",
-    "portfolio_fit",
-    "participation"
-  ],
-  "features": [
-    "1-year growth",
-    "3-year CAGR",
-    "ROIC",
-    "ROE",
-    "ROA",
-    "FCF margin",
-    "net debt to FCF",
-    "interest coverage",
-    "price to sales",
-    "price to book",
-    "batch start index",
-    "do not save incomplete records by default"
+  "release": "Universe Engine v2 CIK Sync Hotfix",
+  "fixes": [
+    "persist CIK to universe_symbols",
+    "replace stale universe rows before save",
+    "filter SPAC/acquisition securities",
+    "show CIK coverage after universe build",
+    "chunk database inserts"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 4
+  "python_files": 3
 }

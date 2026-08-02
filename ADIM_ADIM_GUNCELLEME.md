@@ -1,50 +1,59 @@
-# NABI Scout — Scout Scanner v2
+# NABI Scout — Universe Engine v2 CIK Sync Hotfix
 
 ## 1. Supabase
 
-SQL Editor'da `database/migration_scanner_v2.sql` çalıştır.
+SQL Editor'da şunu çalıştır:
+
+database/migration_universe_v2_hotfix.sql
 
 ## 2. GitHub
 
-Şu dosyaları yükle/değiştir:
+Şu dosyaları yükle veya değiştir:
 
-- services/scanner_v2_scoring.py
-- services/sec_financial_client.py
-- services/scanner_v2_engine.py
-- pages/2_Scout_Tarama.py
-- database/migration_scanner_v2.sql
+- repositories/universe_repository.py
+- services/free_universe_client.py
+- pages/2_Evren_Motoru.py
+- database/migration_universe_v2_hotfix.sql
 
 Commit:
-`Release NABI Scout Scout Scanner v2`
 
-Deploy sonrasında uygulamayı reboot et.
+Hotfix Universe Engine v2 CIK Sync
 
-## 3. İlk test
+Deploy bittikten sonra Streamlit uygulamasını reboot et.
 
-Önce büyük ve bilinen şirketleri içeren sıraya ulaşmak için
-Başlangıç sırası alanını kullanabilirsin. Alternatif olarak Evren
-Motoru'nda isim/sembol filtresiyle örneğin Microsoft veya AAPL için
-küçük bir test evreni oluşturabilirsin.
+## 3. Yeni evren oluştur
 
-Önerilen ilk test:
-- Tarama evreni: Dinamik ABD Temiz Hisse Evreni
+Evren Motoru v2:
+
+- Evren adı: ABD Temiz Hisse Evreni v2
+- NASDAQ: Açık
+- NYSE: Açık
+- Hisseler: Açık
+- ETF: Kapalı
+- Maksimum sembol: 100
+- SEC iletişim e-postası: geçerli adres
+
+Evreni oluştur ve CIK eşleştir düğmesine bas.
+
+Beklenen:
+
+- CIK kapsamı yaklaşık %100'e yakın olmalı.
+- CIK sütununda sayısal değerler görünmeli.
+- Acquisition Corp, warrant, unit ve preferred share sembolleri büyük ölçüde ayıklanmalı.
+
+## 4. Scanner v2 testi
+
+Scout Scanner v2:
+
+- Tarama evreni: Dinamik: ABD Temiz Hisse Evreni v2
 - Başlangıç sırası: 1
 - Sembol sayısı: 5
 - Aday eşiği: 0
-- Veri eksikleri kaydet: kapalı
-- Portföy uyumu: 55
+- Veri eksik kayıtları kaydet: Kapalı
 
 Beklenen:
-- CIK dolu olmalı.
-- Veri tamlığı şirketlere göre yaklaşık %50–95 aralığında olmalı.
-- Kalite, Büyüme, Değerleme, Finansal Güç ve Risk skorları birbirinden farklılaşmalı.
-- Veri tamlığı %50'nin altındaki kayıtlar aday havuzuna yazılmamalı.
-- Tarama geçmişi scan_runs ve scan_results tablolarına yazılmalı.
 
-## Bilinen sınırlar
-
-- Bankalar ve sigorta şirketleri klasik sanayi şirketlerinden farklı finansal
-  etiketler kullanır; ilk sürümde skorları daha düşük veri tamlığı gösterebilir.
-- SEC Company Facts yalnızca SEC raporlaması bulunan şirketlerde çalışır.
-- Katılım uygunluğu bu sürümde otomatik ve kesin olarak belirlenmez.
-- NABI Score yatırım tavsiyesi değil, araştırma önceliklendirme skorudur.
+- CIK artık None olmamalı.
+- SEC Company Facts çağrısı çalışmalı.
+- Veri tamlığı belirgin şekilde yükselmeli.
+- Kalite, büyüme ve finansal güç skorları 50 sabitinde kalmamalı.
