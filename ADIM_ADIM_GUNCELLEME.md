@@ -1,24 +1,53 @@
-# NABI Scout v8 — Investment Thesis Engine
+# NABI Scout v9 — Company Report
 
-1. Supabase SQL Editor'da `database/migration_v8_thesis.sql` çalıştır.
-2. GitHub'a yükle/değiştir:
-   - services/investment_thesis_engine.py
-   - services/scanner_v8_engine.py
-   - pages/2_Scout_Tarama.py
-   - pages/4_Aday_Detayi.py
-   - database/migration_v8_thesis.sql
-3. Commit: `Release NABI Scout v8 Investment Thesis Engine`
-4. Streamlit uygulamasını reboot et.
+## 1. Supabase
 
-İlk test:
-- Evren: ABD Temiz Hisse Evreni v2
-- Başlangıç: 1
-- Sembol: 5
-- Minimum veri tamlığı: 50
-- Minimum Conviction: 0
-- Portföy uyumu: 55
+SQL Editor'da:
 
-Beklenen:
-- Tarama ekranında Tez Tipi ve Tez Özeti görünür.
-- Detay ekranında yatırım tezi, güçlü/zayıf noktalar, olumlu/olumsuz senaryo,
-  yeniden inceleme koşulları ve değerleme görüşü görünür.
+database/migration_v9_company_report.sql
+
+dosyasını çalıştır.
+
+Bu migration yeni kolon eklemez; yalnızca şema önbelleğini yeniler.
+
+## 2. GitHub
+
+Şu dosyaları yükle/değiştir:
+
+- pages/2_Scout_Tarama.py
+- pages/4_Company_Report.py
+- database/migration_v9_company_report.sql
+
+## 3. Eski sayfayı sil
+
+Aşağıdaki eski detay sayfası varsa sil:
+
+- pages/4_Aday_Detayi.py
+
+Aynı işlevi yapan iki sayfa bırakılmamalıdır.
+
+## 4. Commit
+
+Release NABI Scout v9 Company Report
+
+## 5. Reboot
+
+Deploy tamamlandıktan sonra Streamlit uygulamasını reboot et.
+
+## 6. Test
+
+1. Scanner ekranında 5 şirket tara.
+2. Tarama tablosunda artık uzun Tez Özeti sütunu bulunmamalı.
+3. Tablo altında her şirket için “Raporu Aç” düğmesi görünmeli.
+4. Düğmeye basıldığında Company Report açılmalı.
+5. Company Report'ta:
+   - karar özeti,
+   - yatırım tezi,
+   - güçlü ve zayıf noktalar,
+   - olumlu ve olumsuz senaryo,
+   - yeniden inceleme koşulları,
+   - değerleme görüşü,
+   - puanın kanıtları,
+   - finansal göstergeler,
+   - finansal terim açıklamaları
+   tam metin görünmelidir.

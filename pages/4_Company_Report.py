@@ -1,0 +1,315 @@
+import pandas as pd
+import streamlit as st
+
+from repositories.candidate_repository import CandidateRepository
+from services.academy_renderer import render_metric_explanation
+from services.supabase_client import get_supabase_client
+from services.ui import configure_page, render_sidebar
+
+configure_page("Company Report | NABI Scout", "📄")
+render_sidebar()
+
+st.title("📄 NABI Company Report")
+
+repo = CandidateRepository(get_supabase_client())
+candidate = st.session_state.get("company_report_candidate")
+
+if candidate is None:
+    rows = repo.get_all(
+        order_by="nabi_score",
+        descending=True,
+    )
+
+    if not rows:
+        st.info(
+            "Henüz raporlanacak şirket bulunmuyor. "
+            "Önce Scout Scanner ekranında tarama yapın."
+        )
+        st.stop()
+
+    query_symbol = st.query_params.get("symbol")
+    default_index = 0
+
+    labels = []
+    row_lookup = {}
+
+    for index, row in enumerate(rows):
+        label = (
+            f"{row['symbol']} — "
+            f"{row.get('company_name') or row['symbol']}"
+        )
+        labels.append(label)
+        row_lookup[label] = row["id"]
+
+        if query_symbol and row["symbol"] == query_symbol:
+            default_index = index
+
+    selected = st.selectbox(
+        "Şirket seç",
+        labels,
+        index=default_index,
+    )
+    candidate = repo.get_by_id(row_lookup[selected])
+
+symbol = candidate.get("symbol") or "—"
+company = candidate.get("company_name") or symbol
+
+top_left, top_right = st.columns([4, 1])
+
+with top_left:
+    st.markdown(f"## {symbol} — {company}")
+    st.caption(
+        f"{candidate.get('thesis_type') or 'Tez türü yok'} · "
+        f"{candidate.get('investment_profile') or 'Profil yok'}"
+    )
+
+with top_right:
+    if st.button(
+        "← Tarama ekranı",
+        use_container_width=True,
+    ):
+        st.switch_page("pages/2_Scout_Tarama.py")
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric(
+    "NABI Skoru",
+    candidate.get("nabi_score") or 0,
+    help=(
+        "Şirketin kalite, büyüme, finansal güç, "
+        "değerleme ve risk bileşenlerinden oluşan genel puanı."
+    ),
+)
+c2.metric(
+    "Veri Güveni",
+    f"%{candidate.get('research_confidence') or 0}",
+    help=(
+        "Analizde kullanılan finansal verilerin kapsam ve "
+        "güvenilirlik düzeyi."
+    ),
+)
+c3.metric(
+    "Araştırma Güveni",
+    candidate.get("conviction_score") or 0,
+    help=(
+        "Şirket hakkındaki araştırma sonucunun ne kadar güçlü "
+        "ve tutarlı olduğuna ilişkin birleşik puan."
+    ),
+)
+c4.metric(
+    "Fırsat Potansiyeli",
+    candidate.get("opportunity_score") or 0,
+    help=(
+        "Kalite, büyüme ve değerleme birlikte "
+        "değerlendirildiğinde araştırma fırsatı."
+    ),
+)
+c5.metric(
+    "Yatırım Notu",
+    candidate.get("investment_grade") or "—",
+)
+
+st.subheader("Karar özeti")
+decision = (
+    candidate.get("decision_label")
+    or candidate.get("decision")
+    or "Karar üretilmedi."
+)
+
+if decision in {
+    "ŞİMDİLİK UZAK DUR",
+    "VERİ EKSİK — ÖN ELEME",
+}:
+    st.error(decision)
+elif decision in {
+    "YÜKSEK ÖNCELİKLİ ARAŞTIRMA ADAYI",
+    "ARAŞTIRMA ADAYI",
+}:
+    st.success(decision)
+else:
+    st.warning(decision)
+
+st.write(
+    candidate.get("decision_verdict")
+    or candidate.get("memo_summary")
+    or "Karar açıklaması bulunmuyor."
+)
+st.info(
+    "**Önerilen araştırma adımı:** "
+    + (
+        candidate.get("decision_action")
+        or "Ek finansal doğrulama yap."
+    )
+)
+
+st.subheader("Yatırım tezi")
+st.info(
+    candidate.get("thesis_type")
+    or "Bu kayıt Investment Thesis Engine ile henüz analiz edilmedi."
+)
+st.write(
+    candidate.get("thesis_summary")
+    or "Yatırım tezi özeti bulunmuyor."
+)
+
+left, right = st.columns(2)
+
+with left:
+    st.markdown("### Tezi destekleyen noktalar")
+    strengths = candidate.get("thesis_strengths") or []
+    if strengths:
+        for item in strengths:
+            st.success(item)
+    else:
+        st.write("Belirgin güçlü tez unsuru bulunamadı.")
+
+with right:
+    st.markdown("### Tezi zayıflatan noktalar")
+    concerns = candidate.get("thesis_concerns") or []
+    if concerns:
+        for item in concerns:
+            st.error(item)
+    else:
+        st.write("Belirgin tez riski bulunamadı.")
+
+st.subheader("Senaryo analizi")
+
+bull_col, bear_col = st.columns(2)
+
+with bull_col:
+    st.markdown("### Olumlu senaryo")
+    st.write(
+        candidate.get("thesis_bull_case")
+        or "Olumlu senaryo henüz üretilmedi."
+    )
+
+with bear_col:
+    st.markdown("### Olumsuz senaryo")
+    st.write(
+        candidate.get("thesis_bear_case")
+        or "Olumsuz senaryo henüz üretilmedi."
+    )
+
+st.subheader("Hangi koşullarda yeniden incelenmeli?")
+conditions = candidate.get("thesis_revisit_conditions") or []
+
+if conditions:
+    for item in conditions:
+        st.warning(item)
+else:
+    st.write(
+        candidate.get("thesis_revisit_trigger")
+        or (
+            "Bir sonraki finansal raporda büyüme, "
+            "nakit üretimi ve değerleme yeniden kontrol edilmeli."
+        )
+    )
+
+st.subheader("Değerleme görüşü")
+st.write(
+    candidate.get("thesis_valuation_view")
+    or "Değerleme görüşü üretilemedi."
+)
+
+st.subheader("Puanın kanıtları")
+factors = candidate.get("score_factors") or []
+
+if factors:
+    factor_rows = []
+
+    for item in factors:
+        impact = item.get("impact")
+        impact_label = {
+            "positive": "Olumlu",
+            "negative": "Olumsuz",
+            "neutral": "Nötr",
+        }.get(impact, impact or "—")
+
+        factor_rows.append({
+            "Gösterge": item.get("label"),
+            "Değer": item.get("value"),
+            "Etkisi": impact_label,
+            "Ne anlatıyor?": item.get("meaning"),
+            "NABI yorumu": item.get("summary"),
+        })
+
+    st.dataframe(
+        pd.DataFrame(factor_rows),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Gösterge": st.column_config.TextColumn(
+                "Gösterge",
+                width="medium",
+            ),
+            "Değer": st.column_config.NumberColumn(
+                "Değer",
+                format="%.2f",
+                width="small",
+            ),
+            "Etkisi": st.column_config.TextColumn(
+                "Etkisi",
+                width="small",
+            ),
+            "Ne anlatıyor?": st.column_config.TextColumn(
+                "Ne anlatıyor?",
+                width="large",
+            ),
+            "NABI yorumu": st.column_config.TextColumn(
+                "NABI yorumu",
+                width="large",
+            ),
+        },
+    )
+else:
+    st.info(
+        "Puan gerekçeleri için şirketi güncel Scanner ile yeniden tarayın."
+    )
+
+st.subheader("Finansal göstergeler")
+metric_map = [
+    ("ROIC", "roic"),
+    ("Gelir CAGR 3Y", "revenue_cagr_3y"),
+    ("EPS CAGR 3Y", "eps_cagr_3y"),
+    ("FCF CAGR 3Y", "fcf_cagr_3y"),
+    ("FCF Marjı", "free_cash_flow_margin"),
+    ("Borç/Özsermaye", "debt_to_equity"),
+    ("Faiz Karşılama", "interest_coverage"),
+    ("F/K", "pe_ratio"),
+    ("EV/EBIT", "ev_to_ebit"),
+    ("PEG", "peg_ratio_calculated"),
+    ("Fiyat/FCF", "price_to_fcf"),
+]
+
+columns = st.columns(4)
+
+for index, (label, key) in enumerate(metric_map):
+    value = candidate.get(key)
+    columns[index % 4].metric(
+        label,
+        "—" if value is None else f"{value:.2f}",
+    )
+
+st.subheader("Bu finansal terimler ne demek?")
+academy_keys = []
+for item in factors:
+    key = item.get("academy_key")
+    if key and key not in academy_keys:
+        academy_keys.append(key)
+
+if academy_keys:
+    for key in academy_keys[:6]:
+        render_metric_explanation(
+            key,
+            candidate.get(key),
+        )
+else:
+    render_metric_explanation(
+        "data_completeness",
+        candidate.get("data_completeness"),
+        expanded=True,
+    )
+
+st.caption(
+    "Company Report yatırım tavsiyesi üretmez. "
+    "Mevcut finansal verileri açıklanabilir bir araştırma raporuna dönüştürür."
+)

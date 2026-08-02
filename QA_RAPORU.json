@@ -1,7 +1,16 @@
 {
-  "release": "NABI Scout v8 Investment Thesis Engine",
+  "release": "NABI Scout v9 Company Report",
   "scope_frozen": true,
+  "features": [
+    "compact scanner table",
+    "report open buttons",
+    "session-state report navigation",
+    "full investment thesis report",
+    "Turkish score labels",
+    "metric help text",
+    "single-source-of-truth UI"
+  ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 4
+  "python_files": 2
 }
