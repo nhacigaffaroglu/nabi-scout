@@ -1,14 +1,13 @@
 {
-  "release": "NABI Score v4 Intelligence",
+  "release": "NABI Scout v5 Advanced Metrics & Investment Memo",
   "features": [
-    "explainable score reasons",
-    "investment profiles",
-    "data confidence",
-    "hard financial risk penalties",
-    "quality, growth, value and risk calibration",
-    "candidate detail explanation screen"
+    "EV/EBIT",
+    "PEG",
+    "Price/FCF",
+    "Owner earnings proxy",
+    "deterministic investment memo"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 4
+  "python_files": 5
 }

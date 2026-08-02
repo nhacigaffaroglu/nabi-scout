@@ -1,57 +1,25 @@
-# NABI Scout — NABI Score v4 Intelligence
+# NABI Scout v5 — Advanced Metrics & Investment Memo
 
-## 1. Supabase
+1. Supabase SQL Editor'da `database/migration_v5_advanced_metrics.sql` çalıştır.
+2. GitHub'a şu dosyaları yükle:
+   - services/advanced_metrics.py
+   - services/investment_memo.py
+   - services/scanner_v5_engine.py
+   - pages/2_Scout_Tarama.py
+   - pages/4_Aday_Detayi.py
+   - database/migration_v5_advanced_metrics.sql
+3. Commit: `Release NABI Scout v5 Advanced Metrics and Memo`
+4. Streamlit uygulamasını reboot et.
 
-SQL Editor'da:
+İlk test:
+- ABD Temiz Hisse Evreni v2
+- Başlangıç 1
+- 5 sembol
+- Eşik 0
+- Minimum veri tamlığı 50
+- Portföy uyumu 55
 
-database/migration_score_v4.sql
-
-dosyasını çalıştır.
-
-## 2. GitHub
-
-Şu dosyaları yükle/değiştir:
-
-- services/nabi_score_v4.py
-- services/scanner_v4_engine.py
-- pages/2_Scout_Tarama.py
-- pages/4_Aday_Detayi.py
-- database/migration_score_v4.sql
-
-Önceki sürümden şu dosyalar da repoda bulunmalıdır:
-
-- services/security_classifier.py
-- services/sec_financial_client.py
-- services/fmp_client.py
-
-Commit mesajı:
-
-Release NABI Score v4 Intelligence
-
-Deploy sonrası Streamlit uygulamasını reboot et.
-
-## 3. İlk test
-
-Scanner v4:
-
-- Tarama evreni: ABD Temiz Hisse Evreni v2
-- Başlangıç sırası: 1
-- Sembol sayısı: 5
-- Aday eşiği: 0
-- Minimum veri tamlığı: 50
-- Portföy uyumu: 55
-
-Kontrol edilecekler:
-
-- Profil alanı dolmalı.
-- Güven seviyesi dolmalı.
-- En Güçlü Neden ve Ana Risk alanları görünmeli.
-- Borç, negatif FCF veya sulandırma varsa puan cezası oluşmalı.
-- Acquisition Corp türleri tarama öncesinde elenmeli.
-- Aday Detayı sayfasında güçlü yönler ve riskler gösterilmeli.
-
-## Not
-
-NABI Score v4 araştırma önceliklendirme sistemidir.
-Tek başına alım veya satım kararı değildir.
-Katılım uygunluğu doğrulanmadan kayıt yatırım önerisi sayılmaz.
+Beklenen:
+- EV/EBIT, PEG ve Fiyat/FCF sütunları görünür.
+- Eksik veri varsa alan None kalır; değer uydurulmaz.
+- Aday Detayı ekranında NABI Investment Memo görünür.
