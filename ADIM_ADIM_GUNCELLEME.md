@@ -1,34 +1,30 @@
-# NABI Scout v9 — Company Report
+# NABI Scout — Sprint 10.1 Embedded Academy
 
 ## 1. Supabase
 
 SQL Editor'da:
 
-database/migration_v9_company_report.sql
+database/migration_sprint_10_1_academy.sql
 
 dosyasını çalıştır.
-
-Bu migration yeni kolon eklemez; yalnızca şema önbelleğini yeniler.
 
 ## 2. GitHub
 
 Şu dosyaları yükle/değiştir:
 
-- pages/2_Scout_Tarama.py
+- services/academy_content.py
+- services/academy_ui.py
 - pages/4_Company_Report.py
-- database/migration_v9_company_report.sql
+- database/migration_sprint_10_1_academy.sql
 
-## 3. Eski sayfayı sil
+## 3. Eski servis
 
-Aşağıdaki eski detay sayfası varsa sil:
-
-- pages/4_Aday_Detayi.py
-
-Aynı işlevi yapan iki sayfa bırakılmamalıdır.
+Eğer repoda `services/academy_renderer.py` varsa kalabilir; ancak Company Report artık
+`academy_ui.py` kullanır.
 
 ## 4. Commit
 
-Release NABI Scout v9 Company Report
+Release Sprint 10.1 Embedded NABI Academy
 
 ## 5. Reboot
 
@@ -36,18 +32,18 @@ Deploy tamamlandıktan sonra Streamlit uygulamasını reboot et.
 
 ## 6. Test
 
-1. Scanner ekranında 5 şirket tara.
-2. Tarama tablosunda artık uzun Tez Özeti sütunu bulunmamalı.
-3. Tablo altında her şirket için “Raporu Aç” düğmesi görünmeli.
-4. Düğmeye basıldığında Company Report açılmalı.
-5. Company Report'ta:
-   - karar özeti,
-   - yatırım tezi,
-   - güçlü ve zayıf noktalar,
-   - olumlu ve olumsuz senaryo,
-   - yeniden inceleme koşulları,
-   - değerleme görüşü,
-   - puanın kanıtları,
-   - finansal göstergeler,
-   - finansal terim açıklamaları
-   tam metin görünmelidir.
+Company Report ekranında:
+
+- NABI Academy bölümü görünmeli.
+- Kalite, Büyüme, Borç ve Değerleme sekmeleri açılmalı.
+- Her metrik kartında:
+  - değer,
+  - sade değerlendirme etiketi,
+  - şirkete özel yorum,
+  - Basit anlat,
+  - Neden önemli,
+  - Bu beni neden ilgilendiriyor,
+  - genel yorum aralıkları,
+  - dikkat notu
+  görünmeli.
+- Eksik metriklerde “Veri yok” yazmalı; sistem değer uydurmamalı.

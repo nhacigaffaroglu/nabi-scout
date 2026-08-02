@@ -2,7 +2,10 @@ import pandas as pd
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
-from services.academy_renderer import render_metric_explanation
+from services.academy_ui import (
+    render_metric_card,
+    render_metric_explanation,
+)
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -29,7 +32,6 @@ if candidate is None:
 
     query_symbol = st.query_params.get("symbol")
     default_index = 0
-
     labels = []
     row_lookup = {}
 
@@ -71,14 +73,7 @@ with top_right:
         st.switch_page("pages/2_Scout_Tarama.py")
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric(
-    "NABI Skoru",
-    candidate.get("nabi_score") or 0,
-    help=(
-        "Şirketin kalite, büyüme, finansal güç, "
-        "değerleme ve risk bileşenlerinden oluşan genel puanı."
-    ),
-)
+c1.metric("NABI Skoru", candidate.get("nabi_score") or 0)
 c2.metric(
     "Veri Güveni",
     f"%{candidate.get('research_confidence') or 0}",
@@ -91,8 +86,8 @@ c3.metric(
     "Araştırma Güveni",
     candidate.get("conviction_score") or 0,
     help=(
-        "Şirket hakkındaki araştırma sonucunun ne kadar güçlü "
-        "ve tutarlı olduğuna ilişkin birleşik puan."
+        "Şirket hakkındaki araştırma sonucunun ne kadar "
+        "güçlü ve tutarlı olduğuna ilişkin birleşik puan."
     ),
 )
 c4.metric(
@@ -172,7 +167,6 @@ with right:
         st.write("Belirgin tez riski bulunamadı.")
 
 st.subheader("Senaryo analizi")
-
 bull_col, bear_col = st.columns(2)
 
 with bull_col:
@@ -236,29 +230,6 @@ if factors:
         pd.DataFrame(factor_rows),
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "Gösterge": st.column_config.TextColumn(
-                "Gösterge",
-                width="medium",
-            ),
-            "Değer": st.column_config.NumberColumn(
-                "Değer",
-                format="%.2f",
-                width="small",
-            ),
-            "Etkisi": st.column_config.TextColumn(
-                "Etkisi",
-                width="small",
-            ),
-            "Ne anlatıyor?": st.column_config.TextColumn(
-                "Ne anlatıyor?",
-                width="large",
-            ),
-            "NABI yorumu": st.column_config.TextColumn(
-                "NABI yorumu",
-                width="large",
-            ),
-        },
     )
 else:
     st.info(
@@ -289,27 +260,78 @@ for index, (label, key) in enumerate(metric_map):
         "—" if value is None else f"{value:.2f}",
     )
 
-st.subheader("Bu finansal terimler ne demek?")
-academy_keys = []
-for item in factors:
-    key = item.get("academy_key")
-    if key and key not in academy_keys:
-        academy_keys.append(key)
+st.subheader("🎓 NABI Academy — Bu rakamlar ne anlatıyor?")
+st.caption(
+    "Her kart finansal metriği sade dille açıklar ve bu şirket için yorumlar."
+)
 
-if academy_keys:
-    for key in academy_keys[:6]:
-        render_metric_explanation(
-            key,
-            candidate.get(key),
-        )
-else:
-    render_metric_explanation(
-        "data_completeness",
-        candidate.get("data_completeness"),
-        expanded=True,
+academy_tabs = st.tabs([
+    "Kalite",
+    "Büyüme",
+    "Borç ve Güç",
+    "Değerleme",
+])
+
+with academy_tabs[0]:
+    render_metric_card(
+        "roic",
+        candidate.get("roic"),
+    )
+    render_metric_card(
+        "free_cash_flow_margin",
+        candidate.get("free_cash_flow_margin"),
     )
 
+with academy_tabs[1]:
+    render_metric_card(
+        "revenue_cagr_3y",
+        candidate.get("revenue_cagr_3y"),
+    )
+    render_metric_card(
+        "eps_cagr_3y",
+        candidate.get("eps_cagr_3y"),
+    )
+    render_metric_card(
+        "fcf_cagr_3y",
+        candidate.get("fcf_cagr_3y"),
+    )
+
+with academy_tabs[2]:
+    render_metric_card(
+        "debt_to_equity",
+        candidate.get("debt_to_equity"),
+    )
+    render_metric_card(
+        "interest_coverage",
+        candidate.get("interest_coverage"),
+    )
+
+with academy_tabs[3]:
+    render_metric_card(
+        "pe_ratio",
+        candidate.get("pe_ratio"),
+    )
+    render_metric_card(
+        "ev_to_ebit",
+        candidate.get("ev_to_ebit"),
+    )
+    render_metric_card(
+        "peg_ratio_calculated",
+        candidate.get("peg_ratio_calculated"),
+    )
+    render_metric_card(
+        "price_to_fcf",
+        candidate.get("price_to_fcf"),
+    )
+
+st.subheader("Raporun veri güveni")
+render_metric_explanation(
+    "data_completeness",
+    candidate.get("data_completeness"),
+    expanded=True,
+)
+
 st.caption(
-    "Company Report yatırım tavsiyesi üretmez. "
-    "Mevcut finansal verileri açıklanabilir bir araştırma raporuna dönüştürür."
+    "NABI Academy yatırım tavsiyesi üretmez. "
+    "Finansal metrikleri sade ve açıklanabilir hâle getirir."
 )

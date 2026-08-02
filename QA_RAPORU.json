@@ -1,16 +1,15 @@
 {
-  "release": "NABI Scout v9 Company Report",
+  "release": "NABI Scout Sprint 10.1 Embedded Academy",
   "scope_frozen": true,
   "features": [
-    "compact scanner table",
-    "report open buttons",
-    "session-state report navigation",
-    "full investment thesis report",
-    "Turkish score labels",
-    "metric help text",
-    "single-source-of-truth UI"
+    "embedded Academy in Company Report",
+    "plain-language explanations",
+    "why it matters to the investor",
+    "company-specific metric interpretation",
+    "range guidance",
+    "missing-data transparency"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 2
+  "python_files": 3
 }
