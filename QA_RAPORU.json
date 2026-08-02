@@ -1,13 +1,15 @@
 {
-  "release": "NABI Scout v5 Advanced Metrics & Investment Memo",
+  "release": "NABI Scout v6 Research Detail & NABI Akademi",
   "features": [
-    "EV/EBIT",
-    "PEG",
-    "Price/FCF",
-    "Owner earnings proxy",
-    "deterministic investment memo"
+    "plain Turkish financial glossary",
+    "company-specific metric interpretation",
+    "Aday Detayı 2.0",
+    "searchable NABI Academy",
+    "good-value ranges",
+    "daily-life analogies",
+    "data-missing transparency"
   ],
   "python_syntax_check": "passed",
   "secrets_included": false,
-  "python_files": 5
+  "python_files": 4
 }

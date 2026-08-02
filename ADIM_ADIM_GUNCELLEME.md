@@ -1,25 +1,39 @@
-# NABI Scout v5 — Advanced Metrics & Investment Memo
+# NABI Scout v6 — Research Detail & NABI Akademi
 
-1. Supabase SQL Editor'da `database/migration_v5_advanced_metrics.sql` çalıştır.
-2. GitHub'a şu dosyaları yükle:
-   - services/advanced_metrics.py
-   - services/investment_memo.py
-   - services/scanner_v5_engine.py
-   - pages/2_Scout_Tarama.py
-   - pages/4_Aday_Detayi.py
-   - database/migration_v5_advanced_metrics.sql
-3. Commit: `Release NABI Scout v5 Advanced Metrics and Memo`
-4. Streamlit uygulamasını reboot et.
+## 1. Supabase
 
-İlk test:
-- ABD Temiz Hisse Evreni v2
-- Başlangıç 1
-- 5 sembol
-- Eşik 0
-- Minimum veri tamlığı 50
-- Portföy uyumu 55
+SQL Editor'da:
 
-Beklenen:
-- EV/EBIT, PEG ve Fiyat/FCF sütunları görünür.
-- Eksik veri varsa alan None kalır; değer uydurulmaz.
-- Aday Detayı ekranında NABI Investment Memo görünür.
+database/migration_v6_academy.sql
+
+dosyasını çalıştır.
+
+## 2. GitHub
+
+Şu dosyaları yükle/değiştir:
+
+- services/financial_glossary.py
+- services/academy_renderer.py
+- pages/8_NABI_Akademi.py
+- pages/4_Aday_Detayi.py
+- database/migration_v6_academy.sql
+
+Commit:
+
+Release NABI Scout v6 Research Detail and Academy
+
+Deploy tamamlandıktan sonra Streamlit uygulamasını reboot et.
+
+## 3. Test
+
+- Sol menüde NABI Akademi sayfası görünmeli.
+- ROIC, CAGR, FCF, borç ve değerleme kavramları aranabilmeli.
+- Aday Detayı 2.0 ekranında her metrik için:
+  - sade anlatım,
+  - neden önemli,
+  - iyi değer aralığı,
+  - bu şirketteki yorum,
+  - günlük hayattan örnek
+  gösterilmeli.
+- Finansal verisi eksik olan alanlarda sistem değer uydurmamalı;
+  “yeterli veri bulunamadı” demeli.
