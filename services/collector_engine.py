@@ -1,134 +1,179 @@
-from datetime import datetime, timezone
-from services.fmp_client import FMPError
+from __future__ import annotations
 
-def n(value):
+from datetime import datetime, timezone
+
+
+def number(value):
     try:
         return None if value in (None, "") else float(value)
     except (TypeError, ValueError):
         return None
 
-def pct(value):
-    value = n(value)
-    if value is not None and abs(value) <= 2:
-        value *= 100
-    return value
 
 def completeness(values):
-    return round(sum(v is not None for v in values) / len(values) * 100, 1)
+    return round(
+        sum(value is not None for value in values)
+        / len(values) * 100,
+        1,
+    )
+
 
 def scale(value, bad, good):
     if value is None:
         return 50.0
-    return max(0, min(100, (value - bad) / (good - bad) * 100))
+    return max(
+        0,
+        min(100, (value - bad) / (good - bad) * 100),
+    )
+
 
 def inverse(value, good, bad):
     if value is None:
         return 50.0
-    return max(0, min(100, (bad - value) / (bad - good) * 100))
+    return max(
+        0,
+        min(100, (bad - value) / (bad - good) * 100),
+    )
+
 
 class CollectorEngine:
-    def __init__(self, client):
-        self.client = client
+    def __init__(
+        self,
+        fmp_client,
+        sec_financial_client=None,
+    ):
+        self.fmp = fmp_client
+        self.sec = sec_financial_client
 
-    def safe(self, name, callback):
+    def safe(self, name, callback, empty):
         try:
             return callback(), "OK", None
         except Exception as exc:
-            return {}, "ERİŞİLEMEDİ", f"{name}: {exc}"
+            return empty, "ERİŞİLEMEDİ", f"{name}: {exc}"
 
-    def collect(self, symbol, participation_status="Kontrol Et",
-                participation_score=60, portfolio_fit=55):
-        errors, endpoint_status = [], {}
+    def collect(
+        self,
+        symbol,
+        *,
+        cik=None,
+        participation_status="Kontrol Et",
+        participation_score=60,
+        portfolio_fit=55,
+    ):
+        errors = []
+        endpoint_status = {}
 
-        profile, endpoint_status["profile"], err = self.safe(
-            "profile", lambda: self.client.profile(symbol))
-        if err: errors.append(err)
+        profile, endpoint_status["fmp_profile"], error = self.safe(
+            "FMP profile",
+            lambda: self.fmp.profile(symbol),
+            {},
+        )
+        if error:
+            errors.append(error)
 
-        quote, endpoint_status["quote"], err = self.safe(
-            "quote", lambda: self.client.quote(symbol))
-        if err: errors.append(err)
+        quote, endpoint_status["fmp_quote"], error = self.safe(
+            "FMP quote",
+            lambda: self.fmp.quote(symbol),
+            {},
+        )
+        if error:
+            errors.append(error)
 
-        income, endpoint_status["income"], err = self.safe(
-            "income", lambda: self.client.income_statement(symbol))
-        if err: errors.append(err)
+        sec_values = {}
+        if cik and self.sec:
+            payload, endpoint_status["sec_companyfacts"], error = self.safe(
+                "SEC Company Facts",
+                lambda: self.sec.company_facts(cik),
+                {},
+            )
+            if error:
+                errors.append(error)
+            elif payload:
+                sec_values = self.sec.extract_financials(payload)
+        else:
+            endpoint_status["sec_companyfacts"] = "CIK YOK"
 
-        balance, endpoint_status["balance"], err = self.safe(
-            "balance", lambda: self.client.balance_sheet(symbol))
-        if err: errors.append(err)
+        price = number(
+            quote.get("price")
+            or profile.get("price")
+        )
+        market_cap = number(
+            quote.get("marketCap")
+            or profile.get("marketCap")
+            or profile.get("mktCap")
+        )
 
-        cashflow, endpoint_status["cashflow"], err = self.safe(
-            "cashflow", lambda: self.client.cash_flow(symbol))
-        if err: errors.append(err)
+        revenue = sec_values.get("revenue")
+        revenue_growth = sec_values.get("revenue_growth")
+        eps_growth = sec_values.get("eps_growth")
+        gross_margin = sec_values.get("gross_margin")
+        operating_margin = sec_values.get("operating_margin")
+        net_margin = sec_values.get("net_margin")
+        free_cash_flow = sec_values.get("free_cash_flow")
+        fcf_margin = sec_values.get("free_cash_flow_margin")
+        roic = sec_values.get("roic")
+        net_debt = sec_values.get("net_debt")
+        current_ratio = sec_values.get("current_ratio")
+        debt_to_equity = sec_values.get("debt_to_equity")
 
-        ratios, endpoint_status["ratios"], err = self.safe(
-            "ratios", lambda: self.client.ratios_ttm(symbol))
-        if err: errors.append(err)
-
-        metrics, endpoint_status["metrics"], err = self.safe(
-            "metrics", lambda: self.client.key_metrics_ttm(symbol))
-        if err: errors.append(err)
-
-        growth, endpoint_status["growth"], err = self.safe(
-            "growth", lambda: self.client.income_growth(symbol))
-        if err: errors.append(err)
-
-        inc = income[0] if isinstance(income, list) and income else {}
-        bal = balance[0] if isinstance(balance, list) and balance else {}
-        cf = cashflow[0] if isinstance(cashflow, list) and cashflow else {}
-
-        price = n(quote.get("price") or profile.get("price"))
-        market_cap = n(quote.get("marketCap") or profile.get("marketCap") or profile.get("mktCap"))
-        revenue = n(inc.get("revenue"))
-        op_income = n(inc.get("operatingIncome"))
-        net_income = n(inc.get("netIncome"))
-        gross_profit = n(inc.get("grossProfit"))
-        ebitda = n(inc.get("ebitda"))
-        free_cash_flow = n(cf.get("freeCashFlow"))
-        debt = n(bal.get("totalDebt"))
-        cash = n(bal.get("cashAndCashEquivalents") or bal.get("cashAndShortTermInvestments"))
-
-        operating_margin = op_income / revenue * 100 if revenue and op_income is not None else None
-        net_margin = net_income / revenue * 100 if revenue and net_income is not None else None
-        gross_margin = gross_profit / revenue * 100 if revenue and gross_profit is not None else None
-        fcf_margin = free_cash_flow / revenue * 100 if revenue and free_cash_flow is not None else None
-        net_debt = debt - cash if debt is not None and cash is not None else None
-        net_debt_ebitda = net_debt / ebitda if net_debt is not None and ebitda else None
-
-        roic = pct(metrics.get("roicTTM") or metrics.get("returnOnInvestedCapitalTTM"))
-        pe = n(quote.get("pe") or ratios.get("priceToEarningsRatioTTM") or ratios.get("peRatioTTM"))
-        peg = n(ratios.get("priceEarningsToGrowthRatioTTM") or ratios.get("pegRatioTTM"))
-        current_ratio = n(ratios.get("currentRatioTTM"))
-        debt_to_equity = n(ratios.get("debtEquityRatioTTM") or ratios.get("debtToEquityRatioTTM"))
-        revenue_growth = pct(growth.get("growthRevenue") or growth.get("revenueGrowth"))
-        eps_growth = pct(growth.get("growthEPS") or growth.get("epsGrowth"))
+        pe = number(quote.get("pe"))
+        peg = None
 
         data_completeness = completeness([
-            price, market_cap, revenue, operating_margin, net_margin,
-            fcf_margin, roic, net_debt_ebitda, pe, peg,
-            revenue_growth, eps_growth,
+            price,
+            market_cap,
+            revenue,
+            revenue_growth,
+            eps_growth,
+            operating_margin,
+            net_margin,
+            fcf_margin,
+            roic,
+            current_ratio,
+            debt_to_equity,
+            pe,
         ])
 
         quality = (
-            scale(roic, 5, 30) * .35 +
-            scale(operating_margin, 5, 35) * .25 +
-            scale(net_margin, 3, 25) * .15 +
-            scale(gross_margin, 15, 70) * .10 +
-            scale(fcf_margin, 2, 25) * .15
+            scale(roic, 5, 30) * 0.35
+            + scale(operating_margin, 5, 35) * 0.25
+            + scale(net_margin, 3, 25) * 0.15
+            + scale(gross_margin, 15, 70) * 0.10
+            + scale(fcf_margin, 2, 25) * 0.15
         )
-        growth_score = scale(revenue_growth, 0, 25) * .45 + scale(eps_growth, 0, 30) * .55
-        valuation = inverse(pe, 12, 45) * .55 + inverse(peg, .8, 3) * .45
-        health = (
-            inverse(net_debt_ebitda, 0, 4) * .45 +
-            scale(current_ratio, .8, 2.5) * .25 +
-            inverse(debt_to_equity, .2, 2.5) * .30
+        growth_score = (
+            scale(revenue_growth, 0, 25) * 0.45
+            + scale(eps_growth, 0, 30) * 0.55
         )
-        penalty = 1 if data_completeness >= 80 else .9 if data_completeness >= 65 else .78 if data_completeness >= 50 else .6
-        raw = (
-            quality * .24 + growth_score * .18 + valuation * .16 +
-            health * .16 + portfolio_fit * .14 + 70 * .04 +
-            participation_score * .08
+        valuation = (
+            inverse(pe, 12, 45) * 0.70
+            + inverse(peg, 0.8, 3.0) * 0.30
         )
-        nabi_score = round(max(0, min(100, raw * penalty)), 1)
+        financial_health = (
+            scale(current_ratio, 0.8, 2.5) * 0.35
+            + inverse(debt_to_equity, 0.2, 2.5) * 0.65
+        )
+
+        penalty = (
+            1.0 if data_completeness >= 80
+            else 0.9 if data_completeness >= 65
+            else 0.78 if data_completeness >= 50
+            else 0.60
+        )
+
+        raw_score = (
+            quality * 0.24
+            + growth_score * 0.18
+            + valuation * 0.16
+            + financial_health * 0.16
+            + portfolio_fit * 0.14
+            + 70 * 0.04
+            + participation_score * 0.08
+        )
+        nabi_score = round(
+            max(0, min(100, raw_score * penalty)),
+            1,
+        )
 
         if participation_status == "Uygun Değil":
             decision = "ELE"
@@ -144,12 +189,25 @@ class CollectorEngine:
 
         candidate = {
             "symbol": symbol,
-            "company_name": profile.get("companyName") or quote.get("name") or symbol,
-            "asset_type": "ETF" if profile.get("isEtf") else "Hisse",
+            "company_name": (
+                profile.get("companyName")
+                or quote.get("name")
+                or symbol
+            ),
+            "asset_type": (
+                "ETF" if profile.get("isEtf") else "Hisse"
+            ),
             "market": "ABD",
-            "currency": profile.get("currency") or quote.get("currency") or "USD",
-            "country": profile.get("country"),
-            "sector_theme": profile.get("sector") or profile.get("industry"),
+            "currency": (
+                profile.get("currency")
+                or quote.get("currency")
+                or "USD"
+            ),
+            "country": profile.get("country") or "US",
+            "sector_theme": (
+                profile.get("sector")
+                or profile.get("industry")
+            ),
             "participation_status": participation_status,
             "participation_score": participation_score,
             "research_status": "Otomatik tarandı",
@@ -165,7 +223,6 @@ class CollectorEngine:
             "free_cash_flow_margin": fcf_margin,
             "roic": roic,
             "net_debt": net_debt,
-            "net_debt_ebitda": net_debt_ebitda,
             "current_ratio": current_ratio,
             "debt_to_equity": debt_to_equity,
             "pe_ratio": pe,
@@ -173,22 +230,39 @@ class CollectorEngine:
             "quality_score": round(quality, 1),
             "growth_score": round(growth_score, 1),
             "valuation_score": round(valuation, 1),
-            "financial_health_score": round(health, 1),
+            "financial_health_score": round(
+                financial_health,
+                1,
+            ),
             "portfolio_fit_score": portfolio_fit,
             "liquidity_score": 70,
             "nabi_score": nabi_score,
             "decision": decision,
             "data_completeness": data_completeness,
-            "data_source": "FMP",
-            "source_updated_at": datetime.now(timezone.utc).isoformat(),
-            "collector_notes": " | ".join(errors) if errors else None,
+            "data_source": "SEC + FMP",
+            "source_updated_at": (
+                datetime.now(timezone.utc).isoformat()
+            ),
+            "collector_notes": (
+                " | ".join(errors)
+                if errors else None
+            ),
             "source_url": profile.get("website"),
             "notes": profile.get("description"),
+            "cik": cik,
+            "financial_period_end": sec_values.get(
+                "financial_period_end"
+            ),
         }
+
         return {
             "symbol": symbol,
             "candidate": candidate,
             "endpoint_status": endpoint_status,
             "errors": errors,
-            "status": "OK" if data_completeness >= 60 else "KISMİ VERİ",
+            "status": (
+                "OK"
+                if data_completeness >= 60
+                else "KISMİ VERİ"
+            ),
         }

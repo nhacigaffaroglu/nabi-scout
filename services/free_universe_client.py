@@ -20,10 +20,26 @@ class FreeUniverseClient:
         "https://www.nasdaqtrader.com/dynamic/symdir/otherlisted.txt"
     )
 
+    EXCLUDED_NAME_TERMS = (
+        "warrant",
+        "warrants",
+        "unit",
+        "units",
+        "right",
+        "rights",
+        "preferred",
+        "depositary share",
+        "depositary shares",
+        "note due",
+        "notes due",
+        "bond",
+        "debenture",
+    )
+
     def __init__(
         self,
         *,
-        contact_email: str = "nabi-scout@example.com",
+        contact_email: str,
         timeout: int = 30,
     ) -> None:
         self.timeout = timeout
@@ -46,20 +62,9 @@ class FreeUniverseClient:
                 f"SEC kaynağı HTTP {response.status_code} döndürdü."
             )
 
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise UniverseSourceError(
-                "SEC kaynağı geçerli JSON döndürmedi."
-            ) from exc
-
+        payload = response.json()
         fields = payload.get("fields") or []
         data = payload.get("data") or []
-
-        if not fields or not data:
-            raise UniverseSourceError(
-                "SEC ticker dosyasında beklenen alanlar bulunamadı."
-            )
 
         rows = []
         for values in data:
@@ -67,7 +72,6 @@ class FreeUniverseClient:
             ticker = str(row.get("ticker") or "").strip().upper()
             if not ticker:
                 continue
-
             rows.append({
                 "symbol": ticker,
                 "company_name": row.get("name"),
@@ -75,38 +79,38 @@ class FreeUniverseClient:
                 "cik": row.get("cik"),
                 "source_sec": True,
             })
-
         return rows
 
     def get_nasdaq_listed(self) -> List[Dict[str, Any]]:
-        text = self._download_text(self.NASDAQ_LISTED_URL)
-        rows = self._parse_pipe_file(text)
-
+        rows = self._parse_pipe_file(
+            self._download_text(self.NASDAQ_LISTED_URL)
+        )
         result = []
-        for row in rows:
-            if row.get("Test Issue") == "Y":
-                continue
-            if str(row.get("Symbol") or "").startswith("File Creation Time"):
-                continue
 
+        for row in rows:
             symbol = str(row.get("Symbol") or "").strip().upper()
-            if not symbol:
+            name = str(row.get("Security Name") or "").strip()
+
+            if not symbol or row.get("Test Issue") == "Y":
+                continue
+            if symbol.startswith("File Creation Time"):
+                continue
+            if self._excluded_security_name(name):
                 continue
 
             result.append({
                 "symbol": symbol,
-                "company_name": row.get("Security Name"),
+                "company_name": name,
                 "exchange": "NASDAQ",
                 "is_etf": row.get("ETF") == "Y",
-                "test_issue": False,
                 "source_nasdaq": True,
             })
         return result
 
     def get_other_listed(self) -> List[Dict[str, Any]]:
-        text = self._download_text(self.OTHER_LISTED_URL)
-        rows = self._parse_pipe_file(text)
-
+        rows = self._parse_pipe_file(
+            self._download_text(self.OTHER_LISTED_URL)
+        )
         exchange_map = {
             "A": "NYSE American",
             "N": "NYSE",
@@ -114,33 +118,31 @@ class FreeUniverseClient:
             "Z": "Cboe BZX",
             "V": "IEX",
         }
-
         result = []
-        for row in rows:
-            if row.get("Test Issue") == "Y":
-                continue
-            if str(row.get("ACT Symbol") or "").startswith(
-                "File Creation Time"
-            ):
-                continue
 
+        for row in rows:
             symbol = str(
                 row.get("NASDAQ Symbol")
                 or row.get("ACT Symbol")
                 or ""
             ).strip().upper()
-            if not symbol:
+            name = str(row.get("Security Name") or "").strip()
+
+            if not symbol or row.get("Test Issue") == "Y":
+                continue
+            if symbol.startswith("File Creation Time"):
+                continue
+            if self._excluded_security_name(name):
                 continue
 
             result.append({
                 "symbol": symbol,
-                "company_name": row.get("Security Name"),
+                "company_name": name,
                 "exchange": exchange_map.get(
                     row.get("Exchange"),
                     row.get("Exchange"),
                 ),
                 "is_etf": row.get("ETF") == "Y",
-                "test_issue": False,
                 "source_nasdaq": True,
             })
         return result
@@ -149,15 +151,20 @@ class FreeUniverseClient:
         response = self.session.get(url, timeout=self.timeout)
         if response.status_code != 200:
             raise UniverseSourceError(
-                f"Nasdaq Trader kaynağı HTTP "
-                f"{response.status_code} döndürdü."
+                f"Nasdaq Trader HTTP {response.status_code}."
             )
         return response.text
 
     @staticmethod
     def _parse_pipe_file(text: str) -> List[Dict[str, str]]:
-        reader = csv.DictReader(
+        return list(csv.DictReader(
             io.StringIO(text),
             delimiter="|",
+        ))
+
+    def _excluded_security_name(self, name: str) -> bool:
+        lowered = name.lower()
+        return any(
+            term in lowered
+            for term in self.EXCLUDED_NAME_TERMS
         )
-        return [dict(row) for row in reader]

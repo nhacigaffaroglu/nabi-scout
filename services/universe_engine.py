@@ -46,22 +46,20 @@ class UniverseEngine:
             row["symbol"]: row
             for row in sec_rows
         }
-
         allowed = {
             self._normalize_exchange(value)
             for value in exchanges
         }
-
-        combined = nasdaq_rows + other_rows
-        unique: Dict[str, Dict[str, Any]] = {}
         search_text = name_contains.strip().lower()
+        unique: Dict[str, Dict[str, Any]] = {}
 
-        for row in combined:
+        for row in nasdaq_rows + other_rows:
             symbol = row["symbol"]
             exchange = self._normalize_exchange(
                 row.get("exchange")
             )
             is_etf = bool(row.get("is_etf"))
+            sec = sec_map.get(symbol)
 
             if allowed and exchange not in allowed:
                 continue
@@ -70,16 +68,19 @@ class UniverseEngine:
             if not is_etf and not include_common_stocks:
                 continue
 
-            sec = sec_map.get(symbol, {})
+            # Hisse evreninde SEC CIK kaydı bulunmayan ürünü alma.
+            if not is_etf and not sec:
+                continue
+
             company_name = (
                 sec.get("company_name")
-                or row.get("company_name")
-                or symbol
-            )
+                if sec else row.get("company_name")
+            ) or symbol
 
             if search_text:
-                haystack = f"{symbol} {company_name}".lower()
-                if search_text not in haystack:
+                if search_text not in (
+                    f"{symbol} {company_name}".lower()
+                ):
                     continue
 
             unique[symbol] = {
@@ -95,7 +96,7 @@ class UniverseEngine:
                 "beta": None,
                 "is_etf": is_etf,
                 "is_actively_trading": True,
-                "cik": sec.get("cik"),
+                "cik": sec.get("cik") if sec else None,
                 "universe_source": (
                     "Nasdaq Trader + SEC"
                     if sec else "Nasdaq Trader"
@@ -117,12 +118,8 @@ class UniverseEngine:
     @staticmethod
     def _normalize_exchange(value: Optional[str]) -> str:
         text = str(value or "").strip().upper()
-
         mapping = {
             "NASDAQ": "NASDAQ",
-            "NASDAQ GLOBAL SELECT MARKET": "NASDAQ",
-            "NASDAQ GLOBAL MARKET": "NASDAQ",
-            "NASDAQ CAPITAL MARKET": "NASDAQ",
             "NYSE": "NYSE",
             "NEW YORK STOCK EXCHANGE": "NYSE",
             "NYSE AMERICAN": "AMEX",
