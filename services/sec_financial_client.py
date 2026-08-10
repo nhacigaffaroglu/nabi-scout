@@ -300,7 +300,10 @@ class SECFinancialClient:
                 net_income_latest,
                 revenue_latest,
             ),
-            "operating_cash_flow": operating_cash_latest,
+            "operating_income": operating_income_latest,
+"nopat": nopat,
+"invested_capital": invested_capital,
+"tax_rate": tax_rate,"operating_cash_flow": operating_cash_latest,
             "capital_expenditure": capex_latest,
             "free_cash_flow": free_cash_flow,
             "free_cash_flow_margin": self._margin(
