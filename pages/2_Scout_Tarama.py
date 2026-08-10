@@ -168,8 +168,10 @@ if "latest_scan_candidates" not in st.session_state:
     st.session_state["latest_scan_candidates"] = []
 
 if st.button("Sprint 9 taramasını başlat", type="primary"):
+    fmp_client = FMPClient.from_streamlit_secrets()
+    fmp_client.reset_scan_state()
     engine = ScannerV8Engine(
-        FMPClient.from_streamlit_secrets(),
+        fmp_client,
         SECFinancialClient(contact_email=sec_email.strip()),
     )
 

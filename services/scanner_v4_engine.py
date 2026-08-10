@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from services.fmp_client import FMPError
 from services.nabi_score_v4 import calculate_nabi_score_v4
 from services.security_classifier import classify_security
 
@@ -25,9 +26,29 @@ class ScannerV4Engine:
         self.fmp = fmp_client
         self.sec = sec_client
 
+    def _endpoint_status_from_error(self, exc: Exception) -> str:
+        if isinstance(exc, FMPError):
+            mapping = {
+                "rate_limit": "RATE_LIMIT",
+                "plan_restricted": "PLAN_RESTRICTED",
+                "auth": "AUTH_ERROR",
+                "timeout": "TIMEOUT",
+                "network": "NETWORK_ERROR",
+                "not_found": "NOT_FOUND",
+                "transient_http": "SERVER_ERROR",
+                "http_error": "SERVER_ERROR",
+                "malformed": "MALFORMED",
+                "empty": "EMPTY",
+            }
+            return mapping.get(exc.error_class, "ERİŞİLEMEDİ")
+        return "ERİŞİLEMEDİ"
+
     def _safe(self, label, callback, fallback):
         try:
             return callback(), "OK", None
+        except FMPError as exc:
+            status = self._endpoint_status_from_error(exc)
+            return fallback, status, f"{label}: {exc}"
         except Exception as exc:
             return fallback, "ERİŞİLEMEDİ", f"{label}: {exc}"
 
@@ -118,6 +139,8 @@ class ScannerV4Engine:
             or profile.get("volAvg")
         )
         pe_ratio = number(quote.get("pe"))
+        pe_source = "quote" if pe_ratio is not None else None
+        ratios_unavailable = False
         if pe_ratio is None:
             ratios, endpoint_status["fmp_ratios_ttm"], error = self._safe(
                 "FMP ratios_ttm",
@@ -126,11 +149,23 @@ class ScannerV4Engine:
             )
             if error:
                 errors.append(error)
+                if endpoint_status["fmp_ratios_ttm"] != "OK":
+                    ratios_unavailable = True
             elif ratios:
                 pe_ratio = number(
                     ratios.get("priceToEarningsRatioTTM")
                     or ratios.get("priceToEarningsDilutedRatioTTM")
                 )
+                if pe_ratio is not None:
+                    pe_source = "ratios_ttm"
+            if pe_ratio is None:
+                if ratios_unavailable or any(
+                    endpoint_status.get(key) not in (None, "OK")
+                    for key in ("fmp_profile", "fmp_quote", "fmp_ratios_ttm")
+                ):
+                    pe_source = "unavailable"
+                else:
+                    pe_source = "missing"
 
         shares = number(
             quote.get("sharesOutstanding")
@@ -310,6 +345,15 @@ class ScannerV4Engine:
             "annual_periods_found": financials.get("annual_periods_found"),
             "financial_currency": financials.get("financial_currency"),
             "financial_taxonomy": financials.get("financial_taxonomy"),
+            "pe_source": pe_source,
+            "fmp_source_status": {
+                key: endpoint_status.get(key)
+                for key in (
+                    "fmp_profile",
+                    "fmp_quote",
+                    "fmp_ratios_ttm",
+                )
+            },
             "scanner_version": "Scanner v4",
             "exclude_reason": None,
         }
