@@ -118,6 +118,20 @@ class ScannerV4Engine:
             or profile.get("volAvg")
         )
         pe_ratio = number(quote.get("pe"))
+        if pe_ratio is None:
+            ratios, endpoint_status["fmp_ratios_ttm"], error = self._safe(
+                "FMP ratios_ttm",
+                lambda: self.fmp.ratios_ttm(symbol),
+                {},
+            )
+            if error:
+                errors.append(error)
+            elif ratios:
+                pe_ratio = number(
+                    ratios.get("priceToEarningsRatioTTM")
+                    or ratios.get("priceToEarningsDilutedRatioTTM")
+                )
+
         shares = number(
             quote.get("sharesOutstanding")
             or profile.get("sharesOutstanding")

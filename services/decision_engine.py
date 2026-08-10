@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+
+def _component_score(value: Optional[float], default: float = 50.0) -> float:
+    if value is None:
+        return default
+    return float(value)
 
 
 def _grade(
@@ -35,10 +41,10 @@ def build_decision(
 ) -> Dict[str, Any]:
     score = float(candidate.get("nabi_score") or 0)
     confidence = float(candidate.get("research_confidence") or 0)
-    risk = float(candidate.get("risk_score") or 50)
-    valuation = float(candidate.get("valuation_score") or 50)
-    quality = float(candidate.get("quality_score") or 50)
-    growth = float(candidate.get("growth_score") or 50)
+    risk = _component_score(candidate.get("risk_score"))
+    valuation = _component_score(candidate.get("valuation_score"))
+    quality = _component_score(candidate.get("quality_score"))
+    growth = _component_score(candidate.get("growth_score"))
     completeness = float(candidate.get("data_completeness") or 0)
 
     positive = candidate.get("score_positive_factors") or []
