@@ -10,6 +10,119 @@ class SECFinancialError(RuntimeError):
     pass
 
 
+_ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "40-F"}
+
+_US_GAAP_TAGS = {
+    "revenue": [
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+    ],
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+    "operating_income": ["OperatingIncomeLoss"],
+    "gross_profit": ["GrossProfit"],
+    "operating_cash": [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+    ],
+    "capex": [
+        "PaymentsToAcquirePropertyPlantAndEquipment",
+        "PaymentsForAdditionsToPropertyPlantAndEquipment",
+    ],
+    "eps": [
+        "EarningsPerShareDiluted",
+        "EarningsPerShareBasicAndDiluted",
+    ],
+    "shares": [
+        "WeightedAverageNumberOfDilutedSharesOutstanding",
+        "WeightedAverageNumberOfSharesOutstandingBasic",
+    ],
+    "interest_expense": [
+        "InterestExpenseNonOperating",
+        "InterestAndDebtExpense",
+        "InterestExpense",
+    ],
+    "pretax_income": [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ],
+    "tax_expense": ["IncomeTaxExpenseBenefit"],
+    "dividends": [
+        "PaymentsOfDividends",
+        "PaymentsOfDividendsCommonStock",
+    ],
+    "assets": ["Assets"],
+    "equity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ],
+    "cash": [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    ],
+    "current_assets": ["AssetsCurrent"],
+    "current_liabilities": ["LiabilitiesCurrent"],
+}
+
+_IFRS_TAGS = {
+    "revenue": ["Revenue", "RevenueFromContractsWithCustomers"],
+    "net_income": [
+        "ProfitLoss",
+        "ProfitLossAttributableToOwnersOfParent",
+    ],
+    "operating_income": [
+        "ProfitLossFromOperatingActivities",
+        "OperatingProfitLoss",
+    ],
+    "gross_profit": ["GrossProfit"],
+    "operating_cash": [
+        "CashFlowsFromUsedInOperatingActivities",
+        "NetCashFromUsedInOperatingActivities",
+    ],
+    "capex": [
+        "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+    ],
+    "eps": [
+        "DilutedEarningsLossPerShare",
+        "BasicAndDilutedEarningsLossPerShare",
+        "BasicEarningsLossPerShare",
+    ],
+    "shares": [
+        "WeightedAverageShares",
+        "AdjustedWeightedAverageShares",
+    ],
+    "interest_expense": [
+        "FinanceCosts",
+        "InterestExpenseOnBorrowings",
+    ],
+    "pretax_income": ["ProfitLossBeforeTax"],
+    "tax_expense": [
+        "IncomeTaxExpenseContinuingOperations",
+        "IncomeTaxExpense",
+    ],
+    "dividends": ["DividendsPaid"],
+    "assets": ["Assets"],
+    "equity": ["Equity", "EquityAttributableToOwnersOfParent"],
+    "cash": ["CashAndCashEquivalents"],
+    "current_assets": ["CurrentAssets"],
+    "current_liabilities": ["CurrentLiabilities"],
+}
+
+_US_GAAP_DEBT_TAGS = [
+    "LongTermDebtAndFinanceLeaseObligationsCurrent",
+    "LongTermDebtCurrent",
+    "ShortTermBorrowings",
+    "LongTermDebtNoncurrent",
+    "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
+]
+
+_IFRS_DEBT_TAGS = [
+    "CurrentPortionOfLongtermBorrowings",
+    "ShorttermBorrowings",
+    "LongtermBorrowings",
+]
+
+
 class SECFinancialClient:
     BASE_URL = "https://data.sec.gov/api/xbrl/companyfacts"
 
@@ -61,123 +174,113 @@ class SECFinancialClient:
         self,
         payload: Dict[str, Any],
     ) -> Dict[str, Optional[float]]:
-        facts = payload.get("facts", {}).get("us-gaap", {})
+        taxonomy, facts, currency = self._resolve_facts(payload)
+        if not facts or not currency:
+            return self._empty_financials(taxonomy)
+
+        tag_map = (
+            _US_GAAP_TAGS
+            if taxonomy == "us-gaap"
+            else _IFRS_TAGS
+        )
+        monetary_units = [currency]
+        eps_units = [
+            f"{currency}/shares",
+            f"{currency} / shares",
+        ]
+        share_units = ["shares"]
 
         revenue = self._annual_series(
             facts,
-            [
-                "RevenueFromContractWithCustomerExcludingAssessedTax",
-                "Revenues",
-                "SalesRevenueNet",
-            ],
-            ["USD"],
+            tag_map["revenue"],
+            monetary_units,
         )
         net_income = self._annual_series(
             facts,
-            ["NetIncomeLoss", "ProfitLoss"],
-            ["USD"],
+            tag_map["net_income"],
+            monetary_units,
         )
         operating_income = self._annual_series(
             facts,
-            ["OperatingIncomeLoss"],
-            ["USD"],
+            tag_map["operating_income"],
+            monetary_units,
         )
         gross_profit = self._annual_series(
             facts,
-            ["GrossProfit"],
-            ["USD"],
+            tag_map["gross_profit"],
+            monetary_units,
         )
         operating_cash = self._annual_series(
             facts,
-            [
-                "NetCashProvidedByUsedInOperatingActivities",
-                "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
-            ],
-            ["USD"],
+            tag_map["operating_cash"],
+            monetary_units,
         )
         capex = self._annual_series(
             facts,
-            [
-                "PaymentsToAcquirePropertyPlantAndEquipment",
-                "PaymentsForAdditionsToPropertyPlantAndEquipment",
-            ],
-            ["USD"],
+            tag_map["capex"],
+            monetary_units,
         )
         eps = self._annual_series(
             facts,
-            [
-                "EarningsPerShareDiluted",
-                "EarningsPerShareBasicAndDiluted",
-            ],
-            ["USD/shares", "USD / shares"],
+            tag_map["eps"],
+            eps_units,
         )
         shares = self._annual_series(
             facts,
-            [
-                "WeightedAverageNumberOfDilutedSharesOutstanding",
-                "WeightedAverageNumberOfSharesOutstandingBasic",
-            ],
-            ["shares"],
+            tag_map["shares"],
+            share_units,
         )
         interest_expense = self._annual_series(
             facts,
-            [
-                "InterestExpenseNonOperating",
-                "InterestAndDebtExpense",
-                "InterestExpense",
-            ],
-            ["USD"],
+            tag_map["interest_expense"],
+            monetary_units,
         )
         pretax_income = self._annual_series(
             facts,
-            [
-                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
-            ],
-            ["USD"],
+            tag_map["pretax_income"],
+            monetary_units,
         )
         tax_expense = self._annual_series(
             facts,
-            ["IncomeTaxExpenseBenefit"],
-            ["USD"],
+            tag_map["tax_expense"],
+            monetary_units,
         )
         dividends = self._annual_series(
             facts,
-            [
-                "PaymentsOfDividends",
-                "PaymentsOfDividendsCommonStock",
-            ],
-            ["USD"],
+            tag_map["dividends"],
+            monetary_units,
         )
 
-        assets = self._instant_series(facts, ["Assets"], ["USD"])
+        assets = self._instant_series(
+            facts,
+            tag_map["assets"],
+            monetary_units,
+        )
         equity = self._instant_series(
             facts,
-            [
-                "StockholdersEquity",
-                "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-            ],
-            ["USD"],
+            tag_map["equity"],
+            monetary_units,
         )
         cash = self._instant_series(
             facts,
-            [
-                "CashAndCashEquivalentsAtCarryingValue",
-                "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
-            ],
-            ["USD"],
+            tag_map["cash"],
+            monetary_units,
         )
         current_assets = self._instant_series(
             facts,
-            ["AssetsCurrent"],
-            ["USD"],
+            tag_map["current_assets"],
+            monetary_units,
         )
         current_liabilities = self._instant_series(
             facts,
-            ["LiabilitiesCurrent"],
-            ["USD"],
+            tag_map["current_liabilities"],
+            monetary_units,
         )
-        debt = self._debt_series(facts)
+        debt = self._debt_series(
+            facts,
+            monetary_units,
+            taxonomy=taxonomy,
+        )
 
         latest = lambda series: self._value(series, 0)
 
@@ -301,9 +404,10 @@ class SECFinancialClient:
                 revenue_latest,
             ),
             "operating_income": operating_income_latest,
-"nopat": nopat,
-"invested_capital": invested_capital,
-"tax_rate": tax_rate,"operating_cash_flow": operating_cash_latest,
+            "nopat": nopat,
+            "invested_capital": invested_capital,
+            "tax_rate": tax_rate,
+            "operating_cash_flow": operating_cash_latest,
             "capital_expenditure": capex_latest,
             "free_cash_flow": free_cash_flow,
             "free_cash_flow_margin": self._margin(
@@ -334,6 +438,86 @@ class SECFinancialClient:
                 revenue[0]["end"] if revenue else None
             ),
             "annual_periods_found": len(revenue),
+            "financial_currency": currency,
+            "financial_taxonomy": taxonomy,
+        }
+
+    def _resolve_facts(
+        self,
+        payload: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any], Optional[str]]:
+        all_facts = payload.get("facts", {})
+
+        us_gaap = all_facts.get("us-gaap", {})
+        if us_gaap:
+            currency = self._detect_currency(us_gaap, "us-gaap")
+            if currency:
+                return "us-gaap", us_gaap, currency
+
+        ifrs = all_facts.get("ifrs-full", {})
+        if ifrs:
+            currency = self._detect_currency(ifrs, "ifrs-full")
+            if currency:
+                return "ifrs-full", ifrs, currency
+
+        return "us-gaap", us_gaap, None
+
+    def _detect_currency(
+        self,
+        facts: Dict[str, Any],
+        taxonomy: str,
+    ) -> Optional[str]:
+        tag_map = (
+            _US_GAAP_TAGS
+            if taxonomy == "us-gaap"
+            else _IFRS_TAGS
+        )
+
+        for tag in tag_map["revenue"]:
+            unit_map = facts.get(tag, {}).get("units", {})
+            if not unit_map:
+                continue
+
+            if taxonomy == "us-gaap" and "USD" in unit_map:
+                if self._has_annual_entries(unit_map["USD"]):
+                    return "USD"
+
+            for unit in sorted(unit_map):
+                if unit in {"shares", "pure"} or "/shares" in unit:
+                    continue
+                if self._has_annual_entries(unit_map[unit]):
+                    return unit.split("/")[0]
+
+        return None
+
+    @staticmethod
+    def _has_annual_entries(entries: Sequence[Dict[str, Any]]) -> bool:
+        for item in entries:
+            if item.get("form") not in _ANNUAL_FORMS:
+                continue
+            start = item.get("start")
+            end = item.get("end")
+            if not start or not end:
+                continue
+            try:
+                days = (
+                    date.fromisoformat(end)
+                    - date.fromisoformat(start)
+                ).days
+            except ValueError:
+                continue
+            if 300 <= days <= 430:
+                return True
+        return False
+
+    @staticmethod
+    def _empty_financials(taxonomy: str) -> Dict[str, Optional[float]]:
+        return {
+            "revenue": None,
+            "financial_period_end": None,
+            "annual_periods_found": 0,
+            "financial_currency": None,
+            "financial_taxonomy": taxonomy,
         }
 
     def _annual_series(
@@ -348,12 +532,7 @@ class SECFinancialClient:
             entries = self._entries(facts, tag, units)
 
             for item in entries:
-                if item.get("form") not in {
-                    "10-K",
-                    "10-K/A",
-                    "20-F",
-                    "40-F",
-                }:
+                if item.get("form") not in _ANNUAL_FORMS:
                     continue
 
                 start = item.get("start")
@@ -388,12 +567,7 @@ class SECFinancialClient:
         for tag in tags:
             selected = []
             for item in self._entries(facts, tag, units):
-                if item.get("form") not in {
-                    "10-K",
-                    "10-K/A",
-                    "20-F",
-                    "40-F",
-                }:
+                if item.get("form") not in _ANNUAL_FORMS:
                     continue
 
                 end = item.get("end")
@@ -416,24 +590,20 @@ class SECFinancialClient:
     def _debt_series(
         self,
         facts: Dict[str, Any],
+        units: Sequence[str],
+        *,
+        taxonomy: str,
     ) -> List[Dict[str, Any]]:
-        tags = [
-            "LongTermDebtAndFinanceLeaseObligationsCurrent",
-            "LongTermDebtCurrent",
-            "ShortTermBorrowings",
-            "LongTermDebtNoncurrent",
-            "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
-        ]
+        tags = (
+            _US_GAAP_DEBT_TAGS
+            if taxonomy == "us-gaap"
+            else _IFRS_DEBT_TAGS
+        )
         by_end: Dict[str, Dict[str, Any]] = {}
 
         for tag in tags:
-            for item in self._entries(facts, tag, ["USD"]):
-                if item.get("form") not in {
-                    "10-K",
-                    "10-K/A",
-                    "20-F",
-                    "40-F",
-                }:
+            for item in self._entries(facts, tag, units):
+                if item.get("form") not in _ANNUAL_FORMS:
                     continue
 
                 end = item.get("end")

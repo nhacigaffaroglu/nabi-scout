@@ -140,15 +140,31 @@ class ScannerV4Engine:
 
         revenue = financials.get("revenue")
         equity = financials.get("equity")
+        financial_currency = (
+            financials.get("financial_currency") or "USD"
+        ).upper()
+        quote_currency = (
+            profile.get("currency")
+            or quote.get("currency")
+            or "USD"
+        ).upper()
+        valuation_currency_ok = (
+            financial_currency == "USD"
+            and quote_currency == "USD"
+        )
 
         price_to_sales = (
             market_cap / revenue
-            if market_cap is not None and revenue
+            if valuation_currency_ok
+            and market_cap is not None
+            and revenue
             else None
         )
         price_to_book = (
             market_cap / equity
-            if market_cap is not None and equity
+            if valuation_currency_ok
+            and market_cap is not None
+            and equity
             else None
         )
 
@@ -292,6 +308,8 @@ class ScannerV4Engine:
             "cik": cik,
             "financial_period_end": financials.get("financial_period_end"),
             "annual_periods_found": financials.get("annual_periods_found"),
+            "financial_currency": financials.get("financial_currency"),
+            "financial_taxonomy": financials.get("financial_taxonomy"),
             "scanner_version": "Scanner v4",
             "exclude_reason": None,
         }
