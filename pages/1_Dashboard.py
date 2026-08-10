@@ -4,7 +4,7 @@ import streamlit as st
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
-from services.research_monitor_service import build_priority_entries
+from services.research_monitor_service import build_priority_teaser_from_monitor
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -27,13 +27,16 @@ cols[4].metric("İnceleniyor", stats["researching"])
 
 candidates = repo.get_all(order_by="nabi_score", descending=True)
 watched_ids = watchlist_repo.watched_candidate_ids()
-priority_entries = build_priority_entries(
-    candidates,
+priority_entries = build_priority_teaser_from_monitor(
     scan_repo=scan_repo,
+    candidates=candidates,
     watched_candidate_ids=watched_ids,
-)[:5]
+    limit=5,
+)
 
 st.subheader("🎯 Bugünkü araştırma öncelikleri")
+if st.button("🔬 Research Monitor'u Aç", type="secondary"):
+    st.switch_page("pages/3_Research_Monitor.py")
 if not priority_entries:
     st.info("Öncelikli aday bulunamadı.")
 else:
@@ -43,6 +46,11 @@ else:
         company = candidate.get("company_name") or symbol
         decision = candidate.get("decision_label") or candidate.get("decision") or "—"
         reasons = entry.get("reasons") or []
+        events = entry.get("events") or []
+        for event in events[:2]:
+            message = event.get("message")
+            if message and message not in reasons:
+                reasons.insert(0, message)
 
         st.markdown(
             f"**{symbol}** — Öncelik {entry['priority_score']:.0f} / "

@@ -1,0 +1,156 @@
+from datetime import datetime, timedelta, timezone
+
+import streamlit as st
+
+from repositories.candidate_repository import CandidateRepository
+from repositories.scan_repository import ScanRepository
+from repositories.watchlist_repository import WatchlistRepository
+from services.research_monitor_service import build_monitor_feed
+from services.scan_snapshot import normalize_universe_name
+from services.supabase_client import get_supabase_client
+from services.ui import configure_page, render_sidebar
+
+configure_page("Research Monitor | NABI Scout", "🔬")
+render_sidebar()
+
+st.title("🔬 Research Monitor")
+st.caption(
+    "Son taramalar arasındaki anlamlı değişiklikleri ve bugünkü araştırma "
+    "önceliklerini gösterir."
+)
+
+client = get_supabase_client()
+candidate_repo = CandidateRepository(client)
+scan_repo = ScanRepository(client)
+watchlist_repo = WatchlistRepository(client)
+
+WINDOW_OPTIONS = {
+    "Son 1 gün": 1,
+    "Son 7 gün": 7,
+    "Son 30 gün": 30,
+}
+
+lookback_runs = scan_repo.get_completed_runs_since(
+    datetime.now(timezone.utc) - timedelta(days=30),
+)
+universe_names = sorted({
+    normalize_universe_name(run.get("universe_name"))
+    for run in lookback_runs
+    if normalize_universe_name(run.get("universe_name"))
+})
+
+control_left, control_right = st.columns(2)
+window_label = control_left.selectbox(
+    "Zaman penceresi",
+    list(WINDOW_OPTIONS.keys()),
+    index=1,
+)
+universe_label = control_right.selectbox(
+    "Evren",
+    ["Tüm evrenler", *universe_names],
+    index=0,
+)
+
+since = datetime.now(timezone.utc) - timedelta(days=WINDOW_OPTIONS[window_label])
+universe_name = None if universe_label == "Tüm evrenler" else universe_label
+
+candidates = candidate_repo.get_all(order_by="nabi_score", descending=True)
+watched_ids = watchlist_repo.watched_candidate_ids()
+
+feed = build_monitor_feed(
+    scan_repo=scan_repo,
+    candidates=candidates,
+    watched_candidate_ids=watched_ids,
+    since=since,
+    universe_name=universe_name,
+)
+
+SECTIONS = [
+    ("ATTENTION", "🔥 Dikkat Gerektirenler"),
+    ("WATCHLIST", "⭐ İzleme Listem"),
+    ("NEW", "🆕 Yeni Araştırma Adayları"),
+    ("DATA_ISSUES", "⚠️ Veri / Güncellik Sorunları"),
+]
+
+if not feed["entries"]:
+    st.info("Seçilen pencerede gösterilecek anlamlı değişiklik bulunamadı.")
+    st.stop()
+
+
+def render_entry(entry: dict, index: int, section: str) -> None:
+    symbol = entry.get("symbol") or "—"
+    company = entry.get("company_name") or symbol
+    priority = entry.get("research_priority") or {}
+    candidate = entry.get("candidate") or {}
+    latest_snapshot = entry.get("latest_snapshot") or {}
+    decision = (
+        candidate.get("decision_label")
+        or candidate.get("decision")
+        or latest_snapshot.get("decision_label")
+        or "—"
+    )
+    freshness = (
+        candidate.get("freshness_status")
+        or latest_snapshot.get("freshness_status")
+        or "—"
+    )
+    confidence = (
+        candidate.get("research_confidence")
+        or latest_snapshot.get("research_confidence")
+    )
+    badges = entry.get("badges") or []
+    events = entry.get("events") or []
+
+    st.markdown(
+        f"**{symbol}** — {company} · "
+        f"Öncelik {priority.get('priority_score', 0):.0f} / "
+        f"{priority.get('priority_label', '—')}"
+    )
+    st.caption(
+        f"Karar: {decision} · Freshness: {freshness} · "
+        f"Veri güveni: {confidence if confidence is not None else '—'} · "
+        f"Son tarama: {entry.get('latest_scan_at') or '—'}"
+    )
+    if badges:
+        st.caption("Rozetler: " + ", ".join(badges))
+    if entry.get("has_legacy_history"):
+        st.caption(
+            "Eski tarama geçmişi sınırlı alanlarla karşılaştırıldı."
+        )
+
+    shown_reasons = []
+    for event in events[:3]:
+        message = event.get("message")
+        if message:
+            shown_reasons.append(message)
+    for reason in (priority.get("reasons") or [])[:3]:
+        if reason not in shown_reasons:
+            shown_reasons.append(reason)
+    for reason in shown_reasons[:3]:
+        st.markdown(f"• {reason}")
+
+    if st.button(
+        "📄 Raporu Aç",
+        key=f"monitor_report_{section}_{symbol}_{index}",
+    ):
+        if candidate:
+            st.session_state["company_report_candidate"] = candidate
+        else:
+            st.session_state["company_report_candidate"] = {
+                "symbol": symbol,
+                "company_name": company,
+                **latest_snapshot,
+            }
+        st.query_params["symbol"] = symbol
+        st.switch_page("pages/4_Company_Report.py")
+    st.divider()
+
+
+for section_key, section_title in SECTIONS:
+    section_entries = feed["categories"].get(section_key) or []
+    st.subheader(section_title)
+    if not section_entries:
+        st.caption("Bu bölümde gösterilecek kayıt yok.")
+        continue
+    for index, entry in enumerate(section_entries):
+        render_entry(entry, index, section_key)

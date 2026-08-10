@@ -149,6 +149,151 @@ class ScanRepository:
             response = fallback_query.execute()
             return response.data or []
 
+    def get_completed_runs_since(
+        self,
+        since: datetime,
+        universe_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        query = (
+            self.client.table("scan_runs")
+            .select(
+                "id, universe_name, status, completed_at, started_at, "
+                "total_symbols, scanned_symbols"
+            )
+            .eq("status", "COMPLETED")
+            .gte("completed_at", since.isoformat())
+            .order("completed_at", desc=False)
+        )
+        response = query.execute()
+        rows = response.data or []
+
+        logical_universe = normalize_universe_name(universe_name)
+        if not logical_universe:
+            return rows
+
+        filtered: List[Dict[str, Any]] = []
+        for row in rows:
+            row_universe = normalize_universe_name(row.get("universe_name"))
+            if row_universe == logical_universe:
+                filtered.append(row)
+        return filtered
+
+    def get_results_for_runs(
+        self,
+        run_ids: List[str],
+        symbols: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not run_ids:
+            return []
+
+        unique_run_ids = list(dict.fromkeys(run_ids))
+        query = (
+            self.client.table("scan_results")
+            .select(f"{self._RESULT_COLUMNS_WITH_SNAPSHOT}, id")
+            .in_("scan_run_id", unique_run_ids)
+        )
+        if symbols:
+            unique_symbols = list({
+                symbol.strip().upper()
+                for symbol in symbols
+                if symbol
+            })
+            if unique_symbols:
+                query = query.in_("symbol", unique_symbols)
+
+        try:
+            response = query.order("created_at", desc=False).execute()
+            self._snapshot_column_available = True
+            rows = response.data or []
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "candidate_snapshot"):
+                raise
+
+            self._snapshot_column_available = False
+            fallback_query = (
+                self.client.table("scan_results")
+                .select(f"{self._RESULT_COLUMNS}, id")
+                .in_("scan_run_id", unique_run_ids)
+            )
+            if symbols:
+                unique_symbols = list({
+                    symbol.strip().upper()
+                    for symbol in symbols
+                    if symbol
+                })
+                if unique_symbols:
+                    fallback_query = fallback_query.in_("symbol", unique_symbols)
+            response = fallback_query.order("created_at", desc=False).execute()
+            rows = response.data or []
+
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.get("created_at") or "",
+                row.get("id") or "",
+                row.get("scan_run_id") or "",
+            ),
+        )
+
+    def get_symbols_with_results_before(
+        self,
+        symbols: List[str],
+        before: datetime,
+        run_ids: Optional[List[str]] = None,
+    ) -> set[str]:
+        if not symbols:
+            return set()
+
+        unique_symbols = list({
+            symbol.strip().upper()
+            for symbol in symbols
+            if symbol
+        })
+        if not unique_symbols:
+            return set()
+
+        if run_ids is not None and len(run_ids) == 0:
+            return set()
+
+        query = (
+            self.client.table("scan_results")
+            .select("symbol, scan_run_id, created_at")
+            .in_("symbol", unique_symbols)
+            .lt("created_at", before.isoformat())
+        )
+        if run_ids is not None:
+            query = query.in_("scan_run_id", list(dict.fromkeys(run_ids)))
+
+        response = query.execute()
+        return {
+            str(row["symbol"]).strip().upper()
+            for row in (response.data or [])
+            if row.get("symbol")
+        }
+
+    def get_all_completed_run_ids_before(
+        self,
+        before: datetime,
+        universe_name: Optional[str] = None,
+    ) -> List[str]:
+        query = (
+            self.client.table("scan_runs")
+            .select("id, universe_name, completed_at")
+            .eq("status", "COMPLETED")
+            .lt("completed_at", before.isoformat())
+        )
+        response = query.execute()
+        rows = response.data or []
+        logical_universe = normalize_universe_name(universe_name)
+        if not logical_universe:
+            return [row["id"] for row in rows if row.get("id")]
+
+        run_ids: List[str] = []
+        for row in rows:
+            if normalize_universe_name(row.get("universe_name")) == logical_universe:
+                run_ids.append(row["id"])
+        return run_ids
+
     def get_latest_scan_row(self, symbol: str) -> Optional[Dict[str, Any]]:
         rows = self.get_latest_scan_rows_for_symbols([symbol])
         return rows.get(symbol.strip().upper())
