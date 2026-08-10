@@ -5,8 +5,10 @@ from config.scan_universe import PARTICIPATION_DEFAULTS, SCAN_UNIVERSES
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
+from services.change_detection_engine import detect_changes, rank_changes
 from services.fmp_client import FMPClient
 from services.free_universe_client import FreeUniverseClient
+from services.scan_snapshot import build_scan_snapshot
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client import get_supabase_client
@@ -167,6 +169,9 @@ with st.expander("Tarama metadata kontrolü", expanded=False):
 if "latest_scan_candidates" not in st.session_state:
     st.session_state["latest_scan_candidates"] = []
 
+if "latest_scan_changes" not in st.session_state:
+    st.session_state["latest_scan_changes"] = []
+
 if st.button("Sprint 9 taramasını başlat", type="primary"):
     fmp_client = FMPClient.from_streamlit_secrets()
     fmp_client.reset_scan_state()
@@ -179,10 +184,15 @@ if st.button("Sprint 9 taramasını başlat", type="primary"):
         f"{universe_name} [{start + 1}-{start + len(selected_rows)}]",
         len(selected_rows),
     )
+    batch_universe_name = (
+        f"{universe_name} [{start + 1}-{start + len(selected_rows)}]"
+    )
 
     progress = st.progress(0)
     output = []
     full_candidates = []
+    scan_changes = []
+    symbols_without_previous = 0
     updated = strong = errors = excluded = 0
 
     for index, row in enumerate(selected_rows, 1):
@@ -232,6 +242,22 @@ if st.button("Sprint 9 taramasını başlat", type="primary"):
         if result.get("errors"):
             errors += 1
 
+        previous_snapshot = scan_repo.get_previous_snapshot(
+            symbol,
+            run_id,
+            batch_universe_name,
+        )
+        current_snapshot = build_scan_snapshot(result)
+        change_result = detect_changes(previous_snapshot, current_snapshot)
+        if previous_snapshot is None:
+            symbols_without_previous += 1
+        else:
+            scan_changes.append({
+                "symbol": symbol,
+                "company_name": candidate.get("company_name") or symbol,
+                "change": change_result,
+            })
+
         scan_repo.add_result(run_id, result)
         full_candidates.append(candidate)
 
@@ -250,6 +276,14 @@ if st.button("Sprint 9 taramasını başlat", type="primary"):
         progress.progress(index / len(selected_rows))
 
     st.session_state["latest_scan_candidates"] = full_candidates
+    st.session_state["latest_scan_changes"] = rank_changes([
+        item
+        for item in scan_changes
+        if item["change"].get("has_meaningful_change")
+    ])
+    st.session_state["latest_scan_symbols_without_previous"] = (
+        symbols_without_previous
+    )
 
     scan_repo.complete_run(
         run_id,
@@ -267,6 +301,42 @@ if st.button("Sprint 9 taramasını başlat", type="primary"):
 
 if st.session_state["latest_scan_candidates"]:
     candidates = st.session_state["latest_scan_candidates"]
+    meaningful_changes = st.session_state.get("latest_scan_changes") or []
+    symbols_without_previous = int(
+        st.session_state.get("latest_scan_symbols_without_previous") or 0
+    )
+
+    st.subheader("🔄 Bu taramada ne değişti?")
+    if not meaningful_changes:
+        if symbols_without_previous == len(candidates):
+            st.info(
+                "Bu semboller için karşılaştırılabilir önceki tarama "
+                "bulunamadı."
+            )
+        else:
+            st.info(
+                "Önceki taramaya göre anlamlı değişiklik bulunmadı."
+            )
+            if symbols_without_previous:
+                st.caption(
+                    f"{symbols_without_previous} sembol için önceki "
+                    "karşılaştırılabilir tarama yok."
+                )
+    else:
+        if symbols_without_previous:
+            st.caption(
+                f"{symbols_without_previous} sembol için önceki "
+                "karşılaştırılabilir tarama yok."
+            )
+        for item in meaningful_changes:
+            change = item["change"]
+            st.markdown(
+                f"**{item['symbol']}** — "
+                f"Değişim skoru {change.get('change_score', 0)}"
+            )
+            for event in change.get("changes") or []:
+                st.markdown(f"• {event.get('message')}")
+            st.markdown("")
 
     table_rows = []
     for candidate in candidates:
