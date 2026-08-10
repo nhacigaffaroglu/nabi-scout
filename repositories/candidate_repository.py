@@ -1,19 +1,35 @@
 from typing import Any, Dict, List, Optional
 
+from services.candidate_persistence import (
+    execute_with_schema_fallback,
+    prepare_candidate_payload,
+)
+
+
 class CandidateRepository:
     def __init__(self, client):
         self.client = client
         self.table = "investment_candidates"
 
     def upsert_by_symbol(self, payload):
-        response = self.client.table(self.table).upsert(
-            payload, on_conflict="symbol,market"
-        ).execute()
-        return response.data[0] if response.data else payload
+        cleaned = prepare_candidate_payload(payload)
+
+        def _write(body):
+            response = self.client.table(self.table).upsert(
+                body, on_conflict="symbol,market"
+            ).execute()
+            return response.data[0] if response.data else body
+
+        return execute_with_schema_fallback(cleaned, _write)
 
     def create(self, payload):
-        response = self.client.table(self.table).insert(payload).execute()
-        return response.data[0] if response.data else payload
+        cleaned = prepare_candidate_payload(payload)
+
+        def _write(body):
+            response = self.client.table(self.table).insert(body).execute()
+            return response.data[0] if response.data else body
+
+        return execute_with_schema_fallback(cleaned, _write)
 
     def get_by_id(self, candidate_id):
         response = self.client.table(self.table).select("*").eq(
@@ -48,10 +64,15 @@ class CandidateRepository:
         return request.order("nabi_score", desc=True).execute().data or []
 
     def update(self, candidate_id, payload):
-        response = self.client.table(self.table).update(payload).eq(
-            "id", candidate_id
-        ).execute()
-        return response.data[0] if response.data else payload
+        cleaned = prepare_candidate_payload(payload)
+
+        def _write(body):
+            response = self.client.table(self.table).update(body).eq(
+                "id", candidate_id
+            ).execute()
+            return response.data[0] if response.data else body
+
+        return execute_with_schema_fallback(cleaned, _write)
 
     def delete(self, candidate_id):
         self.client.table(self.table).delete().eq("id", candidate_id).execute()
