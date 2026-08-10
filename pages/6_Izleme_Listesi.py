@@ -7,6 +7,7 @@ from services.research_monitor_service import (
     build_priority_entries,
     summarize_change,
 )
+from services.ui_formatters import format_datetime_tr, format_freshness_label
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -71,10 +72,13 @@ for index, item in enumerate(entries):
     meta_left, meta_right = st.columns(2)
     meta_left.caption(
         f"Karar: {candidate.get('decision_label') or candidate.get('decision') or '—'} · "
-        f"Freshness: {candidate.get('freshness_status') or '—'}"
+        f"Güncellik: {format_freshness_label(candidate.get('freshness_status'))}"
     )
     meta_right.caption(
-        f"Son tarama: {candidate.get('updated_at') or candidate.get('created_at') or '—'}"
+        "Son tarama: "
+        + format_datetime_tr(
+            candidate.get("updated_at") or candidate.get("created_at")
+        )
     )
     st.caption(f"Son değişiklik: {summarize_change(recent_change)}")
 

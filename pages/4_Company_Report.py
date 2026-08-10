@@ -4,9 +4,13 @@ import streamlit as st
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
-from services.company_intelligence_service import (
-    build_company_intelligence,
-    format_timeline_date,
+from services.company_intelligence_service import build_company_intelligence
+from services.ui_formatters import (
+    format_badges_compact,
+    format_change_window_summary,
+    format_data_quality_notes,
+    format_datetime_tr,
+    format_priority_reasons,
 )
 from services.academy_ui import (
     render_metric_card,
@@ -170,7 +174,7 @@ st.caption(
     "ile aynı değildir."
 )
 
-priority_reasons = priority.get("reasons") or []
+priority_reasons = format_priority_reasons(priority.get("reasons") or [])
 if priority_reasons:
     for reason in priority_reasons[:4]:
         st.markdown(f"• {reason}")
@@ -178,8 +182,10 @@ else:
     st.caption("Öncelik gerekçesi bulunmuyor.")
 
 if badges:
-    st.caption("Durum rozetleri: " + ", ".join(badges))
-for note in (data_quality.get("notes") or [])[:2]:
+    badge_line = format_badges_compact(badges)
+    if badge_line:
+        st.caption(badge_line)
+for note in format_data_quality_notes(data_quality.get("notes") or [])[:2]:
     st.caption(note)
 
 st.subheader("Karar özeti")
@@ -234,12 +240,14 @@ if not history_events:
         st.info("Son 7 günde anlamlı değişiklik bulunamadı.")
 else:
     st.caption(
-        f"Pencere değişim skoru: {history.get('window_change_score', 0)} · "
-        f"{history.get('meaningful_change_count', 0)} anlamlı değişiklik"
+        format_change_window_summary(
+            history.get("window_change_score", 0),
+            history_events,
+        )
     )
     for event in history_events[:6]:
         severity = event.get("severity") or "—"
-        date_label = format_timeline_date(event.get("occurred_at"))
+        date_label = format_datetime_tr(event.get("occurred_at"))
         st.markdown(f"**{date_label}** · {severity} — {event.get('message')}")
 
 if timeline:

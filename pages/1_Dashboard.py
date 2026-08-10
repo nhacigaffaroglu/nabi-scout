@@ -5,6 +5,7 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.research_monitor_service import build_priority_teaser_from_monitor
+from services.ui_formatters import format_priority_reasons
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -45,7 +46,7 @@ else:
         symbol = candidate.get("symbol") or "—"
         company = candidate.get("company_name") or symbol
         decision = candidate.get("decision_label") or candidate.get("decision") or "—"
-        reasons = entry.get("reasons") or []
+        reasons = format_priority_reasons(entry.get("reasons") or [])
         events = entry.get("events") or []
         for event in events[:2]:
             message = event.get("message")

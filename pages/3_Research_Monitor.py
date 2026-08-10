@@ -7,6 +7,13 @@ from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.research_monitor_service import build_monitor_feed
 from services.scan_snapshot import normalize_universe_name
+from services.ui_formatters import (
+    LEGACY_HISTORY_NOTE,
+    format_badges_compact,
+    format_datetime_tr,
+    format_freshness_label,
+    format_priority_reasons,
+)
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -107,23 +114,22 @@ def render_entry(entry: dict, index: int, section: str) -> None:
         f"{priority.get('priority_label', '—')}"
     )
     st.caption(
-        f"Karar: {decision} · Freshness: {freshness} · "
+        f"Karar: {decision} · Güncellik: {format_freshness_label(freshness)} · "
         f"Veri güveni: {confidence if confidence is not None else '—'} · "
-        f"Son tarama: {entry.get('latest_scan_at') or '—'}"
+        f"Son tarama: {format_datetime_tr(entry.get('latest_scan_at'))}"
     )
-    if badges:
-        st.caption("Rozetler: " + ", ".join(badges))
+    badge_line = format_badges_compact(badges)
+    if badge_line:
+        st.caption(badge_line)
     if entry.get("has_legacy_history"):
-        st.caption(
-            "Eski tarama geçmişi sınırlı alanlarla karşılaştırıldı."
-        )
+        st.caption(LEGACY_HISTORY_NOTE)
 
     shown_reasons = []
     for event in events[:3]:
         message = event.get("message")
         if message:
             shown_reasons.append(message)
-    for reason in (priority.get("reasons") or [])[:3]:
+    for reason in format_priority_reasons(priority.get("reasons") or [])[:3]:
         if reason not in shown_reasons:
             shown_reasons.append(reason)
     for reason in shown_reasons[:3]:

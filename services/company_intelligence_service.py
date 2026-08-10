@@ -3,10 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from services.research_history_service import (
-    build_symbol_monitor_entry,
-)
+from services.research_history_service import build_symbol_monitor_entry
 from services.research_priority_engine import compute_research_priority
+from services.ui_formatters import LEGACY_HISTORY_NOTE, format_datetime_tr
 
 
 def build_company_intelligence(
@@ -106,7 +105,7 @@ def build_timeline_items(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen_messages.add(message)
         items.append({
             "occurred_at": event.get("occurred_at"),
-            "date_label": format_timeline_date(event.get("occurred_at")),
+            "date_label": format_datetime_tr(event.get("occurred_at")),
             "message": message,
             "severity": event.get("severity"),
             "category": event.get("category"),
@@ -143,10 +142,7 @@ def build_data_quality_context(
 
     if monitor_entry.get("has_legacy_history"):
         badges.append("LEGACY_HISTORY")
-        notes.append(
-            "Eski taramaların sınırlı snapshot verisi nedeniyle bazı geçmiş "
-            "değişimler gösterilemeyebilir."
-        )
+        notes.append(LEGACY_HISTORY_NOTE)
 
     if monitor_entry.get("is_first_seen_in_window"):
         badges.append("NEW")
@@ -157,20 +153,6 @@ def build_data_quality_context(
         "badges": badges,
         "notes": notes,
     }
-
-
-def format_timeline_date(value: Optional[str]) -> str:
-    if not value:
-        return "—"
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return str(value)[:10]
-    months = {
-        1: "Oca", 2: "Şub", 3: "Mar", 4: "Nis", 5: "May", 6: "Haz",
-        7: "Tem", 8: "Ağu", 9: "Eyl", 10: "Eki", 11: "Kas", 12: "Ara",
-    }
-    return f"{parsed.day} {months[parsed.month]}"
 
 
 def _empty_monitor_entry(

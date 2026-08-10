@@ -252,7 +252,9 @@ class CompanyIntelligenceServiceTests(unittest.TestCase):
                 "events": [],
             },
         )
-        self.assertTrue(any("sınırlı snapshot" in note for note in context["notes"]))
+        self.assertTrue(
+            any("daha az alan kaydedildiği" in note for note in context["notes"])
+        )
 
 
 class CompanyReportImportSmokeTests(unittest.TestCase):
