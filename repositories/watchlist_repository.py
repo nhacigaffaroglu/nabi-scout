@@ -125,6 +125,18 @@ class WatchlistRepository:
             })
         return results
 
+    def get_active_entry(self, candidate_id: str) -> Optional[Dict[str, Any]]:
+        response = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("candidate_id", candidate_id)
+            .in_("status", list(READ_ACTIVE_STATUSES))
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+
     def is_watched(self, candidate_id: str) -> bool:
         response = (
             self.client.table(self.table)

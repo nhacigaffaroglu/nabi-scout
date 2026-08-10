@@ -2,7 +2,12 @@ import pandas as pd
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
+from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.company_intelligence_service import (
+    build_company_intelligence,
+    format_timeline_date,
+)
 from services.academy_ui import (
     render_metric_card,
     render_metric_explanation,
@@ -17,6 +22,7 @@ st.title("📄 NABI Company Report")
 
 repo = CandidateRepository(get_supabase_client())
 watchlist_repo = WatchlistRepository(get_supabase_client())
+scan_repo = ScanRepository(get_supabase_client())
 candidate = st.session_state.get("company_report_candidate")
 
 if candidate is None:
@@ -75,11 +81,12 @@ with top_left:
     )
 
 with top_right:
-    is_watched = (
-        watchlist_repo.is_watched(str(candidate_id))
+    watchlist_entry = (
+        watchlist_repo.get_active_entry(str(candidate_id))
         if candidate_id
-        else False
+        else None
     )
+    is_watched = watchlist_entry is not None
 
     if candidate_id:
         if is_watched:
@@ -95,6 +102,9 @@ with top_right:
         ):
             watchlist_repo.add_candidate(str(candidate_id))
             st.rerun()
+
+    if is_watched and watchlist_entry and watchlist_entry.get("notes"):
+        st.caption(f"İzleme notu: {watchlist_entry['notes']}")
 
     if st.button(
         "← Tarama ekranı",
@@ -133,7 +143,47 @@ c5.metric(
     candidate.get("investment_grade") or "—",
 )
 
+intelligence = build_company_intelligence(
+    candidate,
+    scan_repo=scan_repo,
+    is_watchlisted=is_watched,
+    watchlist_note=(watchlist_entry or {}).get("notes") if watchlist_entry else None,
+)
+
+priority = intelligence.get("priority") or {}
+history = intelligence.get("history_summary") or {}
+timeline = intelligence.get("timeline") or []
+badges = intelligence.get("badges") or []
+data_quality = intelligence.get("data_quality") or {}
+
+st.subheader("🎯 Araştırma Önceliği")
+priority_label = priority.get("priority_label") or "—"
+priority_score = priority.get("priority_score")
+if priority_score is not None:
+    st.markdown(
+        f"**{priority_score:.0f} / {priority_label}**"
+    )
+else:
+    st.markdown(f"**{priority_label}**")
+st.caption(
+    "Bu skor araştırma önceliğini gösterir; NABI Skoru veya scanner kararı "
+    "ile aynı değildir."
+)
+
+priority_reasons = priority.get("reasons") or []
+if priority_reasons:
+    for reason in priority_reasons[:4]:
+        st.markdown(f"• {reason}")
+else:
+    st.caption("Öncelik gerekçesi bulunmuyor.")
+
+if badges:
+    st.caption("Durum rozetleri: " + ", ".join(badges))
+for note in (data_quality.get("notes") or [])[:2]:
+    st.caption(note)
+
 st.subheader("Karar özeti")
+st.caption("Scanner Kararı")
 decision = (
     candidate.get("decision_label")
     or candidate.get("decision")
@@ -174,6 +224,28 @@ st.info(
         or "Ek finansal doğrulama yap."
     )
 )
+
+st.subheader("🔄 Son taramalarda ne değişti?")
+history_events = history.get("events") or []
+if not history_events:
+    if history.get("history_count", 0) == 0:
+        st.info("Son 7 günde bu sembol için tarama geçmişi bulunamadı.")
+    else:
+        st.info("Son 7 günde anlamlı değişiklik bulunamadı.")
+else:
+    st.caption(
+        f"Pencere değişim skoru: {history.get('window_change_score', 0)} · "
+        f"{history.get('meaningful_change_count', 0)} anlamlı değişiklik"
+    )
+    for event in history_events[:6]:
+        severity = event.get("severity") or "—"
+        date_label = format_timeline_date(event.get("occurred_at"))
+        st.markdown(f"**{date_label}** · {severity} — {event.get('message')}")
+
+if timeline:
+    st.subheader("📅 Araştırma zaman çizelgesi")
+    for item in timeline[:8]:
+        st.markdown(f"**{item['date_label']}** — {item['message']}")
 
 st.subheader("Yatırım tezi")
 st.info(
