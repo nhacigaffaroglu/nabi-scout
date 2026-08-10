@@ -123,6 +123,15 @@ elif decision in {
 else:
     st.warning(decision)
 
+freshness_label = candidate.get("freshness_label")
+if freshness_label:
+    period_end = candidate.get("financial_period_end") or "—"
+    period_age = candidate.get("period_age_days")
+    age_text = f"{period_age} gün" if period_age is not None else "—"
+    st.caption(
+        f"Finansal dönem: {period_end} · {freshness_label} · {age_text}"
+    )
+
 st.write(
     candidate.get("decision_verdict")
     or candidate.get("memo_summary")
