@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
+from repositories.watchlist_repository import WatchlistRepository
 from services.academy_ui import (
     render_metric_card,
     render_metric_explanation,
@@ -15,6 +16,7 @@ render_sidebar()
 st.title("📄 NABI Company Report")
 
 repo = CandidateRepository(get_supabase_client())
+watchlist_repo = WatchlistRepository(get_supabase_client())
 candidate = st.session_state.get("company_report_candidate")
 
 if candidate is None:
@@ -53,6 +55,13 @@ if candidate is None:
     )
     candidate = repo.get_by_id(row_lookup[selected])
 
+candidate_id = candidate.get("id")
+if not candidate_id and candidate.get("symbol"):
+    db_candidate = repo.get_by_symbol(candidate["symbol"])
+    if db_candidate:
+        candidate_id = db_candidate.get("id")
+        candidate = {**db_candidate, **candidate, "id": candidate_id}
+
 symbol = candidate.get("symbol") or "—"
 company = candidate.get("company_name") or symbol
 
@@ -66,6 +75,27 @@ with top_left:
     )
 
 with top_right:
+    is_watched = (
+        watchlist_repo.is_watched(str(candidate_id))
+        if candidate_id
+        else False
+    )
+
+    if candidate_id:
+        if is_watched:
+            if st.button(
+                "✓ İzleniyor — çıkar",
+                use_container_width=True,
+            ):
+                watchlist_repo.deactivate(str(candidate_id))
+                st.rerun()
+        elif st.button(
+            "⭐ İzleme listesine ekle",
+            use_container_width=True,
+        ):
+            watchlist_repo.add_candidate(str(candidate_id))
+            st.rerun()
+
     if st.button(
         "← Tarama ekranı",
         use_container_width=True,

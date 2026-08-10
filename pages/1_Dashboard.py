@@ -2,6 +2,9 @@ import pandas as pd
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
+from repositories.scan_repository import ScanRepository
+from repositories.watchlist_repository import WatchlistRepository
+from services.research_monitor_service import build_priority_entries
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -9,17 +12,56 @@ configure_page("Dashboard | NABI Scout", "📊")
 render_sidebar()
 
 st.title("📊 Scout Dashboard")
-repo = CandidateRepository(get_supabase_client())
+client = get_supabase_client()
+repo = CandidateRepository(client)
+scan_repo = ScanRepository(client)
+watchlist_repo = WatchlistRepository(client)
 
 stats = repo.get_dashboard_stats()
 cols = st.columns(5)
 cols[0].metric("Toplam aday", stats["total"])
 cols[1].metric("Güçlü aday", stats["strong"])
-cols[2].metric("İzle", stats["watch"])
+cols[2].metric("Scanner: İZLE", stats["watch"])
 cols[3].metric("Katılım uygun", stats["participation_ok"])
 cols[4].metric("İnceleniyor", stats["researching"])
 
-rows = repo.get_all(order_by="nabi_score", descending=True)
+candidates = repo.get_all(order_by="nabi_score", descending=True)
+watched_ids = watchlist_repo.watched_candidate_ids()
+priority_entries = build_priority_entries(
+    candidates,
+    scan_repo=scan_repo,
+    watched_candidate_ids=watched_ids,
+)[:5]
+
+st.subheader("🎯 Bugünkü araştırma öncelikleri")
+if not priority_entries:
+    st.info("Öncelikli aday bulunamadı.")
+else:
+    for index, entry in enumerate(priority_entries):
+        candidate = entry["candidate"]
+        symbol = candidate.get("symbol") or "—"
+        company = candidate.get("company_name") or symbol
+        decision = candidate.get("decision_label") or candidate.get("decision") or "—"
+        reasons = entry.get("reasons") or []
+
+        st.markdown(
+            f"**{symbol}** — Öncelik {entry['priority_score']:.0f} / "
+            f"{entry['priority_label']}"
+        )
+        st.caption(f"{company} · {decision}")
+        for reason in reasons[:3]:
+            st.markdown(f"• {reason}")
+
+        if st.button(
+            "📄 Company Report",
+            key=f"dashboard_report_{symbol}_{index}",
+        ):
+            st.session_state["company_report_candidate"] = candidate
+            st.query_params["symbol"] = symbol
+            st.switch_page("pages/4_Company_Report.py")
+        st.markdown("")
+
+rows = candidates
 df = pd.DataFrame(rows)
 
 if df.empty:

@@ -115,6 +115,25 @@ def build_scan_snapshot(result: Dict[str, Any]) -> Dict[str, Any]:
     return {key: _json_value(snapshot[key]) for key in SNAPSHOT_FIELDS + ("_comparison_source",)}
 
 
+def snapshot_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    completeness = float(candidate.get("data_completeness") or 0)
+    if completeness >= 85:
+        status = "TAM VERİ"
+    elif completeness >= 65:
+        status = "YETERLİ VERİ"
+    else:
+        status = "KISMİ VERİ"
+
+    return build_scan_snapshot({
+        "symbol": candidate.get("symbol"),
+        "excluded": False,
+        "status": status,
+        "endpoint_status": candidate.get("endpoint_status") or {},
+        "errors": [],
+        "candidate": candidate,
+    })
+
+
 def sparse_snapshot_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
     snapshot = {
         "symbol": row.get("symbol"),

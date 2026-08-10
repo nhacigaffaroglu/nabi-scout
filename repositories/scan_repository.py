@@ -149,6 +149,68 @@ class ScanRepository:
             response = fallback_query.execute()
             return response.data or []
 
+    def get_latest_scan_row(self, symbol: str) -> Optional[Dict[str, Any]]:
+        rows = self.get_latest_scan_rows_for_symbols([symbol])
+        return rows.get(symbol.strip().upper())
+
+    def get_latest_scan_rows_for_symbols(
+        self,
+        symbols: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        if not symbols:
+            return {}
+
+        unique_symbols = list({
+            symbol.strip().upper()
+            for symbol in symbols
+            if symbol
+        })
+        if not unique_symbols:
+            return {}
+
+        limit = max(len(unique_symbols) * 3, 20)
+        rows = self._fetch_latest_result_rows(unique_symbols, limit)
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            symbol = row.get("symbol")
+            if symbol and symbol not in latest:
+                latest[symbol] = row
+        return latest
+
+    def _fetch_latest_result_rows(
+        self,
+        symbols: List[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        base_query = (
+            self.client.table("scan_results")
+            .select(f"{self._RESULT_COLUMNS_WITH_SNAPSHOT}, symbol")
+            .in_("symbol", symbols)
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        try:
+            response = base_query.execute()
+            self._snapshot_column_available = True
+            return response.data or []
+        except Exception as exc:
+            if not _is_missing_column_error(exc, "candidate_snapshot"):
+                raise
+
+            self._snapshot_column_available = False
+            fallback_query = (
+                self.client.table("scan_results")
+                .select(f"{self._RESULT_COLUMNS}, symbol")
+                .in_("symbol", symbols)
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+            response = fallback_query.execute()
+            return response.data or []
+
+    def row_to_snapshot(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return self._row_to_snapshot(row)
+
     @staticmethod
     def _row_to_snapshot(row: Dict[str, Any]) -> Dict[str, Any]:
         snapshot = row.get("candidate_snapshot")

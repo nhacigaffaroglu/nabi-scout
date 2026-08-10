@@ -5,6 +5,7 @@ from config.scan_universe import PARTICIPATION_DEFAULTS, SCAN_UNIVERSES
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
+from repositories.watchlist_repository import WatchlistRepository
 from services.change_detection_engine import detect_changes, rank_changes
 from services.fmp_client import FMPClient
 from services.free_universe_client import FreeUniverseClient
@@ -67,6 +68,7 @@ client = get_supabase_client()
 candidate_repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 universe_repo = UniverseRepository(client)
+watchlist_repo = WatchlistRepository(client)
 
 sec_email = st.text_input(
     "SEC iletişim e-postası",
@@ -305,6 +307,7 @@ if st.session_state["latest_scan_candidates"]:
     symbols_without_previous = int(
         st.session_state.get("latest_scan_symbols_without_previous") or 0
     )
+    watched_ids = watchlist_repo.watched_candidate_ids()
 
     st.subheader("🔄 Bu taramada ne değişti?")
     if not meaningful_changes:
@@ -417,6 +420,13 @@ if st.session_state["latest_scan_candidates"]:
     for index, candidate in enumerate(candidates):
         symbol = candidate.get("symbol") or "—"
         company = candidate.get("company_name") or symbol
+        db_candidate = candidate_repo.get_by_symbol(symbol)
+        candidate_id = db_candidate.get("id") if db_candidate else None
+        is_watched = (
+            str(candidate_id) in watched_ids
+            if candidate_id
+            else False
+        )
 
         left, middle, right = st.columns([1.1, 4.5, 1.4])
 
@@ -440,6 +450,27 @@ if st.session_state["latest_scan_candidates"]:
                 st.session_state["company_report_candidate"] = candidate
                 st.query_params["symbol"] = symbol
                 st.switch_page("pages/4_Company_Report.py")
+
+            if not candidate_id:
+                st.caption(
+                    "Bu şirket aday havuzuna kaydedilmediği için "
+                    "henüz izleme listesine eklenemiyor."
+                )
+            elif is_watched:
+                if st.button(
+                    "✓ İzleniyor",
+                    key=f"watch_remove_{symbol}_{index}",
+                    use_container_width=True,
+                ):
+                    watchlist_repo.deactivate(str(candidate_id))
+                    st.rerun()
+            elif st.button(
+                "⭐ İzleme listesine ekle",
+                key=f"watch_add_{symbol}_{index}",
+                use_container_width=True,
+            ):
+                watchlist_repo.add_candidate(str(candidate_id))
+                st.rerun()
 
         st.divider()
 else:

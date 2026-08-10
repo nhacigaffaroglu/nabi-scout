@@ -37,6 +37,17 @@ class CandidateRepository:
         ).limit(1).execute()
         return response.data[0] if response.data else None
 
+    def get_by_symbol(self, symbol: str, market: Optional[str] = None):
+        query = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("symbol", symbol.strip().upper())
+        )
+        if market:
+            query = query.eq("market", market)
+        response = query.limit(1).execute()
+        return response.data[0] if response.data else None
+
     def get_all(self, limit=None, order_by="created_at", descending=True):
         query = self.client.table(self.table).select("*").order(
             order_by, desc=descending
