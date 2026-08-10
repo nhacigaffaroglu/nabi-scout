@@ -6,6 +6,7 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
 from services.fmp_client import FMPClient
+from services.free_universe_client import FreeUniverseClient
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client import get_supabase_client
@@ -20,10 +21,59 @@ st.caption(
     "Ayrıntılı analiz Company Report ekranında açılır."
 )
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_sec_company_lookup(contact_email: str) -> dict:
+    if not contact_email.strip():
+        return {}
+
+    rows = FreeUniverseClient(
+        contact_email=contact_email.strip(),
+    ).get_sec_companies()
+
+    return {
+        str(row.get("symbol") or "").strip().upper(): row
+        for row in rows
+        if row.get("symbol")
+    }
+
+
+def build_fixed_universe_rows(
+    universe_name: str,
+    sec_lookup: dict,
+) -> list[dict]:
+    etf_symbols = set(SCAN_UNIVERSES.get("Katılım ETF 3", []))
+    rows = []
+
+    for symbol in SCAN_UNIVERSES[universe_name]:
+        normalized_symbol = symbol.strip().upper()
+        is_etf = normalized_symbol in etf_symbols
+        sec_row = sec_lookup.get(normalized_symbol, {})
+
+        rows.append({
+            "symbol": normalized_symbol,
+            "cik": None if is_etf else sec_row.get("cik"),
+            "company_name": sec_row.get("company_name") or normalized_symbol,
+            "exchange": sec_row.get("exchange"),
+            "is_etf": is_etf,
+        })
+
+    return rows
+
+
 client = get_supabase_client()
 candidate_repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 universe_repo = UniverseRepository(client)
+
+sec_email = st.text_input(
+    "SEC iletişim e-postası",
+    value="nabi-scout@example.com",
+    help=(
+        "SEC veri taleplerinde User-Agent içinde kullanılır. "
+        "Gerçek ve ulaşılabilir bir e-posta adresi kullanılması önerilir."
+    ),
+)
 
 dynamic_names = universe_repo.get_universe_names()
 options = (
@@ -34,16 +84,19 @@ selected = st.selectbox("Tarama evreni", options)
 
 if selected.startswith("Sabit: "):
     universe_name = selected.replace("Sabit: ", "", 1)
-    all_rows = [
-        {
-            "symbol": symbol,
-            "cik": None,
-            "company_name": symbol,
-            "exchange": None,
-            "is_etf": False,
-        }
-        for symbol in SCAN_UNIVERSES[universe_name]
-    ]
+
+    sec_lookup = {}
+    if sec_email.strip():
+        try:
+            sec_lookup = load_sec_company_lookup(sec_email.strip())
+        except Exception as exc:
+            st.warning(
+                "SEC sembol metadata listesi alınamadı. "
+                "Sabit evren temel sembol bilgileriyle devam edecek. "
+                f"Hata: {exc}"
+            )
+
+    all_rows = build_fixed_universe_rows(universe_name, sec_lookup)
 else:
     universe_name = selected.replace("Dinamik: ", "", 1)
     all_rows = universe_repo.get_symbols(
@@ -66,7 +119,7 @@ batch_size = c2.slider(
     "Taranacak sembol sayısı",
     1,
     min(25, len(all_rows)),
-    min(5, len(all_rows)),
+    min(3, len(all_rows)),
 )
 minimum_completeness = st.slider(
     "Minimum veri tamlığı",
@@ -86,10 +139,6 @@ portfolio_fit = st.slider(
     100,
     55,
 )
-sec_email = st.text_input(
-    "SEC iletişim e-postası",
-    value="nabi-scout@example.com",
-)
 
 start = int(start_index) - 1
 selected_rows = all_rows[start:start + batch_size]
@@ -98,13 +147,30 @@ st.write(
     ", ".join(row["symbol"] for row in selected_rows),
 )
 
+with st.expander("Tarama metadata kontrolü", expanded=False):
+    metadata_rows = []
+    for row in selected_rows:
+        metadata_rows.append({
+            "Sembol": row.get("symbol"),
+            "Şirket": row.get("company_name"),
+            "CIK": row.get("cik"),
+            "Borsa": row.get("exchange"),
+            "ETF": "Evet" if row.get("is_etf") else "Hayır",
+        })
+
+    st.dataframe(
+        pd.DataFrame(metadata_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
 if "latest_scan_candidates" not in st.session_state:
     st.session_state["latest_scan_candidates"] = []
 
 if st.button("Sprint 9 taramasını başlat", type="primary"):
     engine = ScannerV8Engine(
         FMPClient.from_streamlit_secrets(),
-        SECFinancialClient(contact_email=sec_email),
+        SECFinancialClient(contact_email=sec_email.strip()),
     )
 
     run_id = scan_repo.create_run(

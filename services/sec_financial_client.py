@@ -342,9 +342,10 @@ class SECFinancialClient:
         tags: Sequence[str],
         units: Sequence[str],
     ) -> List[Dict[str, Any]]:
+        selected: List[Dict[str, Any]] = []
+
         for tag in tags:
             entries = self._entries(facts, tag, units)
-            selected = []
 
             for item in entries:
                 if item.get("form") not in {
@@ -376,11 +377,7 @@ class SECFinancialClient:
                         "filed": item.get("filed") or "",
                     })
 
-            result = self._dedupe(selected)
-            if result:
-                return result
-
-        return []
+        return self._dedupe(selected)
 
     def _instant_series(
         self,
