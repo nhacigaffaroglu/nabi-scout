@@ -70,9 +70,25 @@ def sample_holdings(count: int = 12):
     return rows
 
 
+def sample_price_history(count: int = 70, *, start_price: float = 100.0, end_price: float = 110.0):
+    from datetime import date, timedelta
+
+    rows = []
+    current = date(2024, 1, 2)
+    for index in range(count):
+        if count == 1:
+            price = end_price
+        else:
+            price = start_price + (end_price - start_price) * index / (count - 1)
+        rows.append({"date": current.isoformat(), "price": price})
+        current += timedelta(days=1)
+    return rows
+
+
 class FundAnalysisServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fmp = MagicMock()
+        self.fmp.historical_price_eod_light.return_value = []
 
     def test_spus_full_fund_result(self) -> None:
         self.fmp.etf_info.return_value = full_etf_info("SPUS")
@@ -444,6 +460,109 @@ class FundAnalysisRoutingTests(unittest.TestCase):
         payload = result.fund_result.to_dict()
         self.assertNotIn("nabi_score", payload)
         self.assertNotIn("decision_label", payload)
+
+
+class FundAnalysisPerformanceIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.fmp = MagicMock()
+        self.fmp.etf_info.return_value = full_etf_info("SPUS")
+        self.fmp.etf_holdings.return_value = sample_holdings()
+        self.fmp.profile.return_value = {}
+        self.fmp.quote.return_value = {"price": 110.0, "volume": 500_000}
+
+    def test_available_history_attaches_metrics(self) -> None:
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(result.price_history_status, "OK")
+        self.assertIsNotNone(result.performance_metrics)
+        self.assertIsNotNone(result.risk_metrics)
+        self.assertTrue(result.has_performance_or_risk_metrics())
+        self.assertIsNotNone(result.performance_metrics.return_1m_pct)
+
+    def test_rate_limit_history_leaves_metrics_none(self) -> None:
+        self.fmp.historical_price_eod_light.side_effect = FMPError(
+            "limited",
+            error_class="rate_limit",
+        )
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(result.price_history_status, "RATE_LIMIT")
+        self.assertIsNone(result.performance_metrics)
+        self.assertIsNone(result.risk_metrics)
+        self.assertTrue(result.expense_ratio is not None)
+        self.assertTrue(any("Fiyat geçmişi" in warning for warning in result.performance_warnings))
+
+    def test_plan_restricted_history_leaves_metrics_none(self) -> None:
+        self.fmp.historical_price_eod_light.side_effect = FMPError(
+            "denied",
+            error_class="plan_restricted",
+        )
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(result.price_history_status, "PLAN_RESTRICTED")
+        self.assertIsNone(result.performance_metrics)
+
+    def test_malformed_history_safe(self) -> None:
+        self.fmp.historical_price_eod_light.return_value = {"bad": True}
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(result.price_history_status, "MALFORMED")
+        self.assertIsNone(result.performance_metrics)
+
+    def test_5b1_expense_holdings_unaffected(self) -> None:
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(result.expense_ratio, 0.49)
+        self.assertTrue(result.top_holdings)
+
+    def test_fmp_call_budget_bounded(self) -> None:
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+
+        analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertEqual(self.fmp.etf_info.call_count, 1)
+        self.assertEqual(self.fmp.etf_holdings.call_count, 1)
+        self.assertEqual(self.fmp.profile.call_count, 1)
+        self.assertEqual(self.fmp.quote.call_count, 1)
+        self.assertEqual(self.fmp.historical_price_eod_light.call_count, 1)
+
+    def test_spus_synthetic_full_path(self) -> None:
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(80, end_price=120.0)
+
+        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+
+        self.assertIsNotNone(result.performance_metrics)
+        self.assertIsNotNone(result.performance_metrics.return_1y_pct)
+
+    def test_spsk_fixed_income_label_guard(self) -> None:
+        self.fmp.etf_info.return_value = {
+            **full_etf_info("SPSK"),
+            "assetClass": "Fixed Income Sukuk",
+            "name": "SP Funds Dow Jones Global Sukuk ETF",
+        }
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(80)
+
+        result = analyze_fund(resolved_etf("SPSK"), fmp_client=self.fmp)
+
+        self.assertIsNotNone(result.risk_metrics)
+        self.assertIsNotNone(result.risk_metrics.annualized_volatility_pct)
+        self.assertIsNone(result.risk_metrics.volatility_label)
+
+    def test_qqq_fund_path_with_history(self) -> None:
+        self.fmp.etf_info.return_value = full_etf_info("QQQ")
+        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+
+        result = analyze_fund(resolved_etf("QQQ"), fmp_client=self.fmp)
+
+        self.assertEqual(result.symbol, "QQQ")
+        self.assertIsNone(result.participation_source)
 
 
 if __name__ == "__main__":

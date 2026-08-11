@@ -344,6 +344,22 @@ class FMPClient:
         rows = self._get("etf/holdings", {"symbol": symbol})
         return rows if isinstance(rows, list) else []
 
+    def historical_price_eod_light(
+        self,
+        symbol: str,
+        from_date: str,
+        to_date: str,
+    ):
+        rows = self._get(
+            "historical-price-eod/light",
+            {
+                "symbol": symbol,
+                "from": from_date,
+                "to": to_date,
+            },
+        )
+        return rows if isinstance(rows, list) else []
+
     def income_statement(self, symbol: str):
         return self._get(
             "income-statement",

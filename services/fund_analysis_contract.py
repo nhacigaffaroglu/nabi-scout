@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from datetime import date
+from typing import Any, Dict, List, Optional, Tuple
 
 ANALYSIS_KIND_FUND = "fund"
 
@@ -21,6 +22,100 @@ LABEL_VERI_YETERSIZ = "Veri yetersiz"
 LABEL_YUKSEK_MALIYET = "Yüksek maliyet"
 LABEL_YOGUNLASMA_RISKI = "Yoğunlaşma riski"
 LABEL_CONFIGURED_PARTICIPATION = "Yapılandırılmış katılım ETF'si"
+
+LABEL_VOLATILITY_LOW = "Düşük oynaklık"
+LABEL_VOLATILITY_MODERATE = "Orta oynaklık"
+LABEL_VOLATILITY_HIGH = "Yüksek oynaklık"
+LABEL_DRAWDOWN_LIMITED = "Sınırlı düşüş"
+LABEL_DRAWDOWN_MODERATE = "Orta düşüş"
+LABEL_DRAWDOWN_DEEP = "Derin düşüş"
+
+PERFORMANCE_SECTION_TITLE = "Performans (fiyat bazlı)"
+RISK_SECTION_TITLE = "Risk (fiyat bazlı)"
+PRICE_RETURN_DISCLAIMER = "Temettü/dağıtım etkisi dahil değildir."
+BENCHMARK_RELATIVE_DISCLAIMER = "Göreli benchmark analizi henüz yok."
+PERFORMANCE_UNAVAILABLE_MESSAGE = (
+    "Fiyat geçmişi mevcut olmadığı için performans/risk metrikleri hesaplanamadı."
+)
+
+STALE_OBSERVATION_WARNING = "Son fiyat verisi güncel olmayabilir."
+
+
+@dataclass(frozen=True)
+class PricePoint:
+    date: date
+    close: float
+    volume: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "date": self.date.isoformat(),
+            "close": self.close,
+            "volume": self.volume,
+        }
+
+
+@dataclass(frozen=True)
+class PriceSeries:
+    symbol: str
+    points: Tuple[PricePoint, ...] = field(default_factory=tuple)
+    source: str = "unknown"
+    last_observation_date: Optional[date] = None
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "source": self.source,
+            "last_observation_date": (
+                self.last_observation_date.isoformat()
+                if self.last_observation_date
+                else None
+            ),
+            "points": [point.to_dict() for point in self.points],
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class FundPerformanceMetrics:
+    return_1m_pct: Optional[float] = None
+    return_ytd_pct: Optional[float] = None
+    return_1y_pct: Optional[float] = None
+    observation_count: int = 0
+    is_stale: bool = False
+    return_1y_full_confidence: Optional[bool] = None
+    warnings: Tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def has_any_return(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.return_1m_pct,
+                self.return_ytd_pct,
+                self.return_1y_pct,
+            )
+        )
+
+
+@dataclass(frozen=True)
+class FundRiskMetrics:
+    annualized_volatility_pct: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    volatility_label: Optional[str] = None
+    drawdown_label: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def has_any_metric(self) -> bool:
+        return (
+            self.annualized_volatility_pct is not None
+            or self.max_drawdown_pct is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -75,6 +170,10 @@ class FundAnalysisResult:
     unsupported_fields: List[str] = field(default_factory=list)
     dimension_scores: List[FundDimensionScore] = field(default_factory=list)
     labels: List[str] = field(default_factory=list)
+    performance_metrics: Optional[FundPerformanceMetrics] = None
+    risk_metrics: Optional[FundRiskMetrics] = None
+    price_history_status: Optional[str] = None
+    performance_warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
@@ -82,4 +181,15 @@ class FundAnalysisResult:
         payload["dimension_scores"] = [
             dimension.to_dict() for dimension in self.dimension_scores
         ]
+        if self.performance_metrics is not None:
+            payload["performance_metrics"] = self.performance_metrics.to_dict()
+        if self.risk_metrics is not None:
+            payload["risk_metrics"] = self.risk_metrics.to_dict()
         return payload
+
+    def has_performance_or_risk_metrics(self) -> bool:
+        performance = self.performance_metrics
+        risk = self.risk_metrics
+        performance_ok = performance is not None and performance.has_any_return()
+        risk_ok = risk is not None and risk.has_any_metric()
+        return performance_ok or risk_ok

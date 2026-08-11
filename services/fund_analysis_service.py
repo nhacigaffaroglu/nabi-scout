@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from config.scan_universe import PARTICIPATION_DEFAULTS
@@ -13,17 +14,26 @@ from services.fund_analysis_contract import (
     DIMENSION_COST,
     DIMENSION_DATA_QUALITY,
     DIMENSION_LIQUIDITY,
+    FundAnalysisResult,
+    FundDimensionScore,
+    FundHolding,
+    FundPerformanceMetrics,
+    FundRiskMetrics,
     LABEL_CONFIGURED_PARTICIPATION,
     LABEL_INCELEME_UYGUN,
     LABEL_VERI_YETERSIZ,
     LABEL_YOGUNLASMA_RISKI,
     LABEL_YUKSEK_MALIYET,
     PARTICIPATION_SOURCE_CONFIGURED,
-    FundAnalysisResult,
-    FundDimensionScore,
-    FundHolding,
+)
+from services.fund_performance_service import (
+    compute_fund_performance_metrics,
+    compute_fund_risk_metrics,
+    normalize_price_points,
 )
 from services.symbol_resolver_service import ResolvedSecurity, participation_for_symbol
+
+HISTORY_LOOKBACK_DAYS = 400
 
 EXPENSE_HIGH_THRESHOLD_PCT = 0.50
 TOP10_CONCENTRATION_RISK_THRESHOLD_PCT = 50.0
@@ -207,6 +217,17 @@ def analyze_fund(
         participation_source=participation_source,
     )
 
+    performance_metrics, risk_metrics, price_history_status, performance_warnings = (
+        _build_performance_and_risk(
+            symbol=symbol,
+            fmp_client=fmp_client,
+            asset_class=asset_class,
+            endpoint_status=endpoint_status,
+            warnings=warnings,
+        )
+    )
+    warnings.extend(performance_warnings)
+
     return FundAnalysisResult(
         symbol=symbol,
         analysis_kind=ANALYSIS_KIND_FUND,
@@ -236,7 +257,85 @@ def analyze_fund(
         unsupported_fields=unsupported_fields,
         dimension_scores=dimension_scores,
         labels=labels,
+        performance_metrics=performance_metrics,
+        risk_metrics=risk_metrics,
+        price_history_status=price_history_status,
+        performance_warnings=performance_warnings,
     )
+
+
+def _build_performance_and_risk(
+    *,
+    symbol: str,
+    fmp_client: FMPClient,
+    asset_class: Optional[str],
+    endpoint_status: Dict[str, str],
+    warnings: List[str],
+) -> Tuple[
+    Optional[FundPerformanceMetrics],
+    Optional[FundRiskMetrics],
+    str,
+    List[str],
+]:
+    performance_warnings: List[str] = []
+    as_of = date.today()
+    to_date = as_of.isoformat()
+    from_date = (as_of - timedelta(days=HISTORY_LOOKBACK_DAYS)).isoformat()
+
+    history_rows, endpoint_status["fmp_historical_price"], history_warning = _safe_call_list(
+        fmp_client,
+        "historical_price_eod_light",
+        symbol,
+        warnings,
+        from_date=from_date,
+        to_date=to_date,
+    )
+    if history_warning:
+        performance_warnings.append(history_warning)
+
+    status = endpoint_status.get("fmp_historical_price", "UNAVAILABLE")
+    if status != "OK":
+        if status == "RATE_LIMIT":
+            performance_warnings.append(
+                "Fiyat geçmişi sağlayıcı limiti nedeniyle alınamadı."
+            )
+        elif status == "PLAN_RESTRICTED":
+            performance_warnings.append(
+                "Fiyat geçmişi mevcut plan kapsamında erişilemedi."
+            )
+        return None, None, status, performance_warnings
+
+    series = normalize_price_points(
+        symbol,
+        history_rows,
+        source="fmp_historical_price_eod_light",
+    )
+    if not series.points:
+        performance_warnings.append("Fiyat geçmişi boş veya geçersiz.")
+        return None, None, "EMPTY", performance_warnings
+
+    performance = compute_fund_performance_metrics(series, as_of=as_of)
+    risk = compute_fund_risk_metrics(series, asset_class=asset_class)
+
+    combined_warnings = list(performance.warnings)
+    combined_warnings.extend(performance_warnings)
+    performance = FundPerformanceMetrics(
+        return_1m_pct=performance.return_1m_pct,
+        return_ytd_pct=performance.return_ytd_pct,
+        return_1y_pct=performance.return_1y_pct,
+        observation_count=performance.observation_count,
+        is_stale=performance.is_stale,
+        return_1y_full_confidence=performance.return_1y_full_confidence,
+        warnings=tuple(combined_warnings),
+    )
+    performance_warnings = combined_warnings
+
+    has_performance = performance.has_any_return()
+    has_risk = risk.has_any_metric()
+    if not has_performance and not has_risk:
+        return performance if performance.observation_count else None, risk, status, performance_warnings
+
+    return performance, risk, status, performance_warnings
 
 
 def _safe_call(
@@ -266,10 +365,16 @@ def _safe_call_list(
     method_name: str,
     symbol: str,
     warnings: List[str],
+    *,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], str, Optional[str]]:
     method = getattr(fmp_client, method_name)
     try:
-        payload = method(symbol) or []
+        if from_date is not None and to_date is not None:
+            payload = method(symbol, from_date, to_date) or []
+        else:
+            payload = method(symbol) or []
         if not isinstance(payload, list):
             return [], "MALFORMED", f"FMP {method_name} beklenmeyen yanıt döndürdü."
         rows = [row for row in payload if isinstance(row, dict)]

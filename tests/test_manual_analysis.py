@@ -518,6 +518,10 @@ class RuntimeImportContractTests(unittest.TestCase):
             source = handle.read()
         self.assertIn("analysis_kind == \"fund\"", source)
         self.assertIn("bağımsız NABI Şeriat uygunluk doğrulaması değildir", source)
+        self.assertIn("PERFORMANCE_SECTION_TITLE", source)
+        self.assertIn("PRICE_RETURN_DISCLAIMER", source)
+        self.assertIn("PERFORMANCE_UNAVAILABLE_MESSAGE", source)
+        self.assertNotIn("Company Report", source.split("analysis_kind == \"fund\"")[1].split("elif")[0])
 
     def test_manual_analysis_imports_in_fresh_process(self) -> None:
         import subprocess
@@ -529,6 +533,7 @@ class RuntimeImportContractTests(unittest.TestCase):
                 "-c",
                 "from services.manual_analysis_service import analyze_security; "
                 "from services.fund_analysis_service import analyze_fund; "
+                "from services.fund_performance_service import normalize_price_points; "
                 "from services.scan_universe_service import MANUAL_UNIVERSE_NAME; "
                 "assert MANUAL_UNIVERSE_NAME == 'MANUAL'; "
                 "print('MANUAL_IMPORT_OK')",

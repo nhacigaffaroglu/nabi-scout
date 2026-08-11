@@ -1,12 +1,20 @@
 import pandas as pd
 import streamlit as st
+from typing import Optional
 
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.daily_brief_service import build_daily_brief
 from services.fmp_client import FMPClient, FMPError
-from services.fund_analysis_contract import PARTICIPATION_SOURCE_CONFIGURED
+from services.fund_analysis_contract import (
+    BENCHMARK_RELATIVE_DISCLAIMER,
+    PARTICIPATION_SOURCE_CONFIGURED,
+    PERFORMANCE_SECTION_TITLE,
+    PERFORMANCE_UNAVAILABLE_MESSAGE,
+    PRICE_RETURN_DISCLAIMER,
+    RISK_SECTION_TITLE,
+)
 from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
     analyze_security,
@@ -97,6 +105,69 @@ def _format_compact_number(value: float) -> str:
     if value >= 1_000_000:
         return f"${value / 1_000_000:.2f}M"
     return f"${value:,.0f}"
+
+
+def _format_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.2f}%"
+
+
+def _render_fund_performance_risk(fund) -> None:
+    performance = fund.performance_metrics
+    risk = fund.risk_metrics
+    has_metrics = fund.has_performance_or_risk_metrics()
+
+    if not has_metrics:
+        st.markdown(f"**{PERFORMANCE_SECTION_TITLE}**")
+        message = PERFORMANCE_UNAVAILABLE_MESSAGE
+        if fund.price_history_status == "RATE_LIMIT":
+            message = (
+                "Veri sağlayıcı limiti nedeniyle fiyat geçmişi alınamadı; "
+                "performans/risk metrikleri hesaplanamadı."
+            )
+        elif fund.price_history_status == "PLAN_RESTRICTED":
+            message = (
+                "Fiyat geçmişi mevcut plan kapsamında erişilemedi; "
+                "performans/risk metrikleri hesaplanamadı."
+            )
+        st.info(message)
+        for warning in fund.performance_warnings:
+            st.warning(warning)
+        return
+
+    if performance and performance.has_any_return():
+        st.markdown(f"**{PERFORMANCE_SECTION_TITLE}**")
+        perf_cols = st.columns(3)
+        perf_cols[0].metric("1A fiyat getirisi", _format_pct(performance.return_1m_pct))
+        perf_cols[1].metric("YBB fiyat getirisi", _format_pct(performance.return_ytd_pct))
+        perf_cols[2].metric("1Y fiyat getirisi", _format_pct(performance.return_1y_pct))
+        st.caption(PRICE_RETURN_DISCLAIMER)
+        for warning in performance.warnings:
+            st.warning(warning)
+
+    if risk and risk.has_any_metric():
+        st.markdown(f"**{RISK_SECTION_TITLE}**")
+        risk_cols = st.columns(2)
+        risk_cols[0].metric(
+            "Yıllıklandırılmış oynaklık (fiyat)",
+            _format_pct(risk.annualized_volatility_pct),
+        )
+        risk_cols[1].metric(
+            "Maksimum düşüş (fiyat)",
+            _format_pct(risk.max_drawdown_pct),
+        )
+        label_parts = [
+            label
+            for label in (risk.volatility_label, risk.drawdown_label)
+            if label
+        ]
+        if label_parts:
+            st.caption(" · ".join(label_parts))
+
+    for warning in fund.performance_warnings:
+        if warning not in (performance.warnings if performance else ()):
+            st.warning(warning)
 
 
 manual_result = st.session_state.get("manual_analysis_result")
@@ -195,6 +266,7 @@ if manual_result is not None:
 
         if fund.benchmark:
             st.caption(f"Endeks / benchmark: {fund.benchmark}")
+            st.caption(BENCHMARK_RELATIVE_DISCLAIMER)
         if fund.issuer:
             st.caption(f"İhraççı: {fund.issuer}")
         if fund.asset_class or fund.domicile:
@@ -246,6 +318,8 @@ if manual_result is not None:
                     f"**{dimension.dimension}** — {dimension.score:.0f}/100 · "
                     f"{dimension.observation}"
                 )
+
+        _render_fund_performance_risk(fund)
 
         if fund.labels:
             st.markdown("**Etiketler:** " + ", ".join(f"`{label}`" for label in fund.labels))
