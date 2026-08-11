@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from urllib.parse import urlparse
 
 from supabase import Client, create_client
 
@@ -18,7 +19,22 @@ def _normalize_supabase_url(url: str) -> str:
         and normalized[0] in "\"'"
     ):
         normalized = normalized[1:-1].strip()
-    return normalized.rstrip("/")
+    normalized = normalized.rstrip("/")
+
+    if not normalized.startswith(("http://", "https://")) and ".supabase.co" in normalized:
+        normalized = f"https://{normalized.lstrip('/')}"
+
+    parsed = urlparse(normalized)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return normalized
+
+
+def _is_valid_supabase_url(url: str) -> bool:
+    if not url.startswith("https://"):
+        return False
+    hostname = urlparse(url).hostname or ""
+    return hostname.endswith(".supabase.co")
 
 
 def create_supabase_client(
@@ -36,7 +52,10 @@ def create_supabase_client(
             "SUPABASE_URL and SUPABASE_KEY environment variables are required."
         )
 
-    if not resolved_url.startswith("https://") or not resolved_url.endswith(".supabase.co"):
-        raise SupabaseConfigError("SUPABASE_URL is invalid.")
+    if not _is_valid_supabase_url(resolved_url):
+        raise SupabaseConfigError(
+            "SUPABASE_URL is invalid. Use the Supabase Project URL "
+            "(https://<project-ref>.supabase.co)."
+        )
 
     return create_client(resolved_url, resolved_key)
