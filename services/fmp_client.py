@@ -63,6 +63,18 @@ class FMPClient:
             ) from exc
         return cls(key)
 
+    @classmethod
+    def from_env(cls):
+        import os
+
+        key = (os.environ.get("FMP_API_KEY") or "").strip()
+        if not key:
+            raise FMPError(
+                "FMP_API_KEY environment variable is required.",
+                error_class="auth",
+            )
+        return cls(key)
+
     def reset_scan_state(self) -> None:
         self._scan_cache.clear()
         self._rate_limited_until = 0.0

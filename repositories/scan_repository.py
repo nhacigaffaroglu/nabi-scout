@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from services.scan_snapshot import (
@@ -84,6 +84,56 @@ class ScanRepository:
             "error_count": errors,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }).eq("id", scan_run_id).execute()
+
+    def fail_run(
+        self,
+        scan_run_id: str,
+        *,
+        error_count: Optional[int] = None,
+    ) -> None:
+        payload: Dict[str, Any] = {
+            "status": "FAILED",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if error_count is not None:
+            payload["error_count"] = error_count
+        self.client.table("scan_runs").update(payload).eq(
+            "id", scan_run_id
+        ).execute()
+
+    def get_run_by_universe_name(self, universe_name: str) -> Optional[Dict[str, Any]]:
+        response = (
+            self.client.table("scan_runs")
+            .select("*")
+            .eq("universe_name", universe_name)
+            .order("started_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+
+    def get_stale_running_runs(self, before: datetime) -> List[Dict[str, Any]]:
+        response = (
+            self.client.table("scan_runs")
+            .select("*")
+            .eq("status", "RUNNING")
+            .lt("started_at", before.isoformat())
+            .execute()
+        )
+        return response.data or []
+
+    def mark_stale_running_failed(self, before: datetime) -> int:
+        stale_runs = self.get_stale_running_runs(before)
+        for run in stale_runs:
+            run_id = run.get("id")
+            if not run_id:
+                continue
+            self.fail_run(
+                run_id,
+                error_count=run.get("error_count") or 0,
+            )
+        return len(stale_runs)
 
     def get_previous_snapshot(
         self,

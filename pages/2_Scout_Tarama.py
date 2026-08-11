@@ -6,10 +6,10 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.universe_repository import UniverseRepository
 from repositories.watchlist_repository import WatchlistRepository
-from services.change_detection_engine import detect_changes, rank_changes
 from services.fmp_client import FMPClient
 from services.free_universe_client import FreeUniverseClient
-from services.scan_snapshot import build_scan_snapshot
+from services.scan_runner_service import run_scan
+from services.scan_universe_service import build_fixed_universe_rows
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client import get_supabase_client
@@ -39,29 +39,6 @@ def load_sec_company_lookup(contact_email: str) -> dict:
         for row in rows
         if row.get("symbol")
     }
-
-
-def build_fixed_universe_rows(
-    universe_name: str,
-    sec_lookup: dict,
-) -> list[dict]:
-    etf_symbols = set(SCAN_UNIVERSES.get("Katılım ETF 3", []))
-    rows = []
-
-    for symbol in SCAN_UNIVERSES[universe_name]:
-        normalized_symbol = symbol.strip().upper()
-        is_etf = normalized_symbol in etf_symbols
-        sec_row = sec_lookup.get(normalized_symbol, {})
-
-        rows.append({
-            "symbol": normalized_symbol,
-            "cik": None if is_etf else sec_row.get("cik"),
-            "company_name": sec_row.get("company_name") or normalized_symbol,
-            "exchange": sec_row.get("exchange"),
-            "is_etf": is_etf,
-        })
-
-    return rows
 
 
 client = get_supabase_client()
@@ -176,130 +153,49 @@ if "latest_scan_changes" not in st.session_state:
 
 if st.button("Sprint 9 taramasını başlat", type="primary"):
     fmp_client = FMPClient.from_streamlit_secrets()
-    fmp_client.reset_scan_state()
     engine = ScannerV8Engine(
         fmp_client,
         SECFinancialClient(contact_email=sec_email.strip()),
-    )
-
-    run_id = scan_repo.create_run(
-        f"{universe_name} [{start + 1}-{start + len(selected_rows)}]",
-        len(selected_rows),
     )
     batch_universe_name = (
         f"{universe_name} [{start + 1}-{start + len(selected_rows)}]"
     )
 
     progress = st.progress(0)
-    output = []
-    full_candidates = []
-    scan_changes = []
-    symbols_without_previous = 0
-    updated = strong = errors = excluded = 0
 
-    for index, row in enumerate(selected_rows, 1):
-        symbol = row["symbol"]
-        participation_status, participation_score = (
-            PARTICIPATION_DEFAULTS.get(
-                symbol,
-                ("Kontrol Et", 60),
-            )
-        )
+    def _progress_callback(current: int, total: int) -> None:
+        progress.progress(current / total)
 
-        result = engine.analyze(
-            symbol=symbol,
-            cik=row.get("cik"),
-            company_name=row.get("company_name"),
-            exchange=row.get("exchange"),
-            is_etf=row.get("is_etf", False),
-            participation_status=participation_status,
-            participation_score=participation_score,
-            portfolio_fit=portfolio_fit,
-        )
-        candidate = result["candidate"]
+    scan_result = run_scan(
+        symbols=selected_rows,
+        universe_name=batch_universe_name,
+        source="manual",
+        scan_repo=scan_repo,
+        candidate_repo=candidate_repo,
+        fmp_client=fmp_client,
+        sec_client=SECFinancialClient(contact_email=sec_email.strip()),
+        engine=engine,
+        minimum_completeness=minimum_completeness,
+        minimum_conviction=minimum_conviction,
+        portfolio_fit=portfolio_fit,
+        participation_defaults=PARTICIPATION_DEFAULTS,
+        progress_callback=_progress_callback,
+    )
 
-        should_write = (
-            not result["excluded"]
-            and candidate.get("data_completeness", 0)
-            >= minimum_completeness
-            and candidate.get("conviction_score", 0)
-            >= minimum_conviction
-            and candidate.get("decision_label")
-            not in {
-                "ŞİMDİLİK UZAK DUR",
-                "VERİ EKSİK — ÖN ELEME",
-            }
-        )
-
-        if should_write:
-            candidate_repo.upsert_by_symbol(candidate)
-            updated += 1
-
-        if result["excluded"]:
-            excluded += 1
-        if candidate.get("decision_label") == (
-            "YÜKSEK ÖNCELİKLİ ARAŞTIRMA ADAYI"
-        ):
-            strong += 1
-        if result.get("errors"):
-            errors += 1
-
-        previous_snapshot = scan_repo.get_previous_snapshot(
-            symbol,
-            run_id,
-            batch_universe_name,
-        )
-        current_snapshot = build_scan_snapshot(result)
-        change_result = detect_changes(previous_snapshot, current_snapshot)
-        if previous_snapshot is None:
-            symbols_without_previous += 1
-        else:
-            scan_changes.append({
-                "symbol": symbol,
-                "company_name": candidate.get("company_name") or symbol,
-                "change": change_result,
-            })
-
-        scan_repo.add_result(run_id, result)
-        full_candidates.append(candidate)
-
-        output.append({
-            "Sembol": symbol,
-            "Şirket": candidate.get("company_name"),
-            "Yatırım Tezi": candidate.get("thesis_type"),
-            "NABI Skoru": candidate.get("nabi_score"),
-            "Veri Güveni": candidate.get("research_confidence"),
-            "Araştırma Güveni": candidate.get("conviction_score"),
-            "Fırsat Potansiyeli": candidate.get("opportunity_score"),
-            "Karar": candidate.get("decision_label"),
-            "Kaydedildi": "Evet" if should_write else "Hayır",
-        })
-
-        progress.progress(index / len(selected_rows))
-
-    st.session_state["latest_scan_candidates"] = full_candidates
-    st.session_state["latest_scan_changes"] = rank_changes([
-        item
-        for item in scan_changes
-        if item["change"].get("has_meaningful_change")
-    ])
+    st.session_state["latest_scan_candidates"] = scan_result.candidates
+    st.session_state["latest_scan_changes"] = scan_result.meaningful_changes
     st.session_state["latest_scan_symbols_without_previous"] = (
-        symbols_without_previous
+        scan_result.symbols_without_previous
     )
 
-    scan_repo.complete_run(
-        run_id,
-        len(selected_rows),
-        updated,
-        strong,
-        errors,
-    )
-
-    st.success(
-        f"Sprint 9 taraması tamamlandı. "
-        f"{updated} araştırma adayı güncellendi, "
-        f"{excluded} özel menkul kıymet elendi."
-    )
+    if scan_result.status == "FAILED":
+        st.error("Tarama başarısız oldu — hiçbir sembol işlenemedi.")
+    else:
+        st.success(
+            f"Sprint 9 taraması tamamlandı. "
+            f"{scan_result.updated} araştırma adayı güncellendi, "
+            f"{scan_result.excluded} özel menkul kıymet elendi."
+        )
 
 if st.session_state["latest_scan_candidates"]:
     candidates = st.session_state["latest_scan_candidates"]
