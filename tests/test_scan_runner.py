@@ -434,6 +434,37 @@ class HeadlessRunnerTests(unittest.TestCase):
             with self.assertRaises(SupabaseConfigError):
                 create_supabase_client()
 
+    def test_supabase_url_trailing_slash_accepted(self) -> None:
+        with patch("services.supabase_client_factory.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            create_supabase_client(
+                url="https://example.supabase.co/",
+                key="test-key",
+            )
+            mock_create.assert_called_once_with(
+                "https://example.supabase.co",
+                "test-key",
+            )
+
+    def test_supabase_url_quoted_value_accepted(self) -> None:
+        with patch("services.supabase_client_factory.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            create_supabase_client(
+                url='"https://example.supabase.co/"',
+                key="test-key",
+            )
+            mock_create.assert_called_once_with(
+                "https://example.supabase.co",
+                "test-key",
+            )
+
+    def test_supabase_url_invalid_still_rejected(self) -> None:
+        with self.assertRaises(SupabaseConfigError):
+            create_supabase_client(
+                url="http://not-supabase.example.com",
+                key="test-key",
+            )
+
     def test_fmp_env_missing(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaises(FMPError):

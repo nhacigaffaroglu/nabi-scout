@@ -10,12 +10,25 @@ class SupabaseConfigError(RuntimeError):
     """Missing or invalid Supabase environment configuration."""
 
 
+def _normalize_supabase_url(url: str) -> str:
+    normalized = url.strip()
+    if (
+        len(normalized) >= 2
+        and normalized[0] == normalized[-1]
+        and normalized[0] in "\"'"
+    ):
+        normalized = normalized[1:-1].strip()
+    return normalized.rstrip("/")
+
+
 def create_supabase_client(
     *,
     url: Optional[str] = None,
     key: Optional[str] = None,
 ) -> Client:
-    resolved_url = (url or os.environ.get("SUPABASE_URL") or "").strip()
+    resolved_url = _normalize_supabase_url(
+        url or os.environ.get("SUPABASE_URL") or "",
+    )
     resolved_key = (key or os.environ.get("SUPABASE_KEY") or "").strip()
 
     if not resolved_url or not resolved_key:
