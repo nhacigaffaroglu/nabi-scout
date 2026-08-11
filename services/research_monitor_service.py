@@ -128,7 +128,12 @@ def build_monitor_feed(
     limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     window_start = since or (datetime.now(timezone.utc) - timedelta(days=7))
-    runs = scan_repo.get_completed_runs_since(window_start, universe_name)
+    exclude_manual = universe_name is None
+    runs = scan_repo.get_completed_runs_since(
+        window_start,
+        universe_name,
+        exclude_manual=exclude_manual,
+    )
     run_ids = [run["id"] for run in runs if run.get("id")]
     rows = scan_repo.get_results_for_runs(run_ids)
 
@@ -143,6 +148,7 @@ def build_monitor_feed(
     pre_window_run_ids = scan_repo.get_all_completed_run_ids_before(
         window_start,
         universe_name,
+        exclude_manual=exclude_manual,
     )
     pre_window_symbols = scan_repo.get_symbols_with_results_before(
         symbols,

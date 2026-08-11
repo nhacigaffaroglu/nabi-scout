@@ -638,8 +638,12 @@ class DashboardSmokeTests(unittest.TestCase):
     def test_dashboard_import_with_today_actions(self) -> None:
         mock_st = MagicMock()
         mock_st.session_state = {}
-        mock_st.columns.return_value = [MagicMock() for _ in range(5)]
+        mock_st.columns.side_effect = lambda spec: [
+            MagicMock() for _ in range(len(spec) if isinstance(spec, list) else spec)
+        ]
         mock_st.button.return_value = False
+        mock_st.text_input.return_value = ""
+        mock_st.cache_data = lambda **kwargs: (lambda fn: fn)
         mock_st.expander.return_value.__enter__ = MagicMock(return_value=None)
         mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
         mock_st.query_params = {}

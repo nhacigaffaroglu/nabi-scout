@@ -5,6 +5,17 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.daily_brief_service import build_daily_brief
+from services.fmp_client import FMPClient, FMPError
+from services.manual_analysis_service import (
+    ETF_UNSUPPORTED_REASON,
+    UNRESOLVED_UNSUPPORTED_REASON,
+    analyze_security,
+    save_manual_candidate,
+)
+from services.free_universe_client import FreeUniverseClient
+from services.scanner_v8_engine import ScannerV8Engine
+from services.sec_financial_client import SECFinancialClient
+from services.symbol_resolver_service import SymbolNotFoundError
 from services.ui_formatters import format_datetime_tr, format_research_status
 from services.research_workflow_service import normalize_research_status
 from services.supabase_client import get_supabase_client
@@ -18,6 +29,153 @@ client = get_supabase_client()
 repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_sec_company_lookup(contact_email: str) -> dict:
+    if not contact_email.strip():
+        return {}
+    rows = FreeUniverseClient(contact_email=contact_email.strip()).get_sec_companies()
+    return {
+        str(row.get("symbol") or "").strip().upper(): row
+        for row in rows
+        if row.get("symbol")
+    }
+
+
+st.markdown("**🔎 Bir sembol analiz et**")
+manual_symbol = st.text_input(
+    "Sembol",
+    key="dashboard_manual_symbol",
+    placeholder="NVDA",
+    label_visibility="collapsed",
+)
+analyze_col, _ = st.columns([1, 3])
+with analyze_col:
+    analyze_clicked = st.button("Analiz et", type="primary", key="dashboard_analyze_button")
+
+if analyze_clicked:
+    normalized = (manual_symbol or "").strip().upper()
+    if not normalized:
+        st.error("Sembol girin.")
+    else:
+        try:
+            sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
+            fmp_client = FMPClient.from_streamlit_secrets()
+            sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
+            engine = ScannerV8Engine(fmp_client, sec_client)
+            with st.spinner(f"{normalized} analiz ediliyor..."):
+                analysis = analyze_security(
+                    normalized,
+                    candidate_repo=repo,
+                    scan_repo=scan_repo,
+                    fmp_client=fmp_client,
+                    sec_client=sec_client,
+                    sec_lookup=sec_lookup,
+                    engine=engine,
+                )
+            st.session_state["manual_analysis_result"] = analysis
+        except SymbolNotFoundError:
+            st.session_state.pop("manual_analysis_result", None)
+            st.error("Sembol bulunamadı.")
+        except FMPError as exc:
+            st.session_state.pop("manual_analysis_result", None)
+            if exc.error_class == "rate_limit":
+                st.warning("Veri sağlayıcı limiti nedeniyle analiz şu an tamamlanamadı.")
+            else:
+                st.error(f"Analiz sırasında veri hatası oluştu: {exc}")
+        except Exception as exc:
+            st.session_state.pop("manual_analysis_result", None)
+            st.error(f"Analiz tamamlanamadı: {exc}")
+
+manual_result = st.session_state.get("manual_analysis_result")
+if manual_result is not None:
+    resolved = manual_result.resolved
+    st.markdown(
+        f"**{manual_result.symbol}** · "
+        f"{resolved.company_name or manual_result.symbol}"
+    )
+    st.caption(
+        f"Tür: {resolved.security_type} · "
+        f"Kaynak: {resolved.resolution_source}"
+    )
+
+    if manual_result.analysis_kind == "equity" and manual_result.candidate:
+        candidate = manual_result.candidate
+        metric_cols = st.columns(4)
+        metric_cols[0].metric(
+            "NABI Score",
+            candidate.get("nabi_score") if candidate.get("nabi_score") is not None else "—",
+        )
+        metric_cols[1].metric(
+            "Veri tamlığı",
+            f"{candidate.get('data_completeness', 0):.0f}%"
+            if candidate.get("data_completeness") is not None
+            else "—",
+        )
+        metric_cols[2].metric(
+            "Karar",
+            candidate.get("decision_label") or candidate.get("decision") or "—",
+        )
+        metric_cols[3].metric(
+            "Araştırma güveni",
+            candidate.get("research_confidence")
+            if candidate.get("research_confidence") is not None
+            else "—",
+        )
+        for warning in manual_result.warnings:
+            st.warning(warning)
+        for error in manual_result.errors:
+            st.error(error)
+
+        action_cols = st.columns(2)
+        with action_cols[0]:
+            if st.button(
+                "📄 Company Report'u aç",
+                key="dashboard_open_company_report",
+            ):
+                st.session_state["company_report_candidate"] = candidate
+                st.query_params["symbol"] = manual_result.symbol
+                st.switch_page("pages/4_Company_Report.py")
+        with action_cols[1]:
+            if not manual_result.is_persisted:
+                if st.button(
+                    "Aday havuzuna kaydet",
+                    key="dashboard_save_manual_candidate",
+                ):
+                    try:
+                        saved = save_manual_candidate(repo, candidate)
+                        manual_result.is_persisted = True
+                        manual_result.persisted_candidate_id = saved.get("id")
+                        st.session_state["manual_analysis_result"] = manual_result
+                        st.success(f"{manual_result.symbol} aday havuzuna kaydedildi.")
+                    except ValueError as exc:
+                        st.error(str(exc))
+            else:
+                st.caption("Bu sembol aday havuzunda kayıtlı.")
+
+    elif manual_result.analysis_kind == "etf_metadata":
+        st.info(manual_result.unsupported_reason or ETF_UNSUPPORTED_REASON)
+        if manual_result.current_price is not None:
+            st.metric("Güncel fiyat", manual_result.current_price)
+        if manual_result.participation_status:
+            st.caption(
+                f"Katılım: {manual_result.participation_status} "
+                f"({manual_result.participation_score})"
+            )
+        for warning in manual_result.warnings:
+            st.warning(warning)
+
+    elif manual_result.analysis_kind == "unresolved":
+        st.warning(manual_result.unsupported_reason or UNRESOLVED_UNSUPPORTED_REASON)
+        if resolved.cik:
+            st.caption(f"SEC CIK: {resolved.cik}")
+        if resolved.exchange:
+            st.caption(f"Borsa: {resolved.exchange}")
+        for warning in manual_result.warnings:
+            st.warning(warning)
+
+    st.divider()
 
 brief = build_daily_brief(
     scan_repo=scan_repo,

@@ -399,7 +399,35 @@ class ScanRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(snapshot["nabi_score"], 55.0)
 
-    def test_legacy_sparse_fallback(self) -> None:
+    def test_manual_universe_does_not_fallback_to_scheduled(self) -> None:
+        rows = [
+            {
+                "symbol": "NVDA",
+                "candidate_snapshot": base_snapshot(symbol="NVDA", nabi_score=80.0),
+                "scan_runs": {
+                    "universe_name": "SCHEDULED · Daily · 2026-08-11",
+                    "status": "COMPLETED",
+                },
+            },
+        ]
+        client = MagicMock()
+        table = MagicMock()
+        client.table.return_value = table
+        query = MagicMock()
+        table.select.return_value = query
+        query.eq.return_value = query
+        query.neq.return_value = query
+        query.order.return_value = query
+        query.limit.return_value = query
+        query.execute.return_value = MagicMock(data=rows)
+
+        repo = ScanRepository(client)
+        snapshot = repo.get_previous_snapshot(
+            "NVDA",
+            "manual-current",
+            "MANUAL",
+        )
+        self.assertIsNone(snapshot)
         rows = [
             {
                 "symbol": "AAPL",

@@ -4,9 +4,15 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from config.scan_universe import SCAN_UNIVERSES
+from services.scan_snapshot import normalize_universe_name
 
 DAILY_UNIVERSE_KEYS = ("Teknoloji 10", "Katılım ETF 3")
 SCHEDULED_UNIVERSE_PREFIX = "SCHEDULED · Daily · "
+MANUAL_UNIVERSE_NAME = "MANUAL"
+
+
+def is_manual_universe(universe_name: Optional[str]) -> bool:
+    return normalize_universe_name(universe_name) == MANUAL_UNIVERSE_NAME
 
 
 def scheduled_universe_name(run_date: Optional[date] = None) -> str:

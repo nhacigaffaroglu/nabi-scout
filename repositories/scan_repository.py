@@ -9,7 +9,9 @@ from services.scan_snapshot import (
     sparse_snapshot_from_row,
 )
 from services.scan_universe_service import (
+    MANUAL_UNIVERSE_NAME,
     SCHEDULED_UNIVERSE_PREFIX,
+    is_manual_universe,
     scheduled_universe_name,
 )
 
@@ -187,6 +189,9 @@ class ScanRepository:
                 if previous_universe == logical_universe:
                     return self._row_to_snapshot(row)
 
+            if logical_universe == MANUAL_UNIVERSE_NAME:
+                return None
+
         return self._row_to_snapshot(rows[0])
 
     def _fetch_previous_rows(
@@ -235,6 +240,8 @@ class ScanRepository:
         self,
         since: datetime,
         universe_name: Optional[str] = None,
+        *,
+        exclude_manual: bool = False,
     ) -> List[Dict[str, Any]]:
         query = (
             self.client.table("scan_runs")
@@ -251,6 +258,11 @@ class ScanRepository:
 
         logical_universe = normalize_universe_name(universe_name)
         if not logical_universe:
+            if exclude_manual:
+                return [
+                    row for row in rows
+                    if not is_manual_universe(row.get("universe_name"))
+                ]
             return rows
 
         filtered: List[Dict[str, Any]] = []
@@ -366,6 +378,8 @@ class ScanRepository:
         self,
         before: datetime,
         universe_name: Optional[str] = None,
+        *,
+        exclude_manual: bool = False,
     ) -> List[str]:
         query = (
             self.client.table("scan_runs")
@@ -377,6 +391,12 @@ class ScanRepository:
         rows = response.data or []
         logical_universe = normalize_universe_name(universe_name)
         if not logical_universe:
+            if exclude_manual:
+                return [
+                    row["id"] for row in rows
+                    if row.get("id")
+                    and not is_manual_universe(row.get("universe_name"))
+                ]
             return [row["id"] for row in rows if row.get("id")]
 
         run_ids: List[str] = []

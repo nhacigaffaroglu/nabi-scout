@@ -433,6 +433,26 @@ class ScanRepositoryBatchTests(unittest.TestCase):
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["id"], "1")
 
+    def test_get_completed_runs_since_exclude_manual(self) -> None:
+        client = MagicMock()
+        table = MagicMock()
+        client.table.return_value = table
+        query = MagicMock()
+        table.select.return_value = query
+        query.eq.return_value = query
+        query.gte.return_value = query
+        query.order.return_value = query
+        query.execute.return_value = MagicMock(data=[
+            {"id": "1", "universe_name": "SCHEDULED · Daily · 2026-08-11", "status": "COMPLETED", "completed_at": "2026-08-10T10:00:00+00:00"},
+            {"id": "2", "universe_name": "MANUAL", "status": "COMPLETED", "completed_at": "2026-08-10T11:00:00+00:00"},
+        ])
+        repo = ScanRepository(client)
+        runs = repo.get_completed_runs_since(
+            datetime(2026, 8, 9, tzinfo=timezone.utc),
+            exclude_manual=True,
+        )
+        self.assertEqual([run["id"] for run in runs], ["1"])
+
     def test_get_results_for_runs_batch(self) -> None:
         client = MagicMock()
         table = MagicMock()

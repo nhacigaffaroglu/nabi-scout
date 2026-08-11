@@ -60,6 +60,7 @@ def run_scan(
     participation_defaults: Optional[Dict[str, tuple[str, int]]] = None,
     progress_callback: Optional[ProgressCallback] = None,
     inter_symbol_pause_seconds: float = INTER_SYMBOL_PAUSE_SECONDS,
+    persist_candidates: bool = True,
 ) -> ScanRunResult:
     if not symbols:
         raise ValueError("At least one symbol is required to run a scan.")
@@ -124,7 +125,7 @@ def run_scan(
                 and candidate.get("decision_label") not in WRITE_BLOCKED_DECISIONS
             )
 
-            if should_write:
+            if persist_candidates and should_write:
                 candidate_repo.upsert_by_symbol(candidate)
                 updated += 1
 
