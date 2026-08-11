@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from services.daily_action_service import (
+    build_today_actions,
+    open_research_backlog_caveat,
+)
 from services.research_monitor_service import build_monitor_feed
 from services.research_workflow_service import build_research_workflow
 from services.scan_run_health_service import derive_scan_run_health
@@ -95,6 +99,35 @@ def build_daily_brief(
 
     open_research = _build_open_research_items(candidates, max_open_research)
 
+    today_actions = build_today_actions(
+        feed=feed,
+        candidates=candidates,
+        watched_candidate_ids=watched_ids,
+        max_actions=3,
+    )
+    today_action_symbols = {
+        str(item.symbol or "").strip().upper()
+        for item in today_actions
+        if item.symbol
+    }
+
+    if today_action_symbols:
+        attention_items = [
+            item
+            for item in attention_items
+            if str(item.get("symbol") or "").strip().upper() not in today_action_symbols
+        ]
+        new_candidates = [
+            item
+            for item in new_candidates
+            if str(item.get("symbol") or "").strip().upper() not in today_action_symbols
+        ]
+        watchlist_changes = [
+            item
+            for item in watchlist_changes
+            if str(item.get("symbol") or "").strip().upper() not in today_action_symbols
+        ]
+
     meaningful_change_count = _count_meaningful_changes(feed)
     summary_stats = {
         "meaningful_change_count": meaningful_change_count,
@@ -103,6 +136,7 @@ def build_daily_brief(
         "watchlist_change_count": len(watchlist_changes),
         "open_research_count": len(open_research),
         "data_issue_count": len(data_issues),
+        "today_action_count": len(today_actions),
     }
 
     headline = _build_headline(summary_stats)
@@ -125,6 +159,7 @@ def build_daily_brief(
         "watchlist_changes": watchlist_changes,
         "open_research": open_research,
         "data_issues": data_issues,
+        "today_actions": [item.to_dict() for item in today_actions],
         "summary_stats": summary_stats,
         "has_anything_to_report": has_anything_to_report,
     }
@@ -272,6 +307,7 @@ def _build_open_research_items(
             "research_next_action": workflow.get("research_next_action"),
             "last_reviewed_at": workflow.get("last_reviewed_at"),
             "candidate": candidate,
+            "data_quality_caveat": open_research_backlog_caveat(candidate),
         })
 
     open_items.sort(

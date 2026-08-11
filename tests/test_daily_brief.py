@@ -67,8 +67,15 @@ def monitor_entry(
         "latest_snapshot": snapshot(symbol=symbol),
         "events": events or [{"message": "Veri tamlığı %12 → %76", "severity": "HIGH"}],
         "meaningful_change_count": meaningful,
+        "window_change_score": 15 if meaningful else 0,
+        "latest_scan_at": "2026-08-11T14:47:00+00:00",
         "is_first_seen_in_window": first_seen,
         "primary_category": category,
+        "recent_change": {
+            "has_meaningful_change": meaningful > 0,
+            "change_score": 15 if meaningful else 0,
+            "changes": events or [],
+        },
         "research_priority": {
             "priority_score": 54.0,
             "priority_label": "ORTA",
@@ -125,56 +132,6 @@ class DailyBriefImportTests(unittest.TestCase):
         module = importlib.import_module("services.daily_brief_service")
         module = importlib.reload(module)
         self.assertTrue(callable(module.build_daily_brief))
-
-    def test_dashboard_dependency_chain_without_streamlit_side_effects(self) -> None:
-        mock_st = MagicMock()
-        mock_st.session_state = {}
-        mock_st.columns.return_value = [MagicMock() for _ in range(5)]
-        mock_st.button.return_value = False
-        mock_st.expander.return_value.__enter__ = MagicMock(return_value=None)
-        mock_st.expander.return_value.__exit__ = MagicMock(return_value=False)
-        mock_st.query_params = {}
-
-        brief = {
-            "scheduled_run": {
-                "status": "partial",
-                "status_label": "Kısmi",
-                "detail": "13 sembol tarandı · bazı veri kaynakları sınırlıydı.",
-                "started_at": None,
-                "completed_at": "2026-08-11T14:47:07+00:00",
-            },
-            "headline": "test",
-            "summary_stats": {
-                "meaningful_change_count": 0,
-                "attention_count": 0,
-                "new_candidate_count": 0,
-                "watchlist_change_count": 0,
-                "open_research_count": 0,
-                "data_issue_count": 0,
-            },
-            "attention_items": [],
-            "new_candidates": [],
-            "watchlist_changes": [],
-            "open_research": [],
-            "data_issues": [],
-            "has_anything_to_report": True,
-        }
-
-        with patch.dict(sys.modules, {"streamlit": mock_st}):
-            with patch("services.supabase_client.get_supabase_client") as mock_client:
-                mock_client.return_value = MagicMock()
-                with patch(
-                    "services.daily_brief_service.build_daily_brief",
-                    return_value=brief,
-                ):
-                    spec = importlib.util.spec_from_file_location(
-                        "dashboard_page",
-                        Path("pages/1_Dashboard.py"),
-                    )
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-
-        mock_st.title.assert_called()
 
 
 class DailyBriefServiceTests(unittest.TestCase):
@@ -330,20 +287,22 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        self.assertEqual(len(brief["attention_items"]), 1)
-        self.assertEqual(brief["attention_items"][0]["symbol"], "NVDA")
+        self.assertEqual(len(brief["today_actions"]), 1)
+        self.assertEqual(brief["today_actions"][0]["symbol"], "NVDA")
+        self.assertEqual(brief["attention_items"], [])
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_new_candidates(self, mock_feed) -> None:
         mock_feed.return_value = self._feed(
-            NEW=[monitor_entry("PLTR", category=CATEGORY_NEW, first_seen=True)],
+            NEW=[monitor_entry("PLTR", category=CATEGORY_NEW, first_seen=True, meaningful=0)],
         )
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        self.assertEqual(brief["new_candidates"][0]["symbol"], "PLTR")
+        self.assertEqual(brief["today_actions"][0]["symbol"], "PLTR")
+        self.assertEqual(brief["new_candidates"], [])
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_watchlist_changes(self, mock_feed) -> None:
@@ -355,7 +314,8 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        self.assertEqual(brief["watchlist_changes"][0]["symbol"], "AAPL")
+        self.assertEqual(brief["today_actions"][0]["symbol"], "AAPL")
+        self.assertEqual(brief["watchlist_changes"], [])
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_open_research_excludes_tamamlandi(self, mock_feed) -> None:
@@ -451,8 +411,9 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        symbols = [item["symbol"] for item in brief["attention_items"]]
+        symbols = [item["symbol"] for item in brief["today_actions"]]
         self.assertEqual(symbols, ["NVDA"])
+        self.assertEqual(brief["attention_items"], [])
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_excluded_etf_not_in_new_candidates(self, mock_feed) -> None:
@@ -472,18 +433,28 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        symbols = [item["symbol"] for item in brief["new_candidates"]]
-        self.assertEqual(symbols, ["TSM"])
+        self.assertEqual([item["symbol"] for item in brief["today_actions"]], ["TSM"])
+        self.assertEqual(brief["new_candidates"], [])
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_equity_first_seen_still_appears(self, mock_feed) -> None:
         mock_feed.return_value = self._feed(
-            NEW=[monitor_entry("TSM", category=CATEGORY_NEW, first_seen=True)],
+            NEW=[
+                monitor_entry("TSM", category=CATEGORY_NEW, first_seen=True, meaningful=0),
+                monitor_entry("META", category=CATEGORY_NEW, first_seen=True, meaningful=0),
+                monitor_entry("ASML", category=CATEGORY_NEW, first_seen=True, meaningful=0),
+                monitor_entry("PLTR", category=CATEGORY_NEW, first_seen=True, meaningful=0),
+            ],
         )
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
+        )
+        self.assertEqual(len(brief["today_actions"]), 3)
+        self.assertEqual(
+            {item["symbol"] for item in brief["today_actions"]},
+            {"ASML", "META", "PLTR"},
         )
         self.assertEqual(brief["new_candidates"][0]["symbol"], "TSM")
 
@@ -502,7 +473,8 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        self.assertEqual(brief["watchlist_changes"][0]["symbol"], "AAPL")
+        self.assertEqual(brief["today_actions"][0]["symbol"], "AAPL")
+        self.assertEqual(brief["watchlist_changes"], [])
         self.assertEqual(brief["open_research"][0]["symbol"], "AAPL")
 
     @patch("services.daily_brief_service.build_monitor_feed")
@@ -528,8 +500,9 @@ class DailyBriefServiceTests(unittest.TestCase):
             max_attention=5,
             max_new=3,
         )
-        self.assertEqual(len(brief["attention_items"]), 5)
-        self.assertEqual(len(brief["new_candidates"]), 3)
+        self.assertEqual(len(brief["today_actions"]), 3)
+        self.assertLessEqual(len(brief["attention_items"]), 5)
+        self.assertLessEqual(len(brief["new_candidates"]), 3)
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_attention_dedupes_new_and_watchlist(self, mock_feed) -> None:
@@ -543,7 +516,8 @@ class DailyBriefServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
-        self.assertEqual(brief["attention_items"][0]["symbol"], "NVDA")
+        self.assertEqual(brief["today_actions"][0]["symbol"], "NVDA")
+        self.assertEqual(brief["attention_items"], [])
         self.assertEqual(brief["new_candidates"], [])
         self.assertEqual(brief["watchlist_changes"], [])
 

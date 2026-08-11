@@ -50,7 +50,32 @@ metric_cols[3].metric("Veri sorunu", stats["data_issue_count"])
 if st.button("🔬 Research Monitor'u Aç", type="secondary"):
     st.switch_page("pages/3_Research_Monitor.py")
 
-if brief["attention_items"]:
+if brief["today_actions"]:
+    st.markdown("**🎯 Bugün Önce Bunlara Bak**")
+    for index, item in enumerate(brief["today_actions"]):
+        symbol = item.get("symbol") or "—"
+        company = item.get("company_name") or symbol
+        st.markdown(f"**{symbol}** · {company}")
+        st.caption(item.get("action_label") or "—")
+        st.markdown("Neden şimdi:")
+        for reason in item.get("reasons") or []:
+            st.markdown(f"• {reason}")
+        if item.get("next_action"):
+            st.caption(f"Sıradaki: {item['next_action']}")
+        st.caption(item.get("workflow_status_label") or "—")
+        if item.get("data_quality_caveat"):
+            st.caption(item["data_quality_caveat"])
+        if st.button(
+            "📄 Company Report",
+            key=f"brief_today_action_{symbol}_{index}",
+        ):
+            candidate = item.get("company_report_target") or item.get("candidate") or {"symbol": symbol}
+            st.session_state["company_report_candidate"] = candidate
+            st.query_params["symbol"] = symbol
+            st.switch_page("pages/4_Company_Report.py")
+        st.markdown("")
+
+elif brief["attention_items"]:
     st.markdown("**Öncelikli değişiklikler**")
     for index, item in enumerate(brief["attention_items"]):
         symbol = item.get("symbol") or "—"
@@ -90,12 +115,14 @@ if brief["watchlist_changes"]:
             st.switch_page("pages/4_Company_Report.py")
 
 if brief["open_research"]:
-    st.markdown("**📝 Açık araştırma işleri**")
+    st.markdown("**📝 Açık araştırma backlog**")
     for index, item in enumerate(brief["open_research"]):
         symbol = item.get("symbol") or "—"
         st.markdown(
             f"**{symbol}** — {item.get('workflow_status_label') or '—'}"
         )
+        if item.get("data_quality_caveat"):
+            st.caption(item["data_quality_caveat"])
         if item.get("research_next_action"):
             st.caption(f"Sıradaki: {item['research_next_action']}")
         if item.get("last_reviewed_at"):
