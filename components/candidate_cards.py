@@ -1,5 +1,7 @@
 import streamlit as st
 
+from services.research_workflow_service import build_research_workflow
+
 
 def render_candidate_card(candidate: dict) -> str | None:
     with st.container(border=True):
@@ -29,9 +31,10 @@ def render_candidate_card(candidate: dict) -> str | None:
         )
 
         d.markdown(f"**{candidate.get('decision') or 'VERİ EKSİK'}**")
+        workflow = build_research_workflow(candidate)
         d.caption(
             f"{candidate.get('participation_status') or 'Kontrol Et'} · "
-            f"{candidate.get('research_status') or 'Araştırılacak'}"
+            f"{workflow['research_status_label']}"
         )
 
         edit = d.button(

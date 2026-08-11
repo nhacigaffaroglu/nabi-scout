@@ -31,6 +31,14 @@ PRIORITY_REASON_LABELS: Dict[str, str] = {
     "Yeni takip edilen şirket": "Bu zaman aralığında ilk kez göründü",
 }
 
+RESEARCH_STATUS_LABELS: Dict[str, str] = {
+    "YENI": "Henüz başlanmadı",
+    "INCELEMEDE": "İnceliyorum",
+    "BEKLEMEDE": "Beklemede",
+    "TEKRAR_BAK": "Tekrar bak",
+    "TAMAMLANDI": "Tamamlandı",
+}
+
 MONTHS_TR = {
     1: "Oca",
     2: "Şub",
@@ -62,6 +70,13 @@ def format_badges(badges: Optional[Sequence[str]]) -> List[str]:
 def format_badges_compact(badges: Optional[Sequence[str]]) -> str:
     labels = format_badges(badges)
     return " · ".join(labels) if labels else ""
+
+
+def format_research_status(value: Optional[str]) -> str:
+    if not value:
+        return RESEARCH_STATUS_LABELS["YENI"]
+    key = str(value).strip().upper()
+    return RESEARCH_STATUS_LABELS.get(key, RESEARCH_STATUS_LABELS["YENI"])
 
 
 def format_freshness_label(value: Optional[str]) -> str:

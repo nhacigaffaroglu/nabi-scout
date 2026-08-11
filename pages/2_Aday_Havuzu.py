@@ -2,6 +2,12 @@ import streamlit as st
 
 from components.candidate_cards import render_candidate_card
 from repositories.candidate_repository import CandidateRepository
+from services.research_workflow_service import (
+    DEFAULT_RESEARCH_STATUS,
+    normalize_research_status,
+    workflow_select_index,
+    workflow_select_options,
+)
 from services.scoring_engine import (
     calculate_nabi_score_v2,
     financial_health_score,
@@ -46,10 +52,15 @@ with st.expander("➕ Yeni aday ekle", expanded=False):
             "Katılım uygunluğu",
             ["Kontrol Et", "Uygun", "Uygun Değil"],
         )
-        research_status = c9.selectbox(
+        research_labels, research_values = zip(*workflow_select_options())
+        research_status_label = c9.selectbox(
             "Araştırma durumu",
-            ["Araştırılacak", "İnceleniyor", "Tamamlandı"],
+            research_labels,
+            index=workflow_select_index(DEFAULT_RESEARCH_STATUS),
         )
+        research_status = research_values[
+            list(research_labels).index(research_status_label)
+        ]
 
         st.markdown("#### Fiyat ve değerleme")
         p1, p2, p3, p4 = st.columns(4)
@@ -251,13 +262,15 @@ if edit_id:
                 "Şirket / Fon adı",
                 value=candidate.get("company_name") or "",
             )
-            research_status = st.selectbox(
+            edit_labels, edit_values = zip(*workflow_select_options())
+            edit_status_label = st.selectbox(
                 "Araştırma durumu",
-                ["Araştırılacak", "İnceleniyor", "Tamamlandı", "Arşiv"],
-                index=["Araştırılacak", "İnceleniyor", "Tamamlandı", "Arşiv"].index(
-                    candidate.get("research_status") or "Araştırılacak"
-                ),
+                edit_labels,
+                index=workflow_select_index(candidate.get("research_status")),
             )
+            research_status = edit_values[
+                list(edit_labels).index(edit_status_label)
+            ]
             investment_thesis = st.text_area(
                 "Yatırım tezi",
                 value=candidate.get("investment_thesis") or "",

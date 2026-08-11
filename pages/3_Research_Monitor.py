@@ -6,6 +6,11 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.research_monitor_service import build_monitor_feed
+from services.research_workflow_service import (
+    WORKFLOW_FILTER_OPTIONS,
+    build_research_workflow,
+    filter_monitor_entries,
+)
 from services.scan_snapshot import normalize_universe_name
 from services.ui_formatters import (
     LEGACY_HISTORY_NOTE,
@@ -46,11 +51,16 @@ universe_names = sorted({
     if normalize_universe_name(run.get("universe_name"))
 })
 
-control_left, control_right = st.columns(2)
+control_left, control_middle, control_right = st.columns(3)
 window_label = control_left.selectbox(
     "Zaman penceresi",
     list(WINDOW_OPTIONS.keys()),
     index=1,
+)
+workflow_filter = control_middle.selectbox(
+    "Araştırma durumu",
+    WORKFLOW_FILTER_OPTIONS,
+    index=0,
 )
 universe_label = control_right.selectbox(
     "Evren",
@@ -107,6 +117,7 @@ def render_entry(entry: dict, index: int, section: str) -> None:
     )
     badges = entry.get("badges") or []
     events = entry.get("events") or []
+    workflow = build_research_workflow(candidate)
 
     st.markdown(
         f"**{symbol}** — {company} · "
@@ -118,6 +129,14 @@ def render_entry(entry: dict, index: int, section: str) -> None:
         f"Veri güveni: {confidence if confidence is not None else '—'} · "
         f"Son tarama: {format_datetime_tr(entry.get('latest_scan_at'))}"
     )
+    st.caption(f"Araştırma: {workflow['research_status_label']}")
+    if workflow.get("research_next_action"):
+        st.caption(f"Sıradaki: {workflow['research_next_action']}")
+    if workflow.get("last_reviewed_at"):
+        st.caption(
+            "Son inceleme: "
+            + format_datetime_tr(workflow.get("last_reviewed_at"))
+        )
     badge_line = format_badges_compact(badges)
     if badge_line:
         st.caption(badge_line)
@@ -154,6 +173,7 @@ def render_entry(entry: dict, index: int, section: str) -> None:
 
 for section_key, section_title in SECTIONS:
     section_entries = feed["categories"].get(section_key) or []
+    section_entries = filter_monitor_entries(section_entries, workflow_filter)
     st.subheader(section_title)
     if not section_entries:
         st.caption("Bu bölümde gösterilecek kayıt yok.")

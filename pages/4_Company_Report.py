@@ -5,6 +5,12 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.company_intelligence_service import build_company_intelligence
+from services.research_workflow_service import (
+    ResearchWorkflowSchemaError,
+    build_research_workflow,
+    workflow_select_index,
+    workflow_select_options,
+)
 from services.ui_formatters import (
     format_badges_compact,
     format_change_window_summary,
@@ -146,6 +152,78 @@ c5.metric(
     "Yatırım Notu",
     candidate.get("investment_grade") or "—",
 )
+
+workflow = build_research_workflow(candidate)
+
+st.subheader("📝 Araştırma Durumu")
+st.caption(
+    "Bu durum araştırma sürecinizi gösterir; Scanner Kararı veya "
+    "Araştırma Önceliği değildir."
+)
+
+if candidate_id:
+    status_labels, status_values = zip(*workflow_select_options())
+    with st.form("company_report_workflow_form"):
+        selected_status = st.selectbox(
+            "Araştırma durumu",
+            status_labels,
+            index=workflow_select_index(workflow["research_status"]),
+        )
+        next_action_value = st.text_input(
+            "Sıradaki adım",
+            value=workflow.get("research_next_action") or "",
+        )
+        research_note_value = st.text_area(
+            "Araştırma notu",
+            value=workflow.get("research_note") or "",
+        )
+        st.caption(
+            "Son inceleme: "
+            + format_datetime_tr(workflow.get("last_reviewed_at"))
+        )
+        save_col, review_col = st.columns(2)
+        save_clicked = save_col.form_submit_button("Kaydet", type="primary")
+        review_clicked = review_col.form_submit_button(
+            "✓ İncelendi olarak işaretle",
+        )
+
+    if save_clicked or review_clicked:
+        try:
+            status_index = list(status_labels).index(selected_status)
+            status_value = status_values[status_index]
+            from datetime import datetime, timezone
+
+            if review_clicked:
+                updated = repo.update_research_workflow(
+                    str(candidate_id),
+                    status=status_value,
+                    next_action=next_action_value,
+                    research_note=research_note_value,
+                    last_reviewed_at=datetime.now(timezone.utc),
+                )
+            else:
+                updated = repo.update_research_workflow(
+                    str(candidate_id),
+                    status=status_value,
+                    next_action=next_action_value,
+                    research_note=research_note_value,
+                )
+            candidate = {**candidate, **updated}
+            st.session_state["company_report_candidate"] = candidate
+            st.rerun()
+        except ResearchWorkflowSchemaError as exc:
+            st.error(str(exc))
+        except Exception as exc:
+            st.error(f"Araştırma durumu kaydedilemedi: {exc}")
+else:
+    st.info("Workflow durumu kaydetmek için geçerli bir aday kaydı gerekir.")
+    st.caption(
+        "Son inceleme: "
+        + format_datetime_tr(workflow.get("last_reviewed_at"))
+    )
+    st.caption(
+        f"Araştırma durumu: {workflow['research_status_label']}"
+    )
 
 intelligence = build_company_intelligence(
     candidate,

@@ -210,7 +210,6 @@ class CollectorEngine:
             ),
             "participation_status": participation_status,
             "participation_score": participation_score,
-            "research_status": "Otomatik tarandı",
             "current_price": price,
             "market_cap": market_cap,
             "revenue": revenue,

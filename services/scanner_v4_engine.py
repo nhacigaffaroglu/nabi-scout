@@ -286,7 +286,6 @@ class ScannerV4Engine:
             ),
             "participation_status": participation_status,
             "participation_score": participation_score,
-            "research_status": "Scanner v4 tarandı",
             "current_price": price,
             "market_cap": market_cap,
             "average_volume": average_volume,

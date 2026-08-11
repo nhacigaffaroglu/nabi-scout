@@ -5,7 +5,8 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.research_monitor_service import build_priority_teaser_from_monitor
-from services.ui_formatters import format_priority_reasons
+from services.ui_formatters import format_priority_reasons, format_research_status
+from services.research_workflow_service import normalize_research_status
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
 
@@ -24,7 +25,7 @@ cols[0].metric("Toplam aday", stats["total"])
 cols[1].metric("Güçlü aday", stats["strong"])
 cols[2].metric("Scanner: İZLE", stats["watch"])
 cols[3].metric("Katılım uygun", stats["participation_ok"])
-cols[4].metric("İnceleniyor", stats["researching"])
+cols[4].metric("Açık Araştırma", stats["open_research"])
 
 candidates = repo.get_all(order_by="nabi_score", descending=True)
 watched_ids = watchlist_repo.watched_candidate_ids()
@@ -105,8 +106,14 @@ else:
         "research_status",
     ]
 
+    display_df = df.copy()
+    if "research_status" in display_df.columns:
+        display_df["research_status"] = display_df["research_status"].apply(
+            lambda value: format_research_status(normalize_research_status(value))
+        )
+
     st.dataframe(
-        df[[column for column in visible if column in df.columns]],
+        display_df[[column for column in visible if column in display_df.columns]],
         use_container_width=True,
         hide_index=True,
     )
