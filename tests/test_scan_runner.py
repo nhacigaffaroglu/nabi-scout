@@ -224,6 +224,8 @@ class ScanRunnerServiceTests(unittest.TestCase):
         )
         self.assertEqual(result.status, "COMPLETED")
         self.assertEqual(result.errors, 1)
+        self.assertEqual(result.warning_symbols, 1)
+        self.assertEqual(result.hard_failures, 0)
 
     def test_all_symbols_fail_failed(self) -> None:
         self.engine.analyze.side_effect = RuntimeError("hard fail")
@@ -237,6 +239,7 @@ class ScanRunnerServiceTests(unittest.TestCase):
             engine=self.engine,
         )
         self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.hard_failures, 2)
         self.assertEqual(self.store.runs[result.run_id]["status"], "FAILED")
 
     def test_fatal_outer_exception_fail_run_and_reraise(self) -> None:

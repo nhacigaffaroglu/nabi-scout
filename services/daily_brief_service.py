@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from services.research_monitor_service import build_monitor_feed
 from services.research_workflow_service import build_research_workflow
+from services.scan_run_health_service import derive_scan_run_health
 from services.ui_formatters import (
     format_data_issue_summary,
     format_priority_reasons,
@@ -55,7 +56,7 @@ def build_daily_brief(
     )
 
     raw_scheduled = scan_repo.get_latest_scheduled_run(now.date())
-    scheduled_run = _build_scheduled_run(raw_scheduled)
+    scheduled_run = _build_scheduled_run(raw_scheduled, scan_repo=scan_repo)
 
     attention_items = _collect_brief_items(
         feed["categories"].get("ATTENTION") or [],
@@ -129,8 +130,17 @@ def build_daily_brief(
     }
 
 
-def _build_scheduled_run(run: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    status = resolve_scheduled_run_status(run)
+def _build_scheduled_run(
+    run: Optional[Dict[str, Any]],
+    *,
+    scan_repo=None,
+) -> Dict[str, Any]:
+    health = None
+    if run and scan_repo is not None and run.get("id"):
+        results = scan_repo.get_results_for_run(str(run["id"]))
+        health = derive_scan_run_health(run, results)
+
+    status = resolve_scheduled_run_status(run, health=health)
     if not run:
         return {
             "status": status,
@@ -141,17 +151,19 @@ def _build_scheduled_run(run: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             "completed_at": None,
             "scanned_symbols": None,
             "error_count": None,
+            "health": None,
         }
 
     return {
         "status": status,
         "status_label": format_scheduled_run_status(status),
-        "detail": format_scheduled_run_detail(status, run),
+        "detail": format_scheduled_run_detail(status, run, health=health),
         "universe_name": run.get("universe_name"),
         "started_at": run.get("started_at"),
         "completed_at": run.get("completed_at"),
         "scanned_symbols": run.get("scanned_symbols"),
         "error_count": run.get("error_count"),
+        "health": health,
     }
 
 

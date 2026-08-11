@@ -260,6 +260,15 @@ class ScanRepository:
                 filtered.append(row)
         return filtered
 
+    def get_results_for_run(
+        self,
+        run_id: str,
+        symbols: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not run_id:
+            return []
+        return self.get_results_for_runs([run_id], symbols=symbols)
+
     def get_results_for_runs(
         self,
         run_ids: List[str],

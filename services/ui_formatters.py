@@ -178,20 +178,14 @@ SCHEDULED_RUN_STATUS_LABELS = {
 }
 
 
-def resolve_scheduled_run_status(run: Optional[Dict[str, Any]]) -> str:
-    if not run:
-        return "missing"
+def resolve_scheduled_run_status(
+    run: Optional[Dict[str, Any]],
+    *,
+    health=None,
+) -> str:
+    from services.scan_run_health_service import resolve_scheduled_health
 
-    db_status = str(run.get("status") or "").upper()
-    error_count = int(run.get("error_count") or 0)
-
-    if db_status == "FAILED":
-        return "failed"
-    if db_status == "COMPLETED":
-        return "success" if error_count == 0 else "partial"
-    if db_status == "RUNNING":
-        return "partial"
-    return "missing"
+    return resolve_scheduled_health(run, health)
 
 
 def format_scheduled_run_status(status: str) -> str:
@@ -201,6 +195,8 @@ def format_scheduled_run_status(status: str) -> str:
 def format_scheduled_run_detail(
     status: str,
     run: Optional[Dict[str, Any]],
+    *,
+    health=None,
 ) -> str:
     if status == "missing":
         return "Bugün henüz otomatik tarama yok."
@@ -212,10 +208,18 @@ def format_scheduled_run_detail(
             return f"{scanned} sembol tarandı."
         return "Otomatik tarama tamamlandı."
     if status == "partial":
-        scanned = run.get("scanned_symbols") if run else None
-        if scanned is not None:
+        if health is not None and run is not None:
+            scanned_count = run.get("scanned_symbols")
+            if scanned_count is not None and health.usable_symbols > 0:
+                return (
+                    f"{scanned_count} sembol tarandı · "
+                    f"{health.usable_symbols} kullanılabilir sonuç · "
+                    "bazı veri kaynakları sınırlıydı."
+                )
+        if run is not None and run.get("scanned_symbols") is not None:
             return (
-                f"{scanned} sembol tarandı · bazı veri kaynakları sınırlıydı."
+                f"{run['scanned_symbols']} sembol tarandı · "
+                "bazı veri kaynakları sınırlıydı."
             )
         return (
             "Otomatik tarama tamamlandı; bazı sembollerde kısmi veri kullanıldı."

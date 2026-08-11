@@ -15,6 +15,7 @@ from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.fmp_client import FMPClient, FMPError
 from services.free_universe_client import FreeUniverseClient
+from services.scan_run_health_service import build_in_memory_scan_run_health
 from services.scan_runner_service import ScanRunResult, run_scan
 from services.scan_universe_service import build_daily_universe_rows, scheduled_universe_name
 from services.scheduled_scan_service import evaluate_scheduled_run, stale_running_cutoff
@@ -34,16 +35,32 @@ def _load_sec_lookup(contact_email: str) -> dict:
 
 
 def _print_summary(result: ScanRunResult) -> None:
-    print(f"Daily scan {result.universe_name.split('·')[-1].strip()}")
-    print(f"Universe: {result.total_symbols} symbols")
+    scan_date = result.universe_name.split("·")[-1].strip()
+    print(f"Daily scan {scan_date}")
+
     if result.skipped:
+        print("Action: SKIPPED")
+        print(f"Universe: {result.universe_name}")
         print(result.skip_reason or "Skipped.")
         return
-    print(f"Status: {result.status}")
-    print(f"Scanned: {result.scanned}")
+
+    health = build_in_memory_scan_run_health(result)
+    action = result.status
+    print(f"Action: {action}")
+    if result.run_id:
+        print(f"Run ID: {result.run_id}")
+    print(f"Universe: {result.universe_name}")
+    print(f"Total symbols: {health.total_symbols}")
+    print(f"Analyzed: {health.analyzed_symbols}")
+    print(f"Usable: {health.usable_symbols}")
+    print(f"Clean: {health.clean_symbols}")
+    print(f"Warnings: {health.warning_symbols}")
+    print(f"Hard failures: {health.hard_failures}")
+    print(f"Excluded: {health.excluded_symbols}")
     print(f"Updated: {result.updated}")
-    print(f"Errors: {result.errors}")
     print(f"Meaningful changes: {len(result.meaningful_changes)}")
+    print(f"Health: {health.scheduled_health}")
+    print(f"FMP rate limited: {'yes' if health.fmp_rate_limited else 'no'}")
 
 
 def main() -> int:

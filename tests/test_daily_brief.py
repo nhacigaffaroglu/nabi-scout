@@ -79,9 +79,11 @@ def monitor_entry(
 
 def scheduled_run(**overrides):
     base = {
+        "id": "run-scheduled-1",
         "universe_name": "SCHEDULED · Daily · 2026-08-11",
         "status": "COMPLETED",
         "scanned_symbols": 13,
+        "total_symbols": 13,
         "error_count": 0,
         "started_at": "2026-08-11T14:46:52+00:00",
         "completed_at": "2026-08-11T14:47:07+00:00",
@@ -185,6 +187,7 @@ class DailyBriefServiceTests(unittest.TestCase):
         self.scan_repo.get_latest_scheduled_run.return_value = None
         self.scan_repo.get_completed_runs_since.return_value = []
         self.scan_repo.get_results_for_runs.return_value = []
+        self.scan_repo.get_results_for_run.return_value = []
         self.scan_repo.get_all_completed_run_ids_before.return_value = []
         self.scan_repo.get_symbols_with_results_before.return_value = set()
         self.scan_repo.row_to_snapshot.side_effect = snapshot_fn
@@ -230,6 +233,16 @@ class DailyBriefServiceTests(unittest.TestCase):
     def test_latest_scheduled_success(self, mock_feed) -> None:
         mock_feed.return_value = self._feed()
         self.scan_repo.get_latest_scheduled_run.return_value = scheduled_run()
+        self.scan_repo.get_results_for_run.return_value = [
+            {
+                "symbol": f"S{i}",
+                "status": "TAM VERİ",
+                "decision": "ARAŞTIRMA ADAYI",
+                "errors": [],
+                "endpoint_status": {"fmp_profile": "OK"},
+            }
+            for i in range(13)
+        ]
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
@@ -244,14 +257,19 @@ class DailyBriefServiceTests(unittest.TestCase):
         self.scan_repo.get_latest_scheduled_run.return_value = scheduled_run(
             error_count=10,
         )
+        from tests.test_scan_run_health import production_fixture_results
+
+        self.scan_repo.get_results_for_run.return_value = production_fixture_results()
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
             watchlist_repo=self.watchlist_repo,
         )
         self.assertEqual(brief["scheduled_run"]["status"], "partial")
-        self.assertIn("bazı veri kaynakları sınırlıydı", brief["scheduled_run"]["detail"])
-        self.assertNotIn("başarısız", brief["scheduled_run"]["detail"].casefold())
+        detail = brief["scheduled_run"]["detail"]
+        self.assertIn("13 sembol tarandı", detail)
+        self.assertIn("10 kullanılabilir sonuç", detail)
+        self.assertNotIn("başarısız", detail.casefold())
 
     @patch("services.daily_brief_service.build_monitor_feed")
     def test_scheduled_failed(self, mock_feed) -> None:
@@ -290,6 +308,9 @@ class DailyBriefServiceTests(unittest.TestCase):
         self.scan_repo.get_latest_scheduled_run.return_value = scheduled_run(
             error_count=10,
         )
+        from tests.test_scan_run_health import production_fixture_results
+
+        self.scan_repo.get_results_for_run.return_value = production_fixture_results()
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
@@ -572,6 +593,16 @@ class DailyBriefServiceTests(unittest.TestCase):
             started_at="2026-08-10T03:00:00+00:00",
             completed_at="2026-08-10T03:05:00+00:00",
         )
+        self.scan_repo.get_results_for_run.return_value = [
+            {
+                "symbol": f"S{i}",
+                "status": "TAM VERİ",
+                "decision": "ARAŞTIRMA ADAYI",
+                "errors": [],
+                "endpoint_status": {"fmp_profile": "OK"},
+            }
+            for i in range(13)
+        ]
         brief = build_daily_brief(
             scan_repo=self.scan_repo,
             candidate_repo=self.candidate_repo,
