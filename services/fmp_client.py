@@ -336,6 +336,14 @@ class FMPClient:
         rows = self._get("quote", {"symbol": symbol})
         return rows[0] if rows else {}
 
+    def etf_info(self, symbol: str):
+        rows = self._get("etf/info", {"symbol": symbol})
+        return rows[0] if rows else {}
+
+    def etf_holdings(self, symbol: str):
+        rows = self._get("etf/holdings", {"symbol": symbol})
+        return rows if isinstance(rows, list) else []
+
     def income_statement(self, symbol: str):
         return self._get(
             "income-statement",

@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-from config.scan_universe import PARTICIPATION_DEFAULTS
-from services.fmp_client import FMPClient, FMPError
+from services.fund_analysis_contract import FundAnalysisResult
+from services.fund_analysis_service import analyze_fund
+from services.fmp_client import FMPClient
 from services.scan_runner_service import ScanRunResult, run_scan
 from services.scan_universe_service import MANUAL_UNIVERSE_NAME
 from services.symbol_resolver_service import (
@@ -16,7 +17,6 @@ from services.symbol_resolver_service import (
     resolve_symbol,
 )
 
-ETF_UNSUPPORTED_REASON = "ETF/fund için NABI equity skoru uygulanmaz."
 UNRESOLVED_UNSUPPORTED_REASON = (
     "Varlık türü güvenilir biçimde doğrulanamadı; equity analizi çalıştırılmadı."
 )
@@ -28,6 +28,7 @@ class ManualAnalysisResult:
     analysis_kind: str
     resolved: ResolvedSecurity
     candidate: Optional[Dict[str, Any]] = None
+    fund_result: Optional[FundAnalysisResult] = None
     scan_result: Optional[ScanRunResult] = None
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
@@ -41,6 +42,8 @@ class ManualAnalysisResult:
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
         payload["resolved"] = self.resolved.to_dict()
+        if self.fund_result is not None:
+            payload["fund_result"] = self.fund_result.to_dict()
         if self.scan_result is not None:
             payload["scan_result"] = {
                 "run_id": self.scan_result.run_id,
@@ -77,7 +80,7 @@ def analyze_security(
     is_persisted = existing is not None
 
     if resolved.is_etf:
-        return _analyze_etf_metadata(
+        return _analyze_fund(
             resolved,
             fmp_client=fmp_client,
             is_persisted=is_persisted,
@@ -177,52 +180,25 @@ def _analyze_equity(
     )
 
 
-def _analyze_etf_metadata(
+def _analyze_fund(
     resolved: ResolvedSecurity,
     *,
     fmp_client: FMPClient,
     is_persisted: bool,
     persisted_candidate_id: Optional[str],
 ) -> ManualAnalysisResult:
-    warnings: List[str] = []
-    errors: List[str] = []
-    current_price: Optional[float] = None
-    company_name = resolved.company_name
-
-    try:
-        profile = fmp_client.profile(resolved.symbol) or {}
-        quote = fmp_client.quote(resolved.symbol) or {}
-        company_name = (
-            profile.get("companyName")
-            or profile.get("name")
-            or quote.get("name")
-            or company_name
-        )
-        current_price = _as_float(
-            quote.get("price")
-            or profile.get("price")
-        )
-    except FMPError as exc:
-        if exc.error_class == "rate_limit":
-            warnings.append("FMP rate limit nedeniyle fiyat bilgisi alınamadı.")
-        else:
-            warnings.append(f"FMP profili alınamadı: {exc}")
-
-    participation_status, participation_score = participation_for_symbol(resolved.symbol)
-
+    fund_result = analyze_fund(resolved, fmp_client=fmp_client)
     return ManualAnalysisResult(
         symbol=resolved.symbol,
-        analysis_kind="etf_metadata",
+        analysis_kind="fund",
         resolved=resolved,
-        candidate=None,
-        warnings=warnings,
-        errors=errors,
-        unsupported_reason=ETF_UNSUPPORTED_REASON,
+        fund_result=fund_result,
+        warnings=list(fund_result.warnings),
         is_persisted=is_persisted,
         persisted_candidate_id=persisted_candidate_id,
-        current_price=current_price,
-        participation_status=participation_status,
-        participation_score=participation_score,
+        current_price=fund_result.current_price,
+        participation_status=fund_result.participation_status,
+        participation_score=fund_result.participation_score,
     )
 
 

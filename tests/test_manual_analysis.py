@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 from repositories.scan_repository import ScanRepository
 from services.change_detection_engine import detect_changes
 from services.manual_analysis_service import (
-    ETF_UNSUPPORTED_REASON,
     analyze_security,
     save_manual_candidate,
 )
@@ -128,14 +127,20 @@ class ManualAnalysisServiceTests(unittest.TestCase):
         )
         self.candidate_repo.upsert_by_symbol.assert_not_called()
 
+    @patch("services.manual_analysis_service.analyze_fund")
     @patch("services.manual_analysis_service.resolve_symbol")
-    def test_etf_never_enters_equity_scanner(self, mock_resolve) -> None:
+    def test_etf_never_enters_equity_scanner(self, mock_resolve, mock_analyze_fund) -> None:
+        from services.fund_analysis_contract import FundAnalysisResult
+
         mock_resolve.return_value = resolved_etf("SPUS")
-        self.fmp_client.profile.return_value = {
-            "companyName": "SP Funds S&P 500 Sharia",
-            "price": 42.0,
-        }
-        self.fmp_client.quote.return_value = {"price": 42.0}
+        mock_analyze_fund.return_value = FundAnalysisResult(
+            symbol="SPUS",
+            fund_name="SPUS ETF",
+            current_price=42.0,
+            participation_status="Uygun",
+            participation_score=100,
+            participation_source="configured",
+        )
         with patch("services.manual_analysis_service.run_scan") as mock_run_scan:
             result = analyze_security(
                 "SPUS",
@@ -145,15 +150,23 @@ class ManualAnalysisServiceTests(unittest.TestCase):
                 sec_client=self.sec_client,
             )
             mock_run_scan.assert_not_called()
-        self.assertEqual(result.analysis_kind, "etf_metadata")
-        self.assertEqual(result.unsupported_reason, ETF_UNSUPPORTED_REASON)
+        self.assertEqual(result.analysis_kind, "fund")
         self.assertIsNone(result.candidate)
+        self.assertIsNotNone(result.fund_result)
 
+    @patch("services.manual_analysis_service.analyze_fund")
     @patch("services.manual_analysis_service.resolve_symbol")
-    def test_etf_structured_metadata(self, mock_resolve) -> None:
+    def test_etf_structured_metadata(self, mock_resolve, mock_analyze_fund) -> None:
+        from services.fund_analysis_contract import FundAnalysisResult
+
         mock_resolve.return_value = resolved_etf("QQQ")
-        self.fmp_client.profile.return_value = {"companyName": "Invesco QQQ Trust"}
-        self.fmp_client.quote.return_value = {"price": 380.5}
+        mock_analyze_fund.return_value = FundAnalysisResult(
+            symbol="QQQ",
+            fund_name="Invesco QQQ Trust",
+            current_price=380.5,
+            participation_status="Kontrol Et",
+            participation_score=60,
+        )
         result = analyze_security(
             "QQQ",
             candidate_repo=self.candidate_repo,
@@ -163,6 +176,7 @@ class ManualAnalysisServiceTests(unittest.TestCase):
         )
         self.assertEqual(result.current_price, 380.5)
         self.assertEqual(result.participation_status, "Kontrol Et")
+        self.assertEqual(result.analysis_kind, "fund")
 
     def test_explicit_save_idempotent(self) -> None:
         payload = {
@@ -196,14 +210,15 @@ class ManualAnalysisServiceTests(unittest.TestCase):
         repo = WatchlistRepository(MagicMock())
         self.assertTrue(callable(repo.add_candidate))
 
+    @patch("services.manual_analysis_service.analyze_fund")
     @patch("services.manual_analysis_service.resolve_symbol")
-    def test_fmp_rate_limit_graceful_on_etf(self, mock_resolve) -> None:
-        from services.fmp_client import FMPError
+    def test_fmp_rate_limit_graceful_on_etf(self, mock_resolve, mock_analyze_fund) -> None:
+        from services.fund_analysis_contract import FundAnalysisResult
 
         mock_resolve.return_value = resolved_etf("HLAL")
-        self.fmp_client.profile.side_effect = FMPError(
-            "limited",
-            error_class="rate_limit",
+        mock_analyze_fund.return_value = FundAnalysisResult(
+            symbol="HLAL",
+            warnings=["FMP etf_info: rate limit nedeniyle veri alınamadı."],
         )
         result = analyze_security(
             "HLAL",
@@ -213,6 +228,7 @@ class ManualAnalysisServiceTests(unittest.TestCase):
             sec_client=self.sec_client,
         )
         self.assertTrue(result.warnings)
+        self.assertEqual(result.analysis_kind, "fund")
 
 
 class ManualRunIsolationTests(unittest.TestCase):
@@ -463,22 +479,24 @@ class ManualSemanticAuditTests(unittest.TestCase):
         self.assertFalse(result.is_persisted)
         candidate_repo.upsert_by_symbol.assert_not_called()
 
+    @patch("services.manual_analysis_service.analyze_fund")
     @patch("services.manual_analysis_service.resolve_symbol")
-    def test_spus_etf_fixture(self, mock_resolve) -> None:
+    def test_spus_etf_fixture(self, mock_resolve, mock_analyze_fund) -> None:
+        from services.fund_analysis_contract import FundAnalysisResult
+
         mock_resolve.return_value = resolved_etf("SPUS")
-        self.fmp_client = MagicMock()
-        self.fmp_client.profile.return_value = {"companyName": "SPUS"}
-        self.fmp_client.quote.return_value = {}
+        mock_analyze_fund.return_value = FundAnalysisResult(symbol="SPUS")
         with patch("services.manual_analysis_service.run_scan") as mock_run_scan:
             result = analyze_security(
                 "SPUS",
                 candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
                 scan_repo=MagicMock(),
-                fmp_client=self.fmp_client,
+                fmp_client=MagicMock(),
                 sec_client=MagicMock(),
             )
             mock_run_scan.assert_not_called()
-        self.assertIsNone(result.candidate.get("nabi_score") if result.candidate else None)
+        payload = result.fund_result.to_dict() if result.fund_result else {}
+        self.assertNotIn("nabi_score", payload)
 
 
 class DashboardSmokeTests(unittest.TestCase):
@@ -495,6 +513,12 @@ class DashboardSmokeTests(unittest.TestCase):
 
 
 class RuntimeImportContractTests(unittest.TestCase):
+    def test_dashboard_imports_fund_analysis(self) -> None:
+        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("analysis_kind == \"fund\"", source)
+        self.assertIn("bağımsız NABI Şeriat uygunluk doğrulaması değildir", source)
+
     def test_manual_analysis_imports_in_fresh_process(self) -> None:
         import subprocess
         import sys
@@ -504,6 +528,7 @@ class RuntimeImportContractTests(unittest.TestCase):
                 sys.executable,
                 "-c",
                 "from services.manual_analysis_service import analyze_security; "
+                "from services.fund_analysis_service import analyze_fund; "
                 "from services.scan_universe_service import MANUAL_UNIVERSE_NAME; "
                 "assert MANUAL_UNIVERSE_NAME == 'MANUAL'; "
                 "print('MANUAL_IMPORT_OK')",

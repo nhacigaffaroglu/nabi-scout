@@ -6,8 +6,8 @@ from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.daily_brief_service import build_daily_brief
 from services.fmp_client import FMPClient, FMPError
+from services.fund_analysis_contract import PARTICIPATION_SOURCE_CONFIGURED
 from services.manual_analysis_service import (
-    ETF_UNSUPPORTED_REASON,
     UNRESOLVED_UNSUPPORTED_REASON,
     analyze_security,
     save_manual_candidate,
@@ -88,6 +88,17 @@ if analyze_clicked:
             st.session_state.pop("manual_analysis_result", None)
             st.error(f"Analiz tamamlanamadı: {exc}")
 
+
+def _format_compact_number(value: float) -> str:
+    if value >= 1_000_000_000_000:
+        return f"${value / 1_000_000_000_000:.2f}T"
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    return f"${value:,.0f}"
+
+
 manual_result = st.session_state.get("manual_analysis_result")
 if manual_result is not None:
     resolved = manual_result.resolved
@@ -154,17 +165,108 @@ if manual_result is not None:
             else:
                 st.caption("Bu sembol aday havuzunda kayıtlı.")
 
-    elif manual_result.analysis_kind == "etf_metadata":
-        st.info(manual_result.unsupported_reason or ETF_UNSUPPORTED_REASON)
-        if manual_result.current_price is not None:
-            st.metric("Güncel fiyat", manual_result.current_price)
-        if manual_result.participation_status:
+    elif manual_result.analysis_kind == "fund" and manual_result.fund_result is not None:
+        fund = manual_result.fund_result
+        st.caption("ETF / fon analizi — equity NABI skoru uygulanmaz.")
+
+        metric_cols = st.columns(5)
+        metric_cols[0].metric(
+            "Gider oranı",
+            f"%{fund.expense_ratio:.2f}" if fund.expense_ratio is not None else "—",
+        )
+        metric_cols[1].metric(
+            "AUM",
+            _format_compact_number(fund.aum) if fund.aum is not None else "—",
+        )
+        metric_cols[2].metric(
+            "Holdings",
+            fund.holdings_count if fund.holdings_count is not None else "—",
+        )
+        metric_cols[3].metric(
+            "Top-10 yoğunluk",
+            f"%{fund.top10_concentration_pct:.1f}"
+            if fund.top10_concentration_pct is not None
+            else "—",
+        )
+        metric_cols[4].metric(
+            "Güncel fiyat",
+            fund.current_price if fund.current_price is not None else "—",
+        )
+
+        if fund.benchmark:
+            st.caption(f"Endeks / benchmark: {fund.benchmark}")
+        if fund.issuer:
+            st.caption(f"İhraççı: {fund.issuer}")
+        if fund.asset_class or fund.domicile:
             st.caption(
-                f"Katılım: {manual_result.participation_status} "
-                f"({manual_result.participation_score})"
+                " · ".join(
+                    part
+                    for part in (
+                        f"Sınıf: {fund.asset_class}" if fund.asset_class else None,
+                        f"Domicil: {fund.domicile}" if fund.domicile else None,
+                        f"Kuruluş: {fund.inception_date}" if fund.inception_date else None,
+                    )
+                    if part
+                )
             )
+
+        if (
+            fund.participation_source == PARTICIPATION_SOURCE_CONFIGURED
+            and fund.participation_status
+        ):
+            st.info(
+                f"Katılım metadata (yapılandırılmış): {fund.participation_status} "
+                f"({fund.participation_score}). "
+                "Bu bilgi bağımsız NABI Şeriat uygunluk doğrulaması değildir."
+            )
+        elif fund.participation_status:
+            st.caption(
+                f"Katılım: {fund.participation_status} "
+                f"({fund.participation_score})"
+            )
+
+        if fund.top_holdings:
+            st.markdown("**Portföy — Top holdings**")
+            holdings_df = pd.DataFrame(
+                [
+                    {
+                        "Sembol": holding.symbol or "—",
+                        "Ad": holding.name or "—",
+                        "Ağırlık (%)": holding.weight_pct,
+                    }
+                    for holding in fund.top_holdings
+                ]
+            )
+            st.dataframe(holdings_df, use_container_width=True, hide_index=True)
+
+        if fund.dimension_scores:
+            st.markdown("**Boyut gözlemleri**")
+            for dimension in fund.dimension_scores:
+                st.write(
+                    f"**{dimension.dimension}** — {dimension.score:.0f}/100 · "
+                    f"{dimension.observation}"
+                )
+
+        if fund.labels:
+            st.markdown("**Etiketler:** " + ", ".join(f"`{label}`" for label in fund.labels))
+
+        quality_cols = st.columns(2)
+        quality_cols[0].metric(
+            "Veri tamlığı",
+            f"%{fund.data_completeness_pct:.0f}",
+        )
+        quality_cols[1].metric("Güven", fund.analysis_confidence)
+
         for warning in manual_result.warnings:
             st.warning(warning)
+        if fund.unsupported_fields:
+            st.caption(
+                "Doğrulanamayan alanlar: "
+                + ", ".join(fund.unsupported_fields)
+            )
+
+    elif manual_result.analysis_kind == "etf_metadata":
+        st.warning("Bu sonuç eski bir ETF görünümü; lütfen sembolü yeniden analiz edin.")
 
     elif manual_result.analysis_kind == "unresolved":
         st.warning(manual_result.unsupported_reason or UNRESOLVED_UNSUPPORTED_REASON)
