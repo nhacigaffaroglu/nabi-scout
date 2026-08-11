@@ -74,29 +74,41 @@ if brief["today_actions"]:
             st.query_params["symbol"] = symbol
             st.switch_page("pages/4_Company_Report.py")
         st.markdown("")
+else:
+    st.markdown("**🎯 Bugün Önce Bunlara Bak**")
+    st.info("Bugün araştırma önceliğini değiştiren yeni bir gelişme yok.")
 
-elif brief["attention_items"]:
-    st.markdown("**Öncelikli değişiklikler**")
-    for index, item in enumerate(brief["attention_items"]):
+if brief.get("new_candidates"):
+    with st.expander("🆕 Yeni adaylar", expanded=False):
+        for index, item in enumerate(brief["new_candidates"]):
+            symbol = item.get("symbol") or "—"
+            st.markdown(f"**{symbol}** — {item.get('company_name') or symbol}")
+            for reason in item.get("reasons") or []:
+                st.markdown(f"• {reason}")
+            if st.button(
+                "📄 Company Report",
+                key=f"brief_new_{symbol}_{index}",
+            ):
+                candidate = item.get("candidate") or {"symbol": symbol}
+                st.session_state["company_report_candidate"] = candidate
+                st.query_params["symbol"] = symbol
+                st.switch_page("pages/4_Company_Report.py")
+
+if brief.get("data_quality_updates"):
+    st.markdown("**🔄 Veri kalitesi güncellemeleri**")
+    for index, item in enumerate(brief["data_quality_updates"]):
         symbol = item.get("symbol") or "—"
-        st.markdown(
-            f"**{symbol}** — Öncelik {item.get('priority_score', 0):.0f} / "
-            f"{item.get('priority_label', '—')}"
-        )
-        st.caption(item.get("decision_label") or "—")
-        for reason in item.get("reasons") or []:
-            st.markdown(f"• {reason}")
+        company = item.get("company_name") or symbol
+        st.markdown(f"**{symbol}** · {company}")
+        st.caption(item.get("summary") or "—")
         if st.button(
             "📄 Company Report",
-            key=f"brief_attention_{symbol}_{index}",
+            key=f"brief_data_quality_{symbol}_{index}",
         ):
-            candidate = item.get("candidate") or {"symbol": symbol}
+            candidate = item.get("company_report_target") or item.get("candidate") or {"symbol": symbol}
             st.session_state["company_report_candidate"] = candidate
             st.query_params["symbol"] = symbol
             st.switch_page("pages/4_Company_Report.py")
-        st.markdown("")
-elif not brief["has_anything_to_report"]:
-    st.info("Son 24 saatte öne çıkan bir değişiklik bulunmadı.")
 
 if brief["watchlist_changes"]:
     st.markdown("**⭐ İzleme listemde değişenler**")
@@ -143,22 +155,6 @@ if brief["data_issues"]:
     st.markdown("**⚠️ Veri sorunları**")
     for item in brief["data_issues"]:
         st.markdown(f"• {item.get('summary') or '—'}")
-
-if brief["new_candidates"]:
-    with st.expander("🆕 Yeni adaylar", expanded=False):
-        for index, item in enumerate(brief["new_candidates"]):
-            symbol = item.get("symbol") or "—"
-            st.markdown(f"**{symbol}** — {item.get('company_name') or symbol}")
-            for reason in item.get("reasons") or []:
-                st.markdown(f"• {reason}")
-            if st.button(
-                "📄 Company Report",
-                key=f"brief_new_{symbol}_{index}",
-            ):
-                candidate = item.get("candidate") or {"symbol": symbol}
-                st.session_state["company_report_candidate"] = candidate
-                st.query_params["symbol"] = symbol
-                st.switch_page("pages/4_Company_Report.py")
 
 st.divider()
 

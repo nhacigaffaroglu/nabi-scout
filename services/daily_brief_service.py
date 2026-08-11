@@ -10,6 +10,11 @@ from services.daily_action_service import (
 from services.research_monitor_service import build_monitor_feed
 from services.research_workflow_service import build_research_workflow
 from services.scan_run_health_service import derive_scan_run_health
+from services.signal_classification_service import (
+    DIRECTION_DEGRADATION,
+    classify_monitor_entry,
+    summarize_data_quality_update,
+)
 from services.ui_formatters import (
     format_data_issue_summary,
     format_priority_reasons,
@@ -41,6 +46,7 @@ def build_daily_brief(
     max_watchlist: int = 3,
     max_open_research: int = 5,
     max_data_issues: int = 3,
+    max_data_quality_updates: int = 3,
 ) -> Dict[str, Any]:
     now = as_of or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -129,14 +135,28 @@ def build_daily_brief(
         ]
 
     meaningful_change_count = _count_meaningful_changes(feed)
+    research_change_count = _count_research_changes(feed)
+    data_quality_change_count = _count_data_quality_changes(feed)
+    discovery_count = _count_discovery_candidates(feed)
+
+    data_quality_updates = _collect_data_quality_updates(
+        feed,
+        limit=max_data_quality_updates,
+        exclude_symbols=today_action_symbols,
+    )
+
     summary_stats = {
         "meaningful_change_count": meaningful_change_count,
+        "research_change_count": research_change_count,
+        "data_quality_change_count": data_quality_change_count,
+        "discovery_count": discovery_count,
         "attention_count": len(attention_items),
         "new_candidate_count": len(new_candidates),
         "watchlist_change_count": len(watchlist_changes),
         "open_research_count": len(open_research),
         "data_issue_count": len(data_issues),
         "today_action_count": len(today_actions),
+        "data_quality_update_count": len(data_quality_updates),
     }
 
     headline = _build_headline(summary_stats)
@@ -146,6 +166,8 @@ def build_daily_brief(
         or summary_stats["watchlist_change_count"] > 0
         or summary_stats["open_research_count"] > 0
         or summary_stats["data_issue_count"] > 0
+        or summary_stats["data_quality_update_count"] > 0
+        or summary_stats["today_action_count"] > 0
         or scheduled_run.get("status") not in {None, "missing"}
     )
 
@@ -159,6 +181,7 @@ def build_daily_brief(
         "watchlist_changes": watchlist_changes,
         "open_research": open_research,
         "data_issues": data_issues,
+        "data_quality_updates": data_quality_updates,
         "today_actions": [item.to_dict() for item in today_actions],
         "summary_stats": summary_stats,
         "has_anything_to_report": has_anything_to_report,
@@ -331,20 +354,121 @@ def _count_meaningful_changes(feed: Dict[str, Any]) -> int:
     return len(symbols)
 
 
+def _count_research_changes(feed: Dict[str, Any]) -> int:
+    symbols: set[str] = set()
+    for category in ("ATTENTION", "WATCHLIST"):
+        for entry in _eligible_monitor_entries(feed["categories"].get(category) or []):
+            summary = classify_monitor_entry(entry)
+            if not summary.is_research_actionable:
+                continue
+            symbol = str(entry.get("symbol") or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+    return len(symbols)
+
+
+def _count_data_quality_changes(feed: Dict[str, Any]) -> int:
+    symbols: set[str] = set()
+    for category in ("ATTENTION", "WATCHLIST", "DATA_ISSUES"):
+        for entry in _eligible_monitor_entries(feed["categories"].get(category) or []):
+            summary = classify_monitor_entry(entry)
+            if not summary.is_data_quality_only:
+                continue
+            if int(entry.get("meaningful_change_count") or 0) <= 0 and not summary.data_quality_event_count:
+                continue
+            symbol = str(entry.get("symbol") or "").strip().upper()
+            if symbol:
+                symbols.add(symbol)
+    return len(symbols)
+
+
+def _count_discovery_candidates(feed: Dict[str, Any]) -> int:
+    symbols: set[str] = set()
+    for entry in _eligible_monitor_entries(feed["categories"].get("NEW") or []):
+        if not entry.get("is_first_seen_in_window"):
+            continue
+        symbol = str(entry.get("symbol") or "").strip().upper()
+        if symbol:
+            symbols.add(symbol)
+    return len(symbols)
+
+
+def _collect_data_quality_updates(
+    feed: Dict[str, Any],
+    *,
+    limit: int,
+    exclude_symbols: set[str],
+) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    degradation_symbols = {
+        str(entry.get("symbol") or "").strip().upper()
+        for entry in _eligible_monitor_entries(feed["categories"].get("DATA_ISSUES") or [])
+        if entry.get("symbol")
+    }
+
+    candidates: List[Dict[str, Any]] = []
+    for category in ("ATTENTION", "WATCHLIST", "DATA_ISSUES"):
+        candidates.extend(_eligible_monitor_entries(feed["categories"].get(category) or []))
+
+    seen: set[str] = set()
+    for entry in candidates:
+        symbol = str(entry.get("symbol") or "").strip().upper()
+        if not symbol or symbol in exclude_symbols or symbol in seen:
+            continue
+        summary = classify_monitor_entry(entry)
+        if not summary.is_data_quality_only:
+            continue
+        if int(entry.get("meaningful_change_count") or 0) <= 0 and not summary.data_quality_event_count:
+            continue
+        direction = summary.primary_data_quality_direction
+        if direction == DIRECTION_DEGRADATION and symbol in degradation_symbols:
+            continue
+        seen.add(symbol)
+        candidate = entry.get("candidate") or {}
+        items.append({
+            "symbol": symbol,
+            "company_name": entry.get("company_name") or candidate.get("company_name") or symbol,
+            "direction": direction,
+            "summary": summarize_data_quality_update(entry, direction=direction),
+            "latest_scan_at": entry.get("latest_scan_at"),
+            "company_report_target": candidate,
+            "candidate": candidate,
+        })
+        if len(items) >= limit:
+            break
+
+    items.sort(key=lambda item: (str(item.get("latest_scan_at") or ""), item.get("symbol") or ""), reverse=True)
+    return items[:limit]
+
+
 def _build_headline(summary_stats: Dict[str, int]) -> str:
     parts: List[str] = []
-    meaningful = int(summary_stats.get("meaningful_change_count") or 0)
+    research = int(summary_stats.get("research_change_count") or 0)
+    data_quality = int(summary_stats.get("data_quality_change_count") or 0)
     open_count = int(summary_stats.get("open_research_count") or 0)
     watchlist_count = int(summary_stats.get("watchlist_change_count") or 0)
 
-    if meaningful == 0:
-        parts.append("Son 24 saatte anlamlı bir değişiklik bulunmadı.")
-    elif meaningful == 1:
-        parts.append("Son 24 saatte 1 şirkette anlamlı değişiklik bulundu.")
+    if research == 0:
+        parts.append(
+            "Bugün araştırma önceliğini değiştiren yeni bir gelişme yok."
+        )
+    elif research == 1:
+        parts.append(
+            "Son 24 saatte 1 şirkette araştırma açısından anlamlı değişiklik bulundu."
+        )
     else:
         parts.append(
-            f"Son 24 saatte {meaningful} şirkette anlamlı değişiklik bulundu."
+            f"Son 24 saatte {research} şirkette araştırma açısından anlamlı değişiklik bulundu."
         )
+
+    if research == 0 and data_quality == 1:
+        parts.append("1 şirkette veri kalitesi güncellemesi var.")
+    elif research == 0 and data_quality > 1:
+        parts.append(f"{data_quality} şirkette veri kalitesi güncellemesi var.")
+    elif research > 0 and data_quality == 1:
+        parts.append("1 şirkette veri kalitesi güncellemesi var.")
+    elif research > 0 and data_quality > 1:
+        parts.append(f"{data_quality} şirkette veri kalitesi güncellemesi var.")
 
     if open_count == 1:
         parts.append("1 açık araştırma işi bulunuyor.")

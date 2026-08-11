@@ -24,12 +24,24 @@ from services.daily_action_service import (
     open_research_backlog_caveat,
     select_top_actions,
 )
+from services.signal_classification_service import SignalSummary
 from services.daily_brief_service import build_daily_brief
 from services.research_history_service import (
     CATEGORY_ATTENTION,
     CATEGORY_NEW,
     CATEGORY_WATCHLIST,
 )
+
+
+def research_change_event():
+    return {
+        "message": "Karar etiketi değişti",
+        "severity": "HIGH",
+        "field": "decision_label",
+        "category": "DECISION",
+        "old": "İZLE",
+        "new": "ARAŞTIRMA ADAYI",
+    }
 
 
 def candidate(
@@ -358,7 +370,20 @@ class ActionTierTests(unittest.TestCase):
 
 
 class Top3SelectionTests(unittest.TestCase):
-    def _item(self, symbol, tier, score=10, meaningful=1):
+    def _item(
+        self,
+        symbol,
+        tier,
+        score=10,
+        meaningful=1,
+        *,
+        research_actionable=True,
+    ):
+        summary = SignalSummary(
+            is_research_actionable=research_actionable,
+            is_data_quality_only=not research_actionable,
+            families=frozenset({"RESEARCH"} if research_actionable else {"DATA_QUALITY"}),
+        )
         return DailyActionItem(
             symbol=symbol,
             company_name=symbol,
@@ -380,6 +405,8 @@ class Top3SelectionTests(unittest.TestCase):
             latest_scan_at="2026-08-11T14:47:00+00:00",
             company_report_target={"symbol": symbol},
             candidate={"symbol": symbol},
+            is_research_actionable=research_actionable,
+            signal_summary=summary,
         )
 
     def test_t4_does_not_displace_t123(self) -> None:
@@ -393,13 +420,19 @@ class Top3SelectionTests(unittest.TestCase):
         self.assertEqual([i.symbol for i in top], ["NVDA", "GOOGL", "AVGO"])
         self.assertNotIn("TSM", [i.symbol for i in top])
 
-    def test_t4_fills_when_fewer_than_three_today_items(self) -> None:
+    def test_t4_no_longer_fills_top3(self) -> None:
         items = [
             self._item("NVDA", ACTION_TIER_T1, score=60),
-            self._item("TSM", ACTION_TIER_T4, score=99),
+            self._item("TSM", ACTION_TIER_T4, score=99, research_actionable=False),
         ]
         top = select_top_actions(items, max_actions=3)
-        self.assertEqual([i.symbol for i in top], ["NVDA", "TSM"])
+        self.assertEqual([i.symbol for i in top], ["NVDA"])
+
+    def test_data_quality_only_not_top3(self) -> None:
+        items = [
+            self._item("NVDA", ACTION_TIER_T3, score=60, research_actionable=False),
+        ]
+        self.assertEqual(select_top_actions(items, max_actions=3), [])
 
     def test_wait_never_top3(self) -> None:
         wait_item = self._item("AACB", ACTION_TIER_T5, score=0, meaningful=0)
@@ -438,12 +471,16 @@ class BuildTodayActionsTests(unittest.TestCase):
             watched_candidate_ids={"id-NVDA"},
             max_actions=3,
         )
-        symbols = [item.symbol for item in top]
-        self.assertEqual(symbols[0], "NVDA")
-        self.assertEqual(top[0].action_tier, ACTION_TIER_T3)
-        self.assertNotIn("TSM", symbols)
-        self.assertNotIn("AACB", symbols)
-        self.assertLessEqual(len(top), 3)
+        self.assertEqual(top, [])
+
+    def test_quiet_day_data_quality_only_returns_empty_top3(self) -> None:
+        feed = production_shaped_feed()
+        top = build_today_actions(
+            feed=feed,
+            candidates=[candidate("NVDA", workflow="INCELEMEDE")],
+            watched_candidate_ids={"id-NVDA"},
+        )
+        self.assertEqual(top, [])
 
     def test_genuine_non_availability_change_qualifies_t1(self) -> None:
         feed = feed_from_entries([
@@ -473,9 +510,14 @@ class BuildTodayActionsTests(unittest.TestCase):
         self.assertEqual(top[0].symbol, "NVDA")
         self.assertEqual(top[0].action_tier, ACTION_TIER_T1)
 
-    def test_t4_fills_remaining_slot_when_under_three_today_items(self) -> None:
+    def test_t4_does_not_fill_remaining_slot(self) -> None:
         feed = feed_from_entries([
-            monitor_entry("NVDA", meaningful=1, priority_score=60),
+            monitor_entry(
+                "NVDA",
+                meaningful=1,
+                priority_score=60,
+                events=[research_change_event()],
+            ),
             {
                 **monitor_entry("TSM", meaningful=0, window_score=0, first_seen=True, priority_score=99, events=[]),
                 "primary_category": CATEGORY_NEW,
@@ -486,10 +528,8 @@ class BuildTodayActionsTests(unittest.TestCase):
             candidates=[candidate("NVDA"), candidate("TSM", freshness="AGING")],
             max_actions=3,
         )
+        self.assertEqual(len(top), 1)
         self.assertEqual(top[0].symbol, "NVDA")
-        self.assertEqual(len(top), 2)
-        self.assertEqual(top[1].symbol, "TSM")
-        self.assertEqual(top[1].action_tier, ACTION_TIER_T4)
 
     def test_candidate_only_backlog(self) -> None:
         feed = feed_from_entries([])
@@ -526,6 +566,7 @@ class BuildTodayActionsTests(unittest.TestCase):
             monitor_entry(
                 "NVDA",
                 meaningful=1,
+                events=[research_change_event()],
                 cand=candidate(
                     "NVDA",
                     workflow="INCELEMEDE",
@@ -589,7 +630,8 @@ class DailyBriefIntegrationTests(unittest.TestCase):
         today_symbols = {item["symbol"] for item in brief["today_actions"]}
         for item in brief["new_candidates"]:
             self.assertNotIn(item["symbol"], today_symbols)
-        self.assertNotIn("NVDA", [item["symbol"] for item in brief.get("attention_items", [])])
+        self.assertEqual(brief["today_actions"], [])
+        self.assertIn("NVDA", [item["symbol"] for item in brief.get("attention_items", [])])
 
 
 class DashboardSmokeTests(unittest.TestCase):
@@ -613,12 +655,16 @@ class DashboardSmokeTests(unittest.TestCase):
             "headline": "test",
             "summary_stats": {
                 "meaningful_change_count": 5,
+                "research_change_count": 1,
+                "data_quality_change_count": 4,
+                "discovery_count": 1,
                 "attention_count": 0,
                 "new_candidate_count": 1,
                 "watchlist_change_count": 0,
                 "open_research_count": 1,
                 "data_issue_count": 0,
                 "today_action_count": 1,
+                "data_quality_update_count": 2,
             },
             "today_actions": [{
                 "symbol": "NVDA",
@@ -640,6 +686,14 @@ class DashboardSmokeTests(unittest.TestCase):
                 "data_quality_caveat": "Veri bekle — değerlendirme için yeterli veri yok.",
             }],
             "data_issues": [],
+            "data_quality_updates": [{
+                "symbol": "GOOGL",
+                "company_name": "GOOGL",
+                "summary": "Veri tamlığı yeniden yükseldi.",
+                "direction": "RECOVERY",
+                "company_report_target": {"symbol": "GOOGL"},
+                "candidate": {"symbol": "GOOGL"},
+            }],
             "has_anything_to_report": True,
         }
 

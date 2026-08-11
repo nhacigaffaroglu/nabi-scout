@@ -11,6 +11,13 @@ from services.research_history_service import (
     RESEARCH_DECISIONS,
 )
 from services.research_priority_engine import compute_research_priority
+from services.signal_classification_service import (
+    SIGNAL_FAMILY_RESEARCH,
+    SignalSummary,
+    classify_event,
+    classify_monitor_entry,
+    data_quality_signal_caveat,
+)
 from services.research_workflow_service import (
     build_research_workflow,
     normalize_research_status,
@@ -24,7 +31,6 @@ ACTION_TIER_T4 = "T4"
 ACTION_TIER_T5 = "T5"
 
 TODAY_ACTION_TIERS = frozenset({ACTION_TIER_T1, ACTION_TIER_T2, ACTION_TIER_T3})
-TOP3_FILL_TIERS = TODAY_ACTION_TIERS | {ACTION_TIER_T4}
 
 DATA_QUALITY_ACTIONABLE = "ACTIONABLE"
 DATA_QUALITY_CAUTION = "CAUTION"
@@ -83,9 +89,13 @@ class DailyActionItem:
     company_report_target: Dict[str, Any] = field(default_factory=dict)
     candidate: Dict[str, Any] = field(default_factory=dict)
     is_availability_only: bool = False
+    is_research_actionable: bool = False
+    signal_summary: SignalSummary = field(default_factory=SignalSummary)
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["signal_summary"] = self.signal_summary.to_dict()
+        return payload
 
 
 def build_today_actions(
@@ -141,14 +151,9 @@ def select_top_actions(
         item
         for item in items
         if item.action_tier in TODAY_ACTION_TIERS
+        and item.is_research_actionable
         and item.data_quality_band != DATA_QUALITY_WAIT
         and not _is_reviewed_without_new_change(item)
-    ]
-    fill_t4 = [
-        item
-        for item in items
-        if item.action_tier == ACTION_TIER_T4
-        and item.data_quality_band != DATA_QUALITY_WAIT
     ]
 
     selected: List[DailyActionItem] = []
@@ -156,14 +161,6 @@ def select_top_actions(
         if len(selected) >= max_actions:
             break
         selected.append(item)
-
-    if len(selected) < max_actions:
-        for item in fill_t4:
-            if len(selected) >= max_actions:
-                break
-            if item.symbol in {existing.symbol for existing in selected}:
-                continue
-            selected.append(item)
 
     return selected
 
@@ -313,6 +310,7 @@ def build_action_reasons(
     next_action: Optional[str],
     availability_only: bool,
     data_quality_caveat: Optional[str],
+    signal_summary: Optional[SignalSummary] = None,
 ) -> List[str]:
     reasons: List[str] = []
     seen: Set[str] = set()
@@ -324,8 +322,18 @@ def build_action_reasons(
             reasons.append(text)
 
     meaningful = int((monitor_entry or {}).get("meaningful_change_count") or 0)
+    summary = signal_summary or classify_monitor_entry(monitor_entry)
     if meaningful > 0:
-        if availability_only:
+        if summary.is_research_actionable:
+            for event in (monitor_entry or {}).get("events") or []:
+                if classify_event(event) != SIGNAL_FAMILY_RESEARCH:
+                    continue
+                add(event.get("message"))
+                if len(reasons) >= 2:
+                    break
+            if not reasons:
+                add("Son taramada araştırma açısından anlamlı değişiklik var.")
+        elif availability_only or summary.is_data_quality_only:
             add("Veri tamlığı değişti; şirket yeniden gözden geçirilmeli.")
         else:
             for event in (monitor_entry or {}).get("events") or []:
@@ -399,6 +407,7 @@ def _build_action_from_monitor_entry(
     ) or bool(entry.get("is_watchlisted"))
 
     availability_only = is_availability_only_change(entry)
+    signal_summary = classify_monitor_entry(entry)
     meaningful_change_count = int(entry.get("meaningful_change_count") or 0)
     data_quality_band, data_quality_caveat = classify_data_quality_band(
         candidate,
@@ -436,6 +445,10 @@ def _build_action_from_monitor_entry(
         action_tier,
         workflow_status=workflow_status,
     )
+    mixed_quality_caveat = data_quality_signal_caveat(signal_summary)
+    if mixed_quality_caveat and data_quality_caveat is None:
+        data_quality_caveat = mixed_quality_caveat
+
     reasons = build_action_reasons(
         action_tier=action_tier,
         monitor_entry=entry,
@@ -445,6 +458,7 @@ def _build_action_from_monitor_entry(
         next_action=workflow.get("research_next_action"),
         availability_only=availability_only,
         data_quality_caveat=data_quality_caveat,
+        signal_summary=signal_summary,
     )
 
     return DailyActionItem(
@@ -469,6 +483,8 @@ def _build_action_from_monitor_entry(
         company_report_target=candidate,
         candidate=candidate,
         is_availability_only=availability_only,
+        is_research_actionable=signal_summary.is_research_actionable,
+        signal_summary=signal_summary,
     )
 
 
@@ -538,22 +554,62 @@ def _build_action_from_candidate_only(
         company_report_target=candidate,
         candidate=candidate,
         is_availability_only=False,
+        is_research_actionable=False,
+        signal_summary=SignalSummary(),
     )
+
+
+def _merge_monitor_entries(
+    base: Dict[str, Any],
+    overlay: Dict[str, Any],
+) -> Dict[str, Any]:
+    merged = dict(overlay)
+
+    base_events = list(base.get("events") or [])
+    overlay_events = list(overlay.get("events") or [])
+    seen = {
+        (event.get("field"), event.get("category"), event.get("message"))
+        for event in overlay_events
+    }
+    for event in base_events:
+        key = (event.get("field"), event.get("category"), event.get("message"))
+        if key not in seen:
+            overlay_events.append(event)
+            seen.add(key)
+    merged["events"] = overlay_events
+
+    merged["meaningful_change_count"] = max(
+        int(base.get("meaningful_change_count") or 0),
+        int(overlay.get("meaningful_change_count") or 0),
+    )
+    merged["window_change_score"] = max(
+        int(base.get("window_change_score") or 0),
+        int(overlay.get("window_change_score") or 0),
+    )
+    merged["is_first_seen_in_window"] = bool(
+        base.get("is_first_seen_in_window")
+        or overlay.get("is_first_seen_in_window")
+    )
+    return merged
 
 
 def _index_monitor_entries(feed: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     indexed: Dict[str, Dict[str, Any]] = {}
     categories = feed.get("categories") or {}
     for category in (
-        CATEGORY_ATTENTION,
-        CATEGORY_WATCHLIST,
-        CATEGORY_NEW,
         "DATA_ISSUES",
+        CATEGORY_NEW,
+        CATEGORY_WATCHLIST,
+        CATEGORY_ATTENTION,
     ):
         for entry in categories.get(category) or []:
             symbol = str(entry.get("symbol") or "").strip().upper()
-            if symbol:
-                indexed[symbol] = entry
+            if not symbol:
+                continue
+            if symbol in indexed:
+                indexed[symbol] = _merge_monitor_entries(indexed[symbol], entry)
+            else:
+                indexed[symbol] = dict(entry)
 
     for entry in feed.get("entries") or []:
         symbol = str(entry.get("symbol") or "").strip().upper()
