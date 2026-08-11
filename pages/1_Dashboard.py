@@ -4,8 +4,8 @@ import streamlit as st
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
-from services.research_monitor_service import build_priority_teaser_from_monitor
-from services.ui_formatters import format_priority_reasons, format_research_status
+from services.daily_brief_service import build_daily_brief
+from services.ui_formatters import format_datetime_tr, format_research_status
 from services.research_workflow_service import normalize_research_status
 from services.supabase_client import get_supabase_client
 from services.ui import configure_page, render_sidebar
@@ -19,58 +19,131 @@ repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)
 
-stats = repo.get_dashboard_stats()
-cols = st.columns(5)
-cols[0].metric("Toplam aday", stats["total"])
-cols[1].metric("Güçlü aday", stats["strong"])
-cols[2].metric("Scanner: İZLE", stats["watch"])
-cols[3].metric("Katılım uygun", stats["participation_ok"])
-cols[4].metric("Açık Araştırma", stats["open_research"])
-
-candidates = repo.get_all(order_by="nabi_score", descending=True)
-watched_ids = watchlist_repo.watched_candidate_ids()
-priority_entries = build_priority_teaser_from_monitor(
+brief = build_daily_brief(
     scan_repo=scan_repo,
-    candidates=candidates,
-    watched_candidate_ids=watched_ids,
-    limit=5,
+    candidate_repo=repo,
+    watchlist_repo=watchlist_repo,
 )
 
-st.subheader("🎯 Bugünkü araştırma öncelikleri")
+st.subheader("☀️ Bugünün Özeti")
+scheduled = brief["scheduled_run"]
+scheduled_at = scheduled.get("completed_at") or scheduled.get("started_at")
+if scheduled_at:
+    st.caption(
+        f"Son otomatik tarama: {format_datetime_tr(scheduled_at)} · "
+        f"{scheduled.get('status_label', '—')}"
+    )
+else:
+    st.caption(f"Son otomatik tarama: {scheduled.get('status_label', '—')}")
+if scheduled.get("detail"):
+    st.caption(scheduled["detail"])
+
+st.markdown(f"**{brief['headline']}**")
+
+stats = brief["summary_stats"]
+metric_cols = st.columns(4)
+metric_cols[0].metric("Anlamlı değişiklik", stats["meaningful_change_count"])
+metric_cols[1].metric("Yeni aday", stats["new_candidate_count"])
+metric_cols[2].metric("Açık araştırma", stats["open_research_count"])
+metric_cols[3].metric("Veri sorunu", stats["data_issue_count"])
+
 if st.button("🔬 Research Monitor'u Aç", type="secondary"):
     st.switch_page("pages/3_Research_Monitor.py")
-if not priority_entries:
-    st.info("Öncelikli aday bulunamadı.")
-else:
-    for index, entry in enumerate(priority_entries):
-        candidate = entry["candidate"]
-        symbol = candidate.get("symbol") or "—"
-        company = candidate.get("company_name") or symbol
-        decision = candidate.get("decision_label") or candidate.get("decision") or "—"
-        reasons = format_priority_reasons(entry.get("reasons") or [])
-        events = entry.get("events") or []
-        for event in events[:2]:
-            message = event.get("message")
-            if message and message not in reasons:
-                reasons.insert(0, message)
 
+if brief["attention_items"]:
+    st.markdown("**Öncelikli değişiklikler**")
+    for index, item in enumerate(brief["attention_items"]):
+        symbol = item.get("symbol") or "—"
         st.markdown(
-            f"**{symbol}** — Öncelik {entry['priority_score']:.0f} / "
-            f"{entry['priority_label']}"
+            f"**{symbol}** — Öncelik {item.get('priority_score', 0):.0f} / "
+            f"{item.get('priority_label', '—')}"
         )
-        st.caption(f"{company} · {decision}")
-        for reason in reasons[:3]:
+        st.caption(item.get("decision_label") or "—")
+        for reason in item.get("reasons") or []:
             st.markdown(f"• {reason}")
-
         if st.button(
             "📄 Company Report",
-            key=f"dashboard_report_{symbol}_{index}",
+            key=f"brief_attention_{symbol}_{index}",
         ):
+            candidate = item.get("candidate") or {"symbol": symbol}
             st.session_state["company_report_candidate"] = candidate
             st.query_params["symbol"] = symbol
             st.switch_page("pages/4_Company_Report.py")
         st.markdown("")
+elif not brief["has_anything_to_report"]:
+    st.info("Son 24 saatte öne çıkan bir değişiklik bulunmadı.")
 
+if brief["watchlist_changes"]:
+    st.markdown("**⭐ İzleme listemde değişenler**")
+    for index, item in enumerate(brief["watchlist_changes"]):
+        symbol = item.get("symbol") or "—"
+        st.markdown(f"**{symbol}** — {item.get('company_name') or symbol}")
+        for reason in item.get("reasons") or []:
+            st.markdown(f"• {reason}")
+        if st.button(
+            "📄 Company Report",
+            key=f"brief_watchlist_{symbol}_{index}",
+        ):
+            candidate = item.get("candidate") or {"symbol": symbol}
+            st.session_state["company_report_candidate"] = candidate
+            st.query_params["symbol"] = symbol
+            st.switch_page("pages/4_Company_Report.py")
+
+if brief["open_research"]:
+    st.markdown("**📝 Açık araştırma işleri**")
+    for index, item in enumerate(brief["open_research"]):
+        symbol = item.get("symbol") or "—"
+        st.markdown(
+            f"**{symbol}** — {item.get('workflow_status_label') or '—'}"
+        )
+        if item.get("research_next_action"):
+            st.caption(f"Sıradaki: {item['research_next_action']}")
+        if item.get("last_reviewed_at"):
+            st.caption(
+                "Son inceleme: "
+                + format_datetime_tr(item.get("last_reviewed_at"))
+            )
+        if st.button(
+            "📄 Company Report",
+            key=f"brief_open_research_{symbol}_{index}",
+        ):
+            candidate = item.get("candidate") or {"symbol": symbol}
+            st.session_state["company_report_candidate"] = candidate
+            st.query_params["symbol"] = symbol
+            st.switch_page("pages/4_Company_Report.py")
+
+if brief["data_issues"]:
+    st.markdown("**⚠️ Veri sorunları**")
+    for item in brief["data_issues"]:
+        st.markdown(f"• {item.get('summary') or '—'}")
+
+if brief["new_candidates"]:
+    with st.expander("🆕 Yeni adaylar", expanded=False):
+        for index, item in enumerate(brief["new_candidates"]):
+            symbol = item.get("symbol") or "—"
+            st.markdown(f"**{symbol}** — {item.get('company_name') or symbol}")
+            for reason in item.get("reasons") or []:
+                st.markdown(f"• {reason}")
+            if st.button(
+                "📄 Company Report",
+                key=f"brief_new_{symbol}_{index}",
+            ):
+                candidate = item.get("candidate") or {"symbol": symbol}
+                st.session_state["company_report_candidate"] = candidate
+                st.query_params["symbol"] = symbol
+                st.switch_page("pages/4_Company_Report.py")
+
+st.divider()
+
+dashboard_stats = repo.get_dashboard_stats()
+cols = st.columns(5)
+cols[0].metric("Toplam aday", dashboard_stats["total"])
+cols[1].metric("Güçlü aday", dashboard_stats["strong"])
+cols[2].metric("Scanner: İZLE", dashboard_stats["watch"])
+cols[3].metric("Katılım uygun", dashboard_stats["participation_ok"])
+cols[4].metric("Açık Araştırma", dashboard_stats["open_research"])
+
+candidates = repo.get_all(order_by="nabi_score", descending=True)
 rows = candidates
 df = pd.DataFrame(rows)
 

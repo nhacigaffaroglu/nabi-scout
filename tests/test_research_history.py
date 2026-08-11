@@ -669,7 +669,7 @@ class MonitorImportSmokeTests(unittest.TestCase):
         page_path = Path("pages/1_Dashboard.py")
         source = page_path.read_text(encoding="utf-8")
         self.assertIn(
-            "from services.research_monitor_service import build_priority_teaser_from_monitor",
+            "from services.daily_brief_service import build_daily_brief",
             source,
         )
         py_compile.compile(page_path, doraise=True)

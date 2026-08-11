@@ -168,3 +168,92 @@ def format_data_quality_notes(notes: Optional[Sequence[str]]) -> List[str]:
         else:
             formatted.append(text)
     return formatted
+
+
+SCHEDULED_RUN_STATUS_LABELS = {
+    "success": "Başarılı",
+    "partial": "Kısmi",
+    "failed": "Başarısız",
+    "missing": "Henüz yok",
+}
+
+
+def resolve_scheduled_run_status(run: Optional[Dict[str, Any]]) -> str:
+    if not run:
+        return "missing"
+
+    db_status = str(run.get("status") or "").upper()
+    error_count = int(run.get("error_count") or 0)
+
+    if db_status == "FAILED":
+        return "failed"
+    if db_status == "COMPLETED":
+        return "success" if error_count == 0 else "partial"
+    if db_status == "RUNNING":
+        return "partial"
+    return "missing"
+
+
+def format_scheduled_run_status(status: str) -> str:
+    return SCHEDULED_RUN_STATUS_LABELS.get(status, SCHEDULED_RUN_STATUS_LABELS["missing"])
+
+
+def format_scheduled_run_detail(
+    status: str,
+    run: Optional[Dict[str, Any]],
+) -> str:
+    if status == "missing":
+        return "Bugün henüz otomatik tarama yok."
+    if status == "failed":
+        return "Otomatik tarama tamamlanamadı."
+    if status == "success":
+        scanned = run.get("scanned_symbols") if run else None
+        if scanned is not None:
+            return f"{scanned} sembol tarandı."
+        return "Otomatik tarama tamamlandı."
+    if status == "partial":
+        scanned = run.get("scanned_symbols") if run else None
+        if scanned is not None:
+            return (
+                f"{scanned} sembol tarandı · bazı veri kaynakları sınırlıydı."
+            )
+        return (
+            "Otomatik tarama tamamlandı; bazı sembollerde kısmi veri kullanıldı."
+        )
+    return "—"
+
+
+def format_count_tr(count: int, singular: str, plural: str) -> str:
+    if count == 0:
+        return f"0 {plural}"
+    if count == 1:
+        return f"1 {singular}"
+    return f"{count} {plural}"
+
+
+def format_data_issue_summary(entry: Dict[str, Any]) -> str:
+    symbol = entry.get("symbol") or "—"
+    events = entry.get("events") or []
+    for event in events:
+        if event.get("category") == "AVAILABILITY":
+            message = str(event.get("message") or "")
+            lowered = message.casefold()
+            if "fmp" in lowered or "rate" in lowered or "limit" in lowered:
+                return f"{symbol} — FMP verisi geçici olarak erişilemedi"
+            if message:
+                return f"{symbol} — {message}"
+
+    candidate = entry.get("candidate") or {}
+    latest_snapshot = entry.get("latest_snapshot") or {}
+    freshness = (
+        candidate.get("freshness_status")
+        or latest_snapshot.get("freshness_status")
+    )
+    if freshness == "STALE":
+        return f"{symbol} — Finansal veri eskiyor"
+    if freshness == "UNKNOWN":
+        return f"{symbol} — Güncellik bilinmiyor"
+
+    if events and events[0].get("message"):
+        return f"{symbol} — {events[0]['message']}"
+    return f"{symbol} — Veri sorunu"

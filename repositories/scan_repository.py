@@ -8,6 +8,10 @@ from services.scan_snapshot import (
     normalize_universe_name,
     sparse_snapshot_from_row,
 )
+from services.scan_universe_service import (
+    SCHEDULED_UNIVERSE_PREFIX,
+    scheduled_universe_name,
+)
 
 
 def _is_missing_column_error(exc: Exception, column: str) -> bool:
@@ -112,6 +116,34 @@ class ScanRepository:
         )
         rows = response.data or []
         return rows[0] if rows else None
+
+    def get_scheduled_run_for_date(
+        self,
+        run_date: Optional[date] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return self.get_run_by_universe_name(scheduled_universe_name(run_date))
+
+    def get_latest_scheduled_run(
+        self,
+        as_of: Optional[date] = None,
+    ) -> Optional[Dict[str, Any]]:
+        target = as_of or date.today()
+        today_run = self.get_scheduled_run_for_date(target)
+        if today_run:
+            return today_run
+
+        response = (
+            self.client.table("scan_runs")
+            .select("*")
+            .order("started_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        for row in response.data or []:
+            universe_name = str(row.get("universe_name") or "")
+            if universe_name.startswith(SCHEDULED_UNIVERSE_PREFIX):
+                return row
+        return None
 
     def get_stale_running_runs(self, before: datetime) -> List[Dict[str, Any]]:
         response = (

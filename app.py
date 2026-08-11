@@ -19,7 +19,7 @@ cols[0].metric("Toplam aday", stats["total"])
 cols[1].metric("Güçlü aday", stats["strong"])
 cols[2].metric("İzle", stats["watch"])
 cols[3].metric("Katılım uygun", stats["participation_ok"])
-cols[4].metric("İnceleniyor", stats["researching"])
+cols[4].metric("Açık Araştırma", stats["open_research"])
 
 st.subheader("En yüksek puanlı adaylar")
 rows = repo.get_all(limit=6, order_by="nabi_score", descending=True)
