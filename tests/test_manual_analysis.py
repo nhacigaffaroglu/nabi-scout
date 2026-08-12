@@ -527,6 +527,8 @@ class RuntimeImportContractTests(unittest.TestCase):
         self.assertIn("PRICE_RETURN_DISCLAIMER", source)
         self.assertIn("RETURN_1Y_INSUFFICIENT_MESSAGE", source)
         self.assertIn("history_coverage_caption", source)
+        self.assertIn("Takibe al", source)
+        self.assertIn("save_tracked_fund", source)
         self.assertNotIn("Company Report", source.split("analysis_kind == \"fund\"")[1].split("elif")[0])
 
     def test_manual_analysis_imports_in_fresh_process(self) -> None:

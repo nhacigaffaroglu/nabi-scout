@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from typing import Optional
 
+from repositories.tracked_fund_repository import TrackedFundRepository
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
@@ -22,6 +23,7 @@ from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
     analyze_security,
     save_manual_candidate,
+    save_tracked_fund,
 )
 from services.free_universe_client import FreeUniverseClient
 from services.scanner_v8_engine import ScannerV8Engine
@@ -40,6 +42,7 @@ client = get_supabase_client()
 repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)
+tracked_fund_repo = TrackedFundRepository(client)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -83,6 +86,7 @@ if analyze_clicked:
                     scan_repo=scan_repo,
                     fmp_client=fmp_client,
                     alpha_vantage_client=alpha_vantage_client,
+                    tracked_fund_repo=tracked_fund_repo,
                     sec_client=sec_client,
                     sec_lookup=sec_lookup,
                     engine=engine,
@@ -360,6 +364,23 @@ if manual_result is not None:
                 "Doğrulanamayan alanlar: "
                 + ", ".join(fund.unsupported_fields)
             )
+
+        if not manual_result.is_tracked:
+            if st.button("Takibe al", key="dashboard_track_fund"):
+                try:
+                    saved = save_tracked_fund(
+                        tracked_fund_repo,
+                        fund_result=fund,
+                        resolved=resolved,
+                    )
+                    manual_result.is_tracked = True
+                    manual_result.tracked_fund_id = saved.get("id")
+                    st.session_state["manual_analysis_result"] = manual_result
+                    st.success(f"{manual_result.symbol} takibe alındı.")
+                except ValueError as exc:
+                    st.error(str(exc))
+        else:
+            st.caption("Bu fon takip listesinde.")
 
     elif manual_result.analysis_kind == "etf_metadata":
         st.warning("Bu sonuç eski bir ETF görünümü; lütfen sembolü yeniden analiz edin.")

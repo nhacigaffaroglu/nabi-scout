@@ -36,6 +36,8 @@ class ManualAnalysisResult:
     unsupported_reason: Optional[str] = None
     is_persisted: bool = False
     persisted_candidate_id: Optional[str] = None
+    is_tracked: bool = False
+    tracked_fund_id: Optional[str] = None
     current_price: Optional[float] = None
     participation_status: Optional[str] = None
     participation_score: Optional[int] = None
@@ -63,6 +65,7 @@ def analyze_security(
     fmp_client: FMPClient,
     sec_client,
     alpha_vantage_client: Optional[AlphaVantageClient] = None,
+    tracked_fund_repo=None,
     sec_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     nasdaq_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     engine=None,
@@ -86,6 +89,7 @@ def analyze_security(
         return _analyze_fund(
             resolved,
             alpha_vantage_client=alpha_vantage_client,
+            tracked_fund_repo=tracked_fund_repo,
             is_persisted=is_persisted,
             persisted_candidate_id=(existing or {}).get("id"),
         )
@@ -122,6 +126,21 @@ def save_manual_candidate(
         raise ValueError("Bu sonuç aday havuzuna kaydedilemez.")
 
     return candidate_repo.upsert_by_symbol(candidate)
+
+
+def save_tracked_fund(
+    tracked_fund_repo,
+    *,
+    fund_result,
+    resolved: ResolvedSecurity,
+):
+    from services.fund_tracking_service import save_tracked_fund as _save_tracked_fund
+
+    return _save_tracked_fund(
+        tracked_fund_repo,
+        fund_result=fund_result,
+        resolved=resolved,
+    )
 
 
 def _analyze_equity(
@@ -187,12 +206,16 @@ def _analyze_fund(
     resolved: ResolvedSecurity,
     *,
     alpha_vantage_client: AlphaVantageClient,
+    tracked_fund_repo=None,
     is_persisted: bool,
     persisted_candidate_id: Optional[str],
 ) -> ManualAnalysisResult:
     if alpha_vantage_client is None:
         raise ValueError("Alpha Vantage client gerekli.")
     fund_result = analyze_fund(resolved, alpha_vantage_client=alpha_vantage_client)
+    tracked_row = None
+    if tracked_fund_repo is not None:
+        tracked_row = tracked_fund_repo.get_by_symbol(resolved.symbol)
     return ManualAnalysisResult(
         symbol=resolved.symbol,
         analysis_kind="fund",
@@ -201,6 +224,8 @@ def _analyze_fund(
         warnings=list(fund_result.warnings),
         is_persisted=is_persisted,
         persisted_candidate_id=persisted_candidate_id,
+        is_tracked=tracked_row is not None,
+        tracked_fund_id=(tracked_row or {}).get("id"),
         current_price=fund_result.current_price,
         participation_status=fund_result.participation_status,
         participation_score=fund_result.participation_score,
