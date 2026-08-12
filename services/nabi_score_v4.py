@@ -77,6 +77,18 @@ def _reason(
         )
 
 
+# Pre-6B.0 investment-quality weights totaled 0.97; participation carried 0.03.
+# Renormalized to 1.0 so raw_score remains on a 0–100 scale without participation.
+_PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM = 0.97
+_RAW_SCORE_WEIGHT_QUALITY = 0.27 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_GROWTH = 0.20 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_VALUATION = 0.15 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_FINANCIAL_STRENGTH = 0.14 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_RISK = 0.08 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_PORTFOLIO_FIT = 0.10 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+_RAW_SCORE_WEIGHT_LIQUIDITY = 0.03 / _PRE_6B0_INVESTMENT_QUALITY_WEIGHT_SUM
+
+
 def calculate_nabi_score_v4(
     *,
     revenue_growth_1y: Optional[float],
@@ -107,6 +119,9 @@ def calculate_nabi_score_v4(
     participation_status: str,
     completeness: float,
 ) -> Dict[str, Any]:
+    # Phase 6B.0 firewall: participation is metadata-only; never affects score/decision.
+    del participation_score, participation_status
+
     reasons: List[ScoreReason] = []
 
     profitability = weighted([
@@ -184,14 +199,13 @@ def calculate_nabi_score_v4(
     )
 
     raw_score = (
-        quality_score * 0.27
-        + growth_score * 0.20
-        + valuation * 0.15
-        + financial_strength_score * 0.14
-        + risk_score * 0.08
-        + clamp(portfolio_fit) * 0.10
-        + liquidity * 0.03
-        + clamp(participation_score) * 0.03
+        quality_score * _RAW_SCORE_WEIGHT_QUALITY
+        + growth_score * _RAW_SCORE_WEIGHT_GROWTH
+        + valuation * _RAW_SCORE_WEIGHT_VALUATION
+        + financial_strength_score * _RAW_SCORE_WEIGHT_FINANCIAL_STRENGTH
+        + risk_score * _RAW_SCORE_WEIGHT_RISK
+        + clamp(portfolio_fit) * _RAW_SCORE_WEIGHT_PORTFOLIO_FIT
+        + liquidity * _RAW_SCORE_WEIGHT_LIQUIDITY
     )
 
     # Sert finansal risk cezaları
@@ -223,10 +237,7 @@ def calculate_nabi_score_v4(
         1,
     )
 
-    if participation_status == "Uygun Değil":
-        nabi_score = 0.0
-        decision = "ELE"
-    elif completeness < 50:
+    if completeness < 50:
         decision = "VERİ EKSİK"
     elif nabi_score >= 84:
         decision = "GÜÇLÜ ADAY"
