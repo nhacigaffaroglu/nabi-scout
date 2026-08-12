@@ -55,6 +55,15 @@ Bu kurulum bilgisayarınıza Python kurmadan yapılabilir.
 [supabase]
 url = "SUPABASE_PROJECT_URL"
 publishable_key = "SUPABASE_PUBLISHABLE_KEY"
+
+[fmp]
+api_key = "FMP_API_KEY"
+
+[alpha_vantage]
+api_key = "ALPHA_VANTAGE_API_KEY"
+
+[sec]
+contact_email = "SEC_CONTACT_EMAIL"
 ```
 
 10. Değerleri Supabase'ten kopyaladıklarınızla değiştirin.
@@ -86,12 +95,21 @@ Uygulamayı internette herkese açık tutulmamalıdır.
 **GitHub Actions / headless tarama:** `SUPABASE_KEY` ortam değişkeni artık **service_role**
 anahtarı olmalıdır. Publishable/anon anahtar RLS'i bypass etmez.
 
-**Streamlit Secrets** (değişmedi):
+**Streamlit Secrets:**
 
 ```toml
 [supabase]
 url = "SUPABASE_PROJECT_URL"
 publishable_key = "SUPABASE_PUBLISHABLE_KEY"
+
+[fmp]
+api_key = "FMP_API_KEY"
+
+[alpha_vantage]
+api_key = "ALPHA_VANTAGE_API_KEY"
+
+[sec]
+contact_email = "SEC_CONTACT_EMAIL"
 ```
 
 Parolalar veya service_role anahtarı Streamlit Secrets'a eklenmez; yalnızca Supabase Auth

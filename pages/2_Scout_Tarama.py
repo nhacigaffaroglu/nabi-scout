@@ -11,6 +11,7 @@ from services.free_universe_client import FreeUniverseClient
 from services.scan_runner_service import run_scan
 from services.scan_universe_service import build_fixed_universe_rows
 from services.scanner_v8_engine import ScannerV8Engine
+from services.sec_contact_config import resolve_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
 from services.ui import prepare_protected_page
 
@@ -46,7 +47,7 @@ watchlist_repo = WatchlistRepository(client)
 
 sec_email = st.text_input(
     "SEC iletişim e-postası",
-    value="nabi-scout@example.com",
+    value=resolve_sec_contact_email(allow_empty=True),
     help=(
         "SEC veri taleplerinde User-Agent içinde kullanılır. "
         "Gerçek ve ulaşılabilir bir e-posta adresi kullanılması önerilir."

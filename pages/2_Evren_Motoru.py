@@ -3,6 +3,7 @@ import streamlit as st
 
 from repositories.universe_repository import UniverseRepository
 from services.free_universe_client import FreeUniverseClient
+from services.sec_contact_config import resolve_sec_contact_email
 from services.ui import prepare_protected_page
 from services.universe_engine import UniverseEngine
 
@@ -52,7 +53,7 @@ with st.form("universe_form"):
 
     contact_email = st.text_input(
         "SEC iletişim e-postası",
-        value="nabi-scout@example.com",
+        value=resolve_sec_contact_email(allow_empty=True),
     )
 
     submitted = st.form_submit_button(

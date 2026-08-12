@@ -19,6 +19,7 @@ from services.participation_assessment_persistence_service import (
     fetch_participation_assessment_history,
     save_participation_assessment_snapshot,
 )
+from services.sec_contact_config import get_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
 from components.company_report_ui import render_company_report_participation_section
 from services.research_workflow_service import (
@@ -367,7 +368,7 @@ participation_repo = ParticipationAssessmentRepository(client)
 participation_symbol = str(candidate.get("symbol") or "").strip().upper()
 participation_view = build_company_report_participation(
     candidate,
-    sec_client=SECFinancialClient(contact_email="nabi-scout@example.com"),
+    sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
 )
 participation_history_result = fetch_participation_assessment_history(
     participation_repo,

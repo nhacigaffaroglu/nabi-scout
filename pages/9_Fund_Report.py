@@ -17,6 +17,7 @@ from services.fund_report_service import (
 )
 from services.manual_analysis_service import analyze_security, refresh_tracked_fund_metadata
 from services.scanner_v8_engine import ScannerV8Engine
+from services.sec_contact_config import get_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
 from services.ui import prepare_protected_page
@@ -49,10 +50,11 @@ def _refresh_live_fund_analysis(symbol: str):
         st.error("Sembol gerekli.")
         return None
     try:
-        sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
+        sec_email = get_sec_contact_email()
+        sec_lookup = load_sec_company_lookup(sec_email)
         fmp_client = FMPClient.from_streamlit_secrets()
         alpha_vantage_client = AlphaVantageClient.from_streamlit_secrets()
-        sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
+        sec_client = SECFinancialClient(contact_email=sec_email)
         engine = ScannerV8Engine(fmp_client, sec_client)
         with st.spinner(f"{normalized} canlı veri yenileniyor..."):
             return analyze_security(

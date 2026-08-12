@@ -36,6 +36,7 @@ from services.manual_analysis_service import (
     untrack_fund,
 )
 from services.free_universe_client import FreeUniverseClient
+from services.sec_contact_config import get_sec_contact_email
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
@@ -82,10 +83,11 @@ def _execute_manual_analysis(symbol: str):
         st.error("Sembol girin.")
         return None
     try:
-        sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
+        sec_email = get_sec_contact_email()
+        sec_lookup = load_sec_company_lookup(sec_email)
         fmp_client = FMPClient.from_streamlit_secrets()
         alpha_vantage_client = AlphaVantageClient.from_streamlit_secrets()
-        sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
+        sec_client = SECFinancialClient(contact_email=sec_email)
         engine = ScannerV8Engine(fmp_client, sec_client)
         with st.spinner(f"{normalized} analiz ediliyor..."):
             return analyze_security(
