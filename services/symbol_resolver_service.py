@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, FrozenSet, Mapping, Optional
 
 from config.scan_universe import PARTICIPATION_DEFAULTS, SCAN_UNIVERSES
+from services.alpha_vantage_adapter import alpha_profile_indicates_etf
+from services.alpha_vantage_client import AlphaVantageClient, AlphaVantageError
 from services.fmp_client import FMPClient, FMPError
 from services.security_classifier import classify_security
 
@@ -16,6 +18,7 @@ RESOLUTION_SOURCE_CANDIDATE = "candidate_db"
 RESOLUTION_SOURCE_CONFIG = "config_etf"
 RESOLUTION_SOURCE_NASDAQ = "nasdaq"
 RESOLUTION_SOURCE_FMP = "fmp_profile"
+RESOLUTION_SOURCE_ALPHA_VANTAGE = "alpha_vantage_etf_profile"
 RESOLUTION_SOURCE_SEC = "sec"
 RESOLUTION_SOURCE_UNKNOWN = "unknown"
 
@@ -67,6 +70,7 @@ def resolve_symbol(
     *,
     candidate_repo=None,
     fmp_client: Optional[FMPClient] = None,
+    alpha_vantage_client: Optional[AlphaVantageClient] = None,
     sec_lookup: Optional[Mapping[str, Dict[str, Any]]] = None,
     nasdaq_lookup: Optional[Mapping[str, Dict[str, Any]]] = None,
     configured_etf_symbols: Optional[FrozenSet[str]] = None,
@@ -158,6 +162,16 @@ def resolve_symbol(
             resolution_confidence=RESOLUTION_HIGH,
         )
 
+    if not profile:
+        alpha_resolution = _try_alpha_etf_resolution(
+            normalized,
+            alpha_vantage_client=alpha_vantage_client,
+            nasdaq_row=nasdaq_row,
+            sec_lookup=sec_lookup,
+        )
+        if alpha_resolution is not None:
+            return alpha_resolution
+
     if nasdaq_row and nasdaq_row.get("is_etf") is False:
         sec_row = sec_lookup.get(normalized) or {}
         return _build_equity_resolution(
@@ -208,6 +222,37 @@ def _profile_is_etf(profile: Dict[str, Any]) -> bool:
         return True
     asset_type = str(profile.get("assetType") or profile.get("type") or "").upper()
     return asset_type in {"ETF", "FUND"}
+
+
+def _try_alpha_etf_resolution(
+    symbol: str,
+    *,
+    alpha_vantage_client: Optional[AlphaVantageClient],
+    nasdaq_row: Dict[str, Any],
+    sec_lookup: Mapping[str, Dict[str, Any]],
+) -> Optional[ResolvedSecurity]:
+    if alpha_vantage_client is None:
+        return None
+    try:
+        payload = alpha_vantage_client.etf_profile(symbol)
+    except AlphaVantageError:
+        return None
+    if not alpha_profile_indicates_etf(payload):
+        return None
+    sec_row = sec_lookup.get(symbol) or {}
+    company_name = str(
+        payload.get("description")
+        or nasdaq_row.get("company_name")
+        or symbol
+    ).strip()
+    return _build_etf_resolution(
+        symbol,
+        company_name=company_name or symbol,
+        exchange=nasdaq_row.get("exchange"),
+        cik=sec_row.get("cik"),
+        resolution_source=RESOLUTION_SOURCE_ALPHA_VANTAGE,
+        resolution_confidence=RESOLUTION_HIGH,
+    )
 
 
 def _build_equity_resolution(

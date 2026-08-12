@@ -254,6 +254,51 @@ class ResolveSymbolTests(unittest.TestCase):
         self.assertTrue(resolved.is_equity_eligible)
         self.assertEqual(resolved.resolution_source, RESOLUTION_SOURCE_NASDAQ)
 
+    def test_alpha_etf_profile_success_affirms_etf(self) -> None:
+        alpha = MagicMock()
+        alpha.etf_profile.return_value = {
+            "net_assets": "1000000",
+            "holdings": [{"symbol": "AAPL", "description": "Apple", "weight": "0.1"}],
+        }
+        resolved = resolve_symbol(
+            "IWM",
+            candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
+            fmp_client=MagicMock(profile=MagicMock(return_value={})),
+            alpha_vantage_client=alpha,
+        )
+        self.assertTrue(resolved.is_etf)
+        self.assertFalse(resolved.is_equity_eligible)
+        self.assertEqual(resolved.resolution_source, "alpha_vantage_etf_profile")
+
+    def test_alpha_premium_failure_preserves_qqq_unresolved(self) -> None:
+        from services.alpha_vantage_client import AlphaVantageError, STATUS_PREMIUM_REQUIRED
+
+        alpha = MagicMock()
+        alpha.etf_profile.side_effect = AlphaVantageError(
+            "premium",
+            error_class="premium_required",
+            status=STATUS_PREMIUM_REQUIRED,
+        )
+        fmp = MagicMock()
+        fmp.profile.side_effect = FMPError("rate limited", error_class="rate_limit")
+        resolved = resolve_symbol(
+            "QQQ",
+            candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
+            fmp_client=fmp,
+            alpha_vantage_client=alpha,
+            sec_lookup={
+                "QQQ": {
+                    "symbol": "QQQ",
+                    "company_name": "INVESCO QQQ TRUST, SERIES 1",
+                    "exchange": "NASDAQ",
+                    "cik": 1067839,
+                }
+            },
+        )
+        self.assertEqual(resolved.security_type, SECURITY_TYPE_UNRESOLVED)
+        self.assertFalse(resolved.is_equity_eligible)
+        self.assertFalse(resolved.is_etf)
+
 
 if __name__ == "__main__":
     unittest.main()

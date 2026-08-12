@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from services.fund_analysis_contract import FundAnalysisResult
 from services.fund_analysis_service import analyze_fund
+from services.alpha_vantage_client import AlphaVantageClient
 from services.fmp_client import FMPClient
 from services.scan_runner_service import ScanRunResult, run_scan
 from services.scan_universe_service import MANUAL_UNIVERSE_NAME
@@ -61,6 +62,7 @@ def analyze_security(
     scan_repo,
     fmp_client: FMPClient,
     sec_client,
+    alpha_vantage_client: Optional[AlphaVantageClient] = None,
     sec_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     nasdaq_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     engine=None,
@@ -73,6 +75,7 @@ def analyze_security(
         normalized,
         candidate_repo=candidate_repo,
         fmp_client=fmp_client,
+        alpha_vantage_client=alpha_vantage_client,
         sec_lookup=sec_lookup,
         nasdaq_lookup=nasdaq_lookup,
     )
@@ -82,7 +85,7 @@ def analyze_security(
     if resolved.is_etf:
         return _analyze_fund(
             resolved,
-            fmp_client=fmp_client,
+            alpha_vantage_client=alpha_vantage_client,
             is_persisted=is_persisted,
             persisted_candidate_id=(existing or {}).get("id"),
         )
@@ -183,11 +186,13 @@ def _analyze_equity(
 def _analyze_fund(
     resolved: ResolvedSecurity,
     *,
-    fmp_client: FMPClient,
+    alpha_vantage_client: AlphaVantageClient,
     is_persisted: bool,
     persisted_candidate_id: Optional[str],
 ) -> ManualAnalysisResult:
-    fund_result = analyze_fund(resolved, fmp_client=fmp_client)
+    if alpha_vantage_client is None:
+        raise ValueError("Alpha Vantage client gerekli.")
+    fund_result = analyze_fund(resolved, alpha_vantage_client=alpha_vantage_client)
     return ManualAnalysisResult(
         symbol=resolved.symbol,
         analysis_kind="fund",

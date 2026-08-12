@@ -1,9 +1,14 @@
 import unittest
 from unittest.mock import MagicMock
 
-from services.fmp_client import FMPError
+from services.alpha_vantage_client import (
+    STATUS_PREMIUM_REQUIRED,
+    STATUS_RATE_LIMIT,
+    AlphaVantageError,
+)
 from services.fund_analysis_contract import (
     ANALYSIS_KIND_FUND,
+    DATA_PROVIDER_ALPHA_VANTAGE,
     DIMENSION_CONCENTRATION,
     DIMENSION_COST,
     DIMENSION_LIQUIDITY,
@@ -43,63 +48,93 @@ def resolved_etf(symbol: str, **overrides):
     return ResolvedSecurity(**base)
 
 
-def full_etf_info(symbol: str = "SPUS"):
-    return {
-        "symbol": symbol,
-        "name": "SP Funds S&P 500 Sharia Industry Exclusions ETF",
-        "etfCompany": "SP Funds",
-        "exchange": "NYSE Arca",
-        "assetClass": "Equity",
-        "domicile": "US",
-        "indexName": "S&P 500 Sharia Industry Exclusions",
-        "inceptionDate": "2019-12-16",
-        "expenseRatio": 0.49,
-        "aum": 2_860_058_355,
-        "holdingsCount": 200,
+def sample_alpha_etf_profile(symbol: str = "SPUS", **overrides):
+    payload = {
+        "net_assets": "2860058355",
+        "net_expense_ratio": "0.0049",
+        "portfolio_turnover": "0.25",
+        "dividend_yield": "0.012",
+        "inception_date": "2019-12-16",
+        "leveraged": "NO",
+        "sectors": [],
+        "holdings": sample_alpha_holdings(12),
     }
+    payload.update(overrides)
+    return payload
 
 
-def sample_holdings(count: int = 12):
+def sample_alpha_holdings(count: int = 12):
     rows = []
     for index in range(count):
+        weight = "0.1000" if index < 5 else "0.0200"
         rows.append({
-            "asset": f"T{index}",
-            "name": f"Ticker {index}",
-            "weightPercentage": 10.0 if index < 5 else 2.0,
+            "symbol": f"T{index}",
+            "description": f"Ticker {index}",
+            "weight": weight,
         })
     return rows
 
 
-def sample_price_history(count: int = 70, *, start_price: float = 100.0, end_price: float = 110.0):
+def sample_alpha_time_series(
+    count: int = 280,
+    *,
+    start_price: float = 100.0,
+    end_price: float = 110.0,
+    anchor_end_to_today: bool = False,
+):
     from datetime import date, timedelta
 
-    rows = []
-    current = date(2024, 1, 2)
+    series = {}
+    end = date.today() if anchor_end_to_today else date(2024, 1, 2) + timedelta(days=count - 1)
+    current = end - timedelta(days=count - 1)
     for index in range(count):
         if count == 1:
             price = end_price
         else:
             price = start_price + (end_price - start_price) * index / (count - 1)
-        rows.append({"date": current.isoformat(), "price": price})
+        series[current.isoformat()] = {
+            "4. close": f"{price:.4f}",
+            "5. volume": "100000",
+        }
         current += timedelta(days=1)
-    return rows
+    output_size = "Compact" if count <= 100 else "Full"
+    return {
+        "Meta Data": {
+            "2. Symbol": "SPUS",
+            "4. Output Size": output_size,
+        },
+        "Time Series (Daily)": series,
+    }
+
+
+def make_alpha_client(
+    *,
+    profile=None,
+    history=None,
+    profile_error=None,
+    history_error=None,
+):
+    client = MagicMock()
+    if profile_error is not None:
+        client.etf_profile.side_effect = profile_error
+    else:
+        client.etf_profile.return_value = profile if profile is not None else sample_alpha_etf_profile()
+    if history_error is not None:
+        client.time_series_daily.side_effect = history_error
+    else:
+        client.time_series_daily.return_value = history if history is not None else sample_alpha_time_series()
+    return client
 
 
 class FundAnalysisServiceTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.fmp = MagicMock()
-        self.fmp.historical_price_eod_light.return_value = []
-
     def test_spus_full_fund_result(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = sample_holdings()
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.33, "volume": 500_000}
+        alpha = make_alpha_client(profile=sample_alpha_etf_profile("SPUS"))
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.analysis_kind, ANALYSIS_KIND_FUND)
         self.assertEqual(result.symbol, "SPUS")
+        self.assertEqual(result.data_provider, DATA_PROVIDER_ALPHA_VANTAGE)
         self.assertEqual(result.participation_source, PARTICIPATION_SOURCE_CONFIGURED)
         self.assertEqual(result.participation_status, "Uygun")
         self.assertEqual(result.participation_score, 100)
@@ -109,57 +144,49 @@ class FundAnalysisServiceTests(unittest.TestCase):
         self.assertTrue(result.top_holdings)
         self.assertIn(LABEL_CONFIGURED_PARTICIPATION, result.labels)
         self.assertNotIn("nabi_score", result.to_dict())
+        self.assertIsNone(result.benchmark)
+        self.assertIsNone(result.sector_weights)
 
     def test_hlal_configured_participation(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("HLAL")
-        self.fmp.etf_holdings.return_value = sample_holdings(8)
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 69.9}
+        alpha = make_alpha_client(profile=sample_alpha_etf_profile("HLAL"))
 
-        result = analyze_fund(resolved_etf("HLAL"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("HLAL"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.participation_source, PARTICIPATION_SOURCE_CONFIGURED)
         self.assertEqual(result.participation_status, "Uygun")
 
     def test_spsk_sukuk_identity(self) -> None:
-        self.fmp.etf_info.return_value = {
-            **full_etf_info("SPSK"),
-            "name": "SP Funds Dow Jones Global Sukuk ETF",
-        }
-        self.fmp.etf_holdings.return_value = sample_holdings(6)
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 17.8}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile("SPSK", holdings=sample_alpha_holdings(6)),
+        )
 
-        result = analyze_fund(resolved_etf("SPSK"), fmp_client=self.fmp)
+        result = analyze_fund(
+            resolved_etf("SPSK", company_name="SP Funds Dow Jones Global Sukuk ETF"),
+            alpha_vantage_client=alpha,
+        )
 
         self.assertIn("Sukuk", result.fund_name or "")
 
     def test_qqq_non_configured_participation(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("QQQ")
-        self.fmp.etf_holdings.return_value = sample_holdings()
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 380.0}
+        alpha = make_alpha_client(profile=sample_alpha_etf_profile("QQQ"))
 
-        result = analyze_fund(resolved_etf("QQQ"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("QQQ"), alpha_vantage_client=alpha)
 
         self.assertIsNone(result.participation_source)
         self.assertEqual(result.participation_status, "Kontrol Et")
 
-    def test_rate_limited_etf_endpoints_partial_result(self) -> None:
-        self.fmp.etf_info.side_effect = FMPError("limited", error_class="rate_limit")
-        self.fmp.etf_holdings.side_effect = FMPError("limited", error_class="rate_limit")
-        self.fmp.profile.return_value = {
-            "companyName": "SP Funds S&P 500 Sharia Industry Exclusions ETF",
-            "exchange": "NYSE Arca",
-            "mktCap": 2_860_058_355,
-            "price": 56.33,
-        }
-        self.fmp.quote.return_value = {"price": 56.33, "volume": 100_000}
+    def test_rate_limited_profile_partial_result(self) -> None:
+        alpha = make_alpha_client(
+            profile_error=AlphaVantageError("limited", error_class="rate_limit", status=STATUS_RATE_LIMIT),
+            history_error=AlphaVantageError("limited", error_class="rate_limit", status=STATUS_RATE_LIMIT),
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(
+            resolved_etf("SPUS", company_name="SP Funds S&P 500 Sharia Industry Exclusions ETF"),
+            alpha_vantage_client=alpha,
+        )
 
-        self.assertEqual(result.endpoint_status["fmp_etf_info"], "RATE_LIMIT")
-        self.assertEqual(result.endpoint_status["fmp_etf_holdings"], "RATE_LIMIT")
+        self.assertEqual(result.endpoint_status["alpha_etf_profile"], STATUS_RATE_LIMIT)
         self.assertIsNone(result.expense_ratio)
         self.assertIsNone(result.top10_concentration_pct)
         dimensions = {item.dimension for item in result.dimension_scores}
@@ -167,135 +194,133 @@ class FundAnalysisServiceTests(unittest.TestCase):
         self.assertNotIn(DIMENSION_CONCENTRATION, dimensions)
         self.assertTrue(result.warnings)
 
-    def test_plan_restricted_endpoint(self) -> None:
-        self.fmp.etf_info.side_effect = FMPError(
-            "denied",
-            error_class="plan_restricted",
+    def test_premium_required_profile_partial(self) -> None:
+        alpha = make_alpha_client(
+            profile_error=AlphaVantageError(
+                "premium",
+                error_class="premium_required",
+                status=STATUS_PREMIUM_REQUIRED,
+            ),
+            history=sample_alpha_time_series(280),
         )
-        self.fmp.etf_holdings.side_effect = FMPError(
-            "denied",
-            error_class="plan_restricted",
-        )
-        self.fmp.profile.return_value = {"companyName": "SPUS", "price": 1.0}
-        self.fmp.quote.return_value = {"price": 1.0}
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("QQQ"), alpha_vantage_client=alpha)
 
-        self.assertEqual(result.endpoint_status["fmp_etf_info"], "PLAN_RESTRICTED")
-        self.assertTrue(any("plan erişimi" in warning for warning in result.warnings))
+        self.assertEqual(result.endpoint_status["alpha_etf_profile"], STATUS_PREMIUM_REQUIRED)
+        self.assertTrue(any("mevcut plan" in warning for warning in result.warnings))
 
     def test_missing_holdings_no_concentration_score(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = []
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0}
+        alpha = make_alpha_client(profile=sample_alpha_etf_profile("SPUS", holdings=[]))
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIsNone(result.top10_concentration_pct)
         dimensions = {item.dimension for item in result.dimension_scores}
         self.assertNotIn(DIMENSION_CONCENTRATION, dimensions)
 
     def test_empty_holdings_no_fake_concentration(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = []
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0}
+        alpha = make_alpha_client(profile=sample_alpha_etf_profile("SPUS", holdings=[]))
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIsNone(result.top10_concentration_pct)
         self.assertEqual(result.top_holdings, [])
 
     def test_malformed_holdings_ignored(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = [
-            {"asset": "AAPL", "weightPercentage": "bad"},
-            {"asset": "MSFT", "weightPercentage": 0},
-            {"name": "No weight"},
-        ]
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile(
+                "SPUS",
+                holdings=[
+                    {"symbol": "AAPL", "weight": "bad"},
+                    {"symbol": "MSFT", "weight": "0"},
+                    {"description": "No weight"},
+                ],
+            )
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.top_holdings, [])
         self.assertIsNone(result.top10_concentration_pct)
 
     def test_zero_expense_ratio_no_cost_score(self) -> None:
-        self.fmp.etf_info.return_value = {**full_etf_info("SPUS"), "expenseRatio": 0}
-        self.fmp.etf_holdings.return_value = sample_holdings(5)
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile("SPUS", net_expense_ratio="0"),
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIsNone(result.expense_ratio)
         dimensions = {item.dimension for item in result.dimension_scores}
         self.assertNotIn(DIMENSION_COST, dimensions)
 
     def test_invalid_expense_string_unsupported(self) -> None:
-        self.fmp.etf_info.return_value = {**full_etf_info("SPUS"), "expenseRatio": "n/a"}
-        self.fmp.etf_holdings.return_value = sample_holdings(5)
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile("SPUS", net_expense_ratio="n/a"),
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIsNone(result.expense_ratio)
         self.assertIn("expense_ratio", result.unsupported_fields)
 
     def test_high_expense_label(self) -> None:
-        self.fmp.etf_info.return_value = {
-            **full_etf_info("SPUS"),
-            "expenseRatio": EXPENSE_HIGH_THRESHOLD_PCT + 0.1,
-        }
-        self.fmp.etf_holdings.return_value = sample_holdings(5)
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0, "volume": 1_000_000}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile(
+                "SPUS",
+                net_expense_ratio=f"{(EXPENSE_HIGH_THRESHOLD_PCT + 0.1) / 100:.4f}",
+            ),
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIn(LABEL_YUKSEK_MALIYET, result.labels)
 
     def test_concentration_risk_label(self) -> None:
-        rows = [
-            {"asset": "A", "weightPercentage": 30},
-            {"asset": "B", "weightPercentage": 25},
-        ]
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = rows
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 56.0, "volume": 1_000_000}
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile(
+                "SPUS",
+                holdings=[
+                    {"symbol": "A", "description": "A", "weight": "0.30"},
+                    {"symbol": "B", "description": "B", "weight": "0.25"},
+                ],
+            )
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertGreater(result.top10_concentration_pct or 0, TOP10_CONCENTRATION_RISK_THRESHOLD_PCT)
         self.assertIn(LABEL_YOGUNLASMA_RISKI, result.labels)
 
     def test_partial_metadata_veri_yetersiz(self) -> None:
-        self.fmp.etf_info.return_value = {}
-        self.fmp.etf_holdings.return_value = []
-        self.fmp.profile.return_value = {"companyName": "SPUS"}
-        self.fmp.quote.return_value = {}
+        alpha = make_alpha_client(
+            profile={},
+            history={"Meta Data": {}, "Time Series (Daily)": {}},
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIn(LABEL_VERI_YETERSIZ, result.labels)
         self.assertNotIn(LABEL_INCELEME_UYGUN, result.labels)
 
     def test_malformed_provider_payloads_fail_soft(self) -> None:
-        self.fmp.etf_info.return_value = None
-        self.fmp.etf_holdings.return_value = {"bad": True}
-        self.fmp.profile.return_value = "bad"
-        self.fmp.quote.return_value = 123
+        alpha = make_alpha_client(
+            profile_error=AlphaVantageError(
+                "bad",
+                error_class="malformed",
+                status="MALFORMED",
+            ),
+            history_error=AlphaVantageError(
+                "bad",
+                error_class="malformed",
+                status="MALFORMED",
+            ),
+        )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.analysis_kind, ANALYSIS_KIND_FUND)
-        self.assertEqual(result.endpoint_status["fmp_etf_info"], "EMPTY")
-        self.assertEqual(result.endpoint_status["fmp_etf_holdings"], "MALFORMED")
-        self.assertEqual(result.endpoint_status["fmp_profile"], "MALFORMED")
+        self.assertEqual(result.endpoint_status["alpha_etf_profile"], "MALFORMED")
 
 
 class FundDimensionThresholdTests(unittest.TestCase):
@@ -338,6 +363,7 @@ class FundAnalysisRoutingTests(unittest.TestCase):
             candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
             scan_repo=MagicMock(),
             fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
             sec_client=MagicMock(),
         )
 
@@ -355,7 +381,6 @@ class FundAnalysisRoutingTests(unittest.TestCase):
         mock_analyze_fund,
     ) -> None:
         from services.manual_analysis_service import analyze_security
-        from services.symbol_resolver_service import ResolvedSecurity
 
         mock_resolve.return_value = ResolvedSecurity(
             symbol="NVDA",
@@ -379,6 +404,7 @@ class FundAnalysisRoutingTests(unittest.TestCase):
             candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
             scan_repo=MagicMock(),
             fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
             sec_client=MagicMock(),
         )
 
@@ -416,6 +442,7 @@ class FundAnalysisRoutingTests(unittest.TestCase):
             candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
             scan_repo=MagicMock(),
             fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
             sec_client=MagicMock(),
         )
 
@@ -451,29 +478,22 @@ class FundAnalysisRoutingTests(unittest.TestCase):
             candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=legacy_candidate)),
             scan_repo=MagicMock(),
             fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
             sec_client=MagicMock(),
         )
 
         self.assertEqual(result.analysis_kind, "fund")
         self.assertIsNone(result.candidate)
-        self.assertNotEqual(getattr(result.fund_result, "nabi_score", None), 33.3)
         payload = result.fund_result.to_dict()
         self.assertNotIn("nabi_score", payload)
         self.assertNotIn("decision_label", payload)
 
 
 class FundAnalysisPerformanceIntegrationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.fmp = MagicMock()
-        self.fmp.etf_info.return_value = full_etf_info("SPUS")
-        self.fmp.etf_holdings.return_value = sample_holdings()
-        self.fmp.profile.return_value = {}
-        self.fmp.quote.return_value = {"price": 110.0, "volume": 500_000}
-
     def test_available_history_attaches_metrics(self) -> None:
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+        alpha = make_alpha_client()
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.price_history_status, "OK")
         self.assertIsNotNone(result.performance_metrics)
@@ -482,87 +502,141 @@ class FundAnalysisPerformanceIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(result.performance_metrics.return_1m_pct)
 
     def test_rate_limit_history_leaves_metrics_none(self) -> None:
-        self.fmp.historical_price_eod_light.side_effect = FMPError(
-            "limited",
-            error_class="rate_limit",
+        alpha = make_alpha_client(
+            history_error=AlphaVantageError("limited", error_class="rate_limit", status=STATUS_RATE_LIMIT),
         )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
-        self.assertEqual(result.price_history_status, "RATE_LIMIT")
+        self.assertEqual(result.price_history_status, STATUS_RATE_LIMIT)
         self.assertIsNone(result.performance_metrics)
         self.assertIsNone(result.risk_metrics)
         self.assertTrue(result.expense_ratio is not None)
         self.assertTrue(any("Fiyat geçmişi" in warning for warning in result.performance_warnings))
 
-    def test_plan_restricted_history_leaves_metrics_none(self) -> None:
-        self.fmp.historical_price_eod_light.side_effect = FMPError(
-            "denied",
-            error_class="plan_restricted",
+    def test_premium_history_leaves_metrics_none(self) -> None:
+        alpha = make_alpha_client(
+            history_error=AlphaVantageError(
+                "premium",
+                error_class="premium_required",
+                status=STATUS_PREMIUM_REQUIRED,
+            ),
         )
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
-        self.assertEqual(result.price_history_status, "PLAN_RESTRICTED")
+        self.assertEqual(result.price_history_status, STATUS_PREMIUM_REQUIRED)
         self.assertIsNone(result.performance_metrics)
 
     def test_malformed_history_safe(self) -> None:
-        self.fmp.historical_price_eod_light.return_value = {"bad": True}
+        alpha = make_alpha_client(history={"Meta Data": {}, "Time Series (Daily)": {}})
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
-        self.assertEqual(result.price_history_status, "MALFORMED")
+        self.assertEqual(result.price_history_status, "EMPTY")
         self.assertIsNone(result.performance_metrics)
 
-    def test_5b1_expense_holdings_unaffected(self) -> None:
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+    def test_profile_fields_unaffected_by_history(self) -> None:
+        alpha = make_alpha_client()
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.expense_ratio, 0.49)
         self.assertTrue(result.top_holdings)
 
-    def test_fmp_call_budget_bounded(self) -> None:
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+    def test_alpha_call_budget_bounded(self) -> None:
+        alpha = make_alpha_client()
 
-        analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
-        self.assertEqual(self.fmp.etf_info.call_count, 1)
-        self.assertEqual(self.fmp.etf_holdings.call_count, 1)
-        self.assertEqual(self.fmp.profile.call_count, 1)
-        self.assertEqual(self.fmp.quote.call_count, 1)
-        self.assertEqual(self.fmp.historical_price_eod_light.call_count, 1)
+        self.assertEqual(alpha.etf_profile.call_count, 1)
+        self.assertEqual(alpha.time_series_daily.call_count, 1)
+        alpha.time_series_daily.assert_called_once_with("SPUS", outputsize="compact")
+
+    def test_compact_history_suppresses_degraded_1y(self) -> None:
+        alpha = make_alpha_client(
+            history=sample_alpha_time_series(100, anchor_end_to_today=True),
+        )
+
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
+
+        self.assertEqual(result.price_history_status, "OK")
+        performance = result.performance_metrics
+        self.assertIsNotNone(performance)
+        assert performance is not None
+        self.assertIsNotNone(performance.return_1m_pct)
+        self.assertIsNone(performance.return_1y_pct)
+        self.assertFalse(performance.history_is_full_year)
+        self.assertFalse(performance.return_1y_full_confidence)
+        self.assertEqual(performance.observation_count, 100)
+        self.assertIsNotNone(result.risk_metrics)
+        self.assertIsNotNone(result.risk_metrics.annualized_volatility_pct)
+        self.assertIsNotNone(result.risk_metrics.max_drawdown_pct)
+
+    def test_full_year_history_keeps_1y(self) -> None:
+        alpha = make_alpha_client(history=sample_alpha_time_series(220, anchor_end_to_today=True))
+
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
+
+        performance = result.performance_metrics
+        self.assertIsNotNone(performance)
+        assert performance is not None
+        self.assertIsNotNone(performance.return_1y_pct)
+        self.assertTrue(performance.history_is_full_year)
+        self.assertTrue(performance.return_1y_full_confidence)
+
+    def test_no_fmp_fund_calls(self) -> None:
+        alpha = make_alpha_client()
+        fmp = MagicMock()
+
+        analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
+
+        fmp.etf_info.assert_not_called()
+        fmp.etf_holdings.assert_not_called()
+        fmp.historical_price_eod_light.assert_not_called()
+        fmp.profile.assert_not_called()
+        fmp.quote.assert_not_called()
 
     def test_spus_synthetic_full_path(self) -> None:
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(80, end_price=120.0)
+        alpha = make_alpha_client(history=sample_alpha_time_series(280, end_price=120.0))
 
-        result = analyze_fund(resolved_etf("SPUS"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("SPUS"), alpha_vantage_client=alpha)
 
         self.assertIsNotNone(result.performance_metrics)
         self.assertIsNotNone(result.performance_metrics.return_1y_pct)
 
     def test_spsk_fixed_income_label_guard(self) -> None:
-        self.fmp.etf_info.return_value = {
-            **full_etf_info("SPSK"),
-            "assetClass": "Fixed Income Sukuk",
-            "name": "SP Funds Dow Jones Global Sukuk ETF",
-        }
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(80)
+        alpha = make_alpha_client(
+            profile=sample_alpha_etf_profile(
+                "SPSK",
+                asset_class="Fixed Income Sukuk",
+            ),
+        )
 
-        result = analyze_fund(resolved_etf("SPSK"), fmp_client=self.fmp)
+        result = analyze_fund(
+            resolved_etf("SPSK", company_name="SP Funds Dow Jones Global Sukuk ETF"),
+            alpha_vantage_client=alpha,
+        )
 
         self.assertIsNotNone(result.risk_metrics)
         self.assertIsNotNone(result.risk_metrics.annualized_volatility_pct)
         self.assertIsNone(result.risk_metrics.volatility_label)
 
     def test_qqq_fund_path_with_history(self) -> None:
-        self.fmp.etf_info.return_value = full_etf_info("QQQ")
-        self.fmp.historical_price_eod_light.return_value = sample_price_history(70)
+        alpha = make_alpha_client(
+            profile_error=AlphaVantageError(
+                "premium",
+                error_class="premium_required",
+                status=STATUS_PREMIUM_REQUIRED,
+            ),
+            history=sample_alpha_time_series(280),
+        )
 
-        result = analyze_fund(resolved_etf("QQQ"), fmp_client=self.fmp)
+        result = analyze_fund(resolved_etf("QQQ"), alpha_vantage_client=alpha)
 
         self.assertEqual(result.symbol, "QQQ")
         self.assertIsNone(result.participation_source)
+        self.assertIsNotNone(result.performance_metrics)
 
 
 if __name__ == "__main__":

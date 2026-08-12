@@ -12,6 +12,8 @@ CONFIDENCE_LOW = "LOW"
 
 PARTICIPATION_SOURCE_CONFIGURED = "configured"
 
+DATA_PROVIDER_ALPHA_VANTAGE = "Alpha Vantage"
+
 DIMENSION_COST = "Maliyet"
 DIMENSION_LIQUIDITY = "Likidite"
 DIMENSION_CONCENTRATION = "Yoğunlaşma"
@@ -37,8 +39,16 @@ BENCHMARK_RELATIVE_DISCLAIMER = "Göreli benchmark analizi henüz yok."
 PERFORMANCE_UNAVAILABLE_MESSAGE = (
     "Fiyat geçmişi mevcut olmadığı için performans/risk metrikleri hesaplanamadı."
 )
+RETURN_1Y_INSUFFICIENT_MESSAGE = "1 yıllık getiri için yeterli fiyat geçmişi yok."
 
 STALE_OBSERVATION_WARNING = "Son fiyat verisi güncel olmayabilir."
+
+
+def history_coverage_caption(observation_count: int) -> str:
+    return (
+        "Performans metrikleri mevcut fiyat geçmişine göre hesaplanmıştır "
+        f"({observation_count} gözlem)."
+    )
 
 
 @dataclass(frozen=True)
@@ -85,6 +95,9 @@ class FundPerformanceMetrics:
     observation_count: int = 0
     is_stale: bool = False
     return_1y_full_confidence: Optional[bool] = None
+    history_start_date: Optional[str] = None
+    history_end_date: Optional[str] = None
+    history_is_full_year: bool = False
     warnings: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -165,6 +178,7 @@ class FundAnalysisResult:
     participation_source: Optional[str] = None
     data_completeness_pct: float = 0.0
     analysis_confidence: str = CONFIDENCE_LOW
+    data_provider: Optional[str] = None
     endpoint_status: Dict[str, str] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     unsupported_fields: List[str] = field(default_factory=list)

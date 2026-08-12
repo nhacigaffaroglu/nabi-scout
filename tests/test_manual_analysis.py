@@ -84,6 +84,7 @@ class ManualAnalysisServiceTests(unittest.TestCase):
         }
         self.scan_repo = MagicMock()
         self.fmp_client = MagicMock()
+        self.alpha_client = MagicMock()
         self.sec_client = MagicMock()
         self.engine = MagicMock()
 
@@ -147,6 +148,7 @@ class ManualAnalysisServiceTests(unittest.TestCase):
                 candidate_repo=self.candidate_repo,
                 scan_repo=self.scan_repo,
                 fmp_client=self.fmp_client,
+                alpha_vantage_client=self.alpha_client,
                 sec_client=self.sec_client,
             )
             mock_run_scan.assert_not_called()
@@ -172,6 +174,7 @@ class ManualAnalysisServiceTests(unittest.TestCase):
             candidate_repo=self.candidate_repo,
             scan_repo=self.scan_repo,
             fmp_client=self.fmp_client,
+            alpha_vantage_client=self.alpha_client,
             sec_client=self.sec_client,
         )
         self.assertEqual(result.current_price, 380.5)
@@ -218,13 +221,14 @@ class ManualAnalysisServiceTests(unittest.TestCase):
         mock_resolve.return_value = resolved_etf("HLAL")
         mock_analyze_fund.return_value = FundAnalysisResult(
             symbol="HLAL",
-            warnings=["FMP etf_info: rate limit nedeniyle veri alınamadı."],
+            warnings=["Alpha Vantage etf_profile: rate limit nedeniyle veri alınamadı."],
         )
         result = analyze_security(
             "HLAL",
             candidate_repo=self.candidate_repo,
             scan_repo=self.scan_repo,
             fmp_client=self.fmp_client,
+            alpha_vantage_client=self.alpha_client,
             sec_client=self.sec_client,
         )
         self.assertTrue(result.warnings)
@@ -492,6 +496,7 @@ class ManualSemanticAuditTests(unittest.TestCase):
                 candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
                 scan_repo=MagicMock(),
                 fmp_client=MagicMock(),
+                alpha_vantage_client=MagicMock(),
                 sec_client=MagicMock(),
             )
             mock_run_scan.assert_not_called()
@@ -520,7 +525,8 @@ class RuntimeImportContractTests(unittest.TestCase):
         self.assertIn("bağımsız NABI Şeriat uygunluk doğrulaması değildir", source)
         self.assertIn("PERFORMANCE_SECTION_TITLE", source)
         self.assertIn("PRICE_RETURN_DISCLAIMER", source)
-        self.assertIn("PERFORMANCE_UNAVAILABLE_MESSAGE", source)
+        self.assertIn("RETURN_1Y_INSUFFICIENT_MESSAGE", source)
+        self.assertIn("history_coverage_caption", source)
         self.assertNotIn("Company Report", source.split("analysis_kind == \"fund\"")[1].split("elif")[0])
 
     def test_manual_analysis_imports_in_fresh_process(self) -> None:
@@ -533,6 +539,7 @@ class RuntimeImportContractTests(unittest.TestCase):
                 "-c",
                 "from services.manual_analysis_service import analyze_security; "
                 "from services.fund_analysis_service import analyze_fund; "
+                "from services.alpha_vantage_client import AlphaVantageClient; "
                 "from services.fund_performance_service import normalize_price_points; "
                 "from services.scan_universe_service import MANUAL_UNIVERSE_NAME; "
                 "assert MANUAL_UNIVERSE_NAME == 'MANUAL'; "

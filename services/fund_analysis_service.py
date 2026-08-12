@@ -1,22 +1,40 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from config.scan_universe import PARTICIPATION_DEFAULTS
-from services.fmp_client import FMPClient, FMPError
+from services.alpha_vantage_adapter import (
+    alpha_daily_rows,
+    normalize_alpha_expense_ratio,
+    normalize_alpha_yield_pct,
+    parse_alpha_holdings,
+    parse_alpha_sector_weights,
+)
+from services.alpha_vantage_client import (
+    STATUS_AUTH,
+    STATUS_MALFORMED,
+    STATUS_NETWORK,
+    STATUS_NOT_FOUND,
+    STATUS_OK,
+    STATUS_PREMIUM_REQUIRED,
+    STATUS_RATE_LIMIT,
+    AlphaVantageClient,
+    AlphaVantageError,
+    alpha_error_status,
+)
 from services.fund_analysis_contract import (
     ANALYSIS_KIND_FUND,
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
+    DATA_PROVIDER_ALPHA_VANTAGE,
     DIMENSION_CONCENTRATION,
     DIMENSION_COST,
     DIMENSION_DATA_QUALITY,
     DIMENSION_LIQUIDITY,
     FundAnalysisResult,
     FundDimensionScore,
-    FundHolding,
     FundPerformanceMetrics,
     FundRiskMetrics,
     LABEL_CONFIGURED_PARTICIPATION,
@@ -32,8 +50,6 @@ from services.fund_performance_service import (
     normalize_price_points,
 )
 from services.symbol_resolver_service import ResolvedSecurity, participation_for_symbol
-
-HISTORY_LOOKBACK_DAYS = 400
 
 EXPENSE_HIGH_THRESHOLD_PCT = 0.50
 TOP10_CONCENTRATION_RISK_THRESHOLD_PCT = 50.0
@@ -55,133 +71,57 @@ VOLUME_LIQUIDITY_TIERS = (
     (50_000, 45.0),
 )
 
+HISTORY_SKIP_STATUSES = {STATUS_AUTH}
+
 
 def analyze_fund(
     resolved: ResolvedSecurity,
     *,
-    fmp_client: FMPClient,
+    alpha_vantage_client: AlphaVantageClient,
 ) -> FundAnalysisResult:
     symbol = resolved.symbol
     endpoint_status: Dict[str, str] = {}
     warnings: List[str] = []
     unsupported_fields: List[str] = []
+    performance_warnings: List[str] = []
 
-    etf_info, endpoint_status["fmp_etf_info"], info_warning = _safe_call(
-        fmp_client,
-        "etf_info",
+    profile_payload, endpoint_status["alpha_etf_profile"], profile_warning = _safe_alpha_call(
+        alpha_vantage_client,
+        "etf_profile",
         symbol,
-        warnings,
-    )
-    if info_warning:
-        warnings.append(info_warning)
-
-    holdings_rows, endpoint_status["fmp_etf_holdings"], holdings_warning = _safe_call_list(
-        fmp_client,
-        "etf_holdings",
-        symbol,
-        warnings,
-    )
-    if holdings_warning:
-        warnings.append(holdings_warning)
-
-    profile, endpoint_status["fmp_profile"], profile_warning = _safe_call(
-        fmp_client,
-        "profile",
-        symbol,
-        warnings,
     )
     if profile_warning:
         warnings.append(profile_warning)
 
-    quote, endpoint_status["fmp_quote"], quote_warning = _safe_call(
-        fmp_client,
-        "quote",
-        symbol,
-        warnings,
-    )
-    if quote_warning:
-        warnings.append(quote_warning)
-
     fund_name = _first_text(
-        etf_info.get("name"),
-        etf_info.get("companyName"),
-        profile.get("companyName"),
-        profile.get("name"),
-        quote.get("name"),
+        profile_payload.get("description"),
+        profile_payload.get("name"),
         resolved.company_name,
         symbol,
     )
-    issuer = _first_text(
-        etf_info.get("etfCompany"),
-        etf_info.get("issuer"),
-        profile.get("companyName"),
-    )
-    exchange = _first_text(
-        etf_info.get("exchange"),
-        etf_info.get("exchangeShortName"),
-        profile.get("exchange"),
-        profile.get("exchangeShortName"),
-        resolved.exchange,
-    )
-    asset_class = _first_text(
-        etf_info.get("assetClass"),
-        etf_info.get("category"),
-        profile.get("sector"),
-    )
-    domicile = _first_text(
-        etf_info.get("domicile"),
-        etf_info.get("country"),
-        profile.get("country"),
-    )
-    benchmark = _first_text(
-        etf_info.get("indexName"),
-        etf_info.get("benchmark"),
-        etf_info.get("trackingIndex"),
-    )
-    inception_date = _first_text(
-        etf_info.get("inceptionDate"),
-        profile.get("ipoDate"),
-    )
+    exchange = resolved.exchange
+    asset_class = _first_text(profile_payload.get("asset_class"), profile_payload.get("category"))
+    domicile = None
+    benchmark = None
+    inception_date = _first_text(profile_payload.get("inception_date"))
 
-    expense_ratio = _normalize_expense_ratio(
-        etf_info.get("expenseRatio")
-        if etf_info.get("expenseRatio") is not None
-        else profile.get("expenseRatio")
-    )
-    if expense_ratio is None and (
-        etf_info.get("expenseRatio") is not None or profile.get("expenseRatio") is not None
+    expense_ratio = normalize_alpha_expense_ratio(profile_payload.get("net_expense_ratio"))
+    if (
+        expense_ratio is None
+        and profile_payload.get("net_expense_ratio") not in (None, "")
     ):
         unsupported_fields.append("expense_ratio")
 
-    distribution_yield = _as_positive_float(
-        etf_info.get("distributionYield")
-        or etf_info.get("dividendYield")
-        or profile.get("lastDiv")
-    )
+    distribution_yield = normalize_alpha_yield_pct(profile_payload.get("dividend_yield"))
+    aum = _as_positive_float(profile_payload.get("net_assets"))
 
-    aum = _as_positive_float(
-        etf_info.get("aum")
-        or etf_info.get("totalAssets")
-        or profile.get("mktCap")
-        or profile.get("marketCap")
-        or quote.get("marketCap")
+    parsed_holdings = parse_alpha_holdings(profile_payload.get("holdings"))
+    holdings_count = len(profile_payload.get("holdings") or []) or (
+        len(parsed_holdings) if parsed_holdings else None
     )
-    current_price = _as_positive_float(
-        quote.get("price")
-        or profile.get("price")
-        or etf_info.get("price")
-    )
-    volume = _as_positive_float(quote.get("volume"))
-    avg_volume = _as_positive_float(
-        quote.get("avgVolume")
-        or profile.get("volAvg")
-        or etf_info.get("avgVolume")
-    )
-
-    parsed_holdings = _parse_holdings(holdings_rows)
-    holdings_count = _holdings_count(etf_info, parsed_holdings)
     top_holdings = parsed_holdings[:10]
     top10_concentration_pct = _top10_concentration(top_holdings)
+    sector_weights = parse_alpha_sector_weights(profile_payload.get("sectors"))
 
     participation_status, participation_score = participation_for_symbol(symbol)
     participation_source = (
@@ -189,6 +129,76 @@ def analyze_fund(
         if symbol in PARTICIPATION_DEFAULTS
         else None
     )
+
+    performance_metrics: Optional[FundPerformanceMetrics] = None
+    risk_metrics: Optional[FundRiskMetrics] = None
+    price_history_status: Optional[str] = None
+    current_price: Optional[float] = None
+    volume: Optional[float] = None
+    avg_volume: Optional[float] = None
+
+    profile_status = endpoint_status.get("alpha_etf_profile", "UNAVAILABLE")
+    if _should_fetch_alpha_history(profile_status):
+        history_payload, endpoint_status["alpha_time_series_daily"], history_warning = (
+            _safe_alpha_call(
+                alpha_vantage_client,
+                "time_series_daily",
+                symbol,
+                outputsize="compact",
+            )
+        )
+        if history_warning:
+            performance_warnings.append(history_warning)
+            warnings.append(history_warning)
+
+        history_status = endpoint_status.get("alpha_time_series_daily", "UNAVAILABLE")
+        price_history_status = history_status
+        if history_status == STATUS_OK:
+            history_rows = alpha_daily_rows(history_payload)
+            series = normalize_price_points(
+                symbol,
+                history_rows,
+                source="alpha_vantage_time_series_daily",
+            )
+            if series.points:
+                as_of = date.today()
+                performance = compute_fund_performance_metrics(series, as_of=as_of)
+                risk = compute_fund_risk_metrics(series, asset_class=asset_class)
+                combined_warnings = list(performance.warnings)
+                combined_warnings.extend(performance_warnings)
+                performance_metrics = _build_performance_metrics_with_coverage(
+                    performance,
+                    series=series,
+                    combined_warnings=combined_warnings,
+                )
+                risk_metrics = risk
+                performance_warnings = combined_warnings
+                latest = series.points[-1]
+                current_price = latest.close
+                volume = latest.volume
+            else:
+                performance_warnings.append("Fiyat geçmişi boş veya geçersiz.")
+                price_history_status = "EMPTY"
+        elif history_status == STATUS_RATE_LIMIT:
+            performance_warnings.append(
+                "Fiyat geçmişi sağlayıcı limiti nedeniyle alınamadı."
+            )
+        elif history_status == STATUS_PREMIUM_REQUIRED:
+            performance_warnings.append(
+                "Fiyat geçmişi mevcut plan kapsamında erişilemedi."
+            )
+    else:
+        price_history_status = profile_status
+        if profile_status == STATUS_PREMIUM_REQUIRED:
+            performance_warnings.append(
+                "Alpha Vantage ETF profili mevcut plan kapsamında erişilemedi."
+            )
+        elif profile_status == STATUS_RATE_LIMIT:
+            performance_warnings.append(
+                "Alpha Vantage rate limit nedeniyle ETF profili alınamadı."
+            )
+
+    warnings.extend(performance_warnings)
 
     completeness = _compute_completeness(
         fund_name=fund_name,
@@ -201,7 +211,6 @@ def analyze_fund(
         top_holdings=top_holdings,
     )
     confidence = _analysis_confidence(completeness, endpoint_status)
-
     dimension_scores = _build_dimension_scores(
         completeness=completeness,
         expense_ratio=expense_ratio,
@@ -217,22 +226,11 @@ def analyze_fund(
         participation_source=participation_source,
     )
 
-    performance_metrics, risk_metrics, price_history_status, performance_warnings = (
-        _build_performance_and_risk(
-            symbol=symbol,
-            fmp_client=fmp_client,
-            asset_class=asset_class,
-            endpoint_status=endpoint_status,
-            warnings=warnings,
-        )
-    )
-    warnings.extend(performance_warnings)
-
     return FundAnalysisResult(
         symbol=symbol,
         analysis_kind=ANALYSIS_KIND_FUND,
         fund_name=fund_name,
-        issuer=issuer,
+        issuer=None,
         exchange=exchange,
         asset_class=asset_class,
         domicile=domicile,
@@ -241,6 +239,7 @@ def analyze_fund(
         holdings_count=holdings_count,
         top_holdings=top_holdings,
         top10_concentration_pct=top10_concentration_pct,
+        sector_weights=sector_weights,
         expense_ratio=expense_ratio,
         distribution_yield=distribution_yield,
         aum=aum,
@@ -252,6 +251,7 @@ def analyze_fund(
         participation_source=participation_source,
         data_completeness_pct=completeness,
         analysis_confidence=confidence,
+        data_provider=DATA_PROVIDER_ALPHA_VANTAGE,
         endpoint_status=endpoint_status,
         warnings=warnings,
         unsupported_fields=unsupported_fields,
@@ -264,155 +264,68 @@ def analyze_fund(
     )
 
 
-def _build_performance_and_risk(
+def _should_fetch_alpha_history(profile_status: str) -> bool:
+    if profile_status in HISTORY_SKIP_STATUSES:
+        return False
+    return True
+
+
+def _build_performance_metrics_with_coverage(
+    performance: FundPerformanceMetrics,
     *,
-    symbol: str,
-    fmp_client: FMPClient,
-    asset_class: Optional[str],
-    endpoint_status: Dict[str, str],
-    warnings: List[str],
-) -> Tuple[
-    Optional[FundPerformanceMetrics],
-    Optional[FundRiskMetrics],
-    str,
-    List[str],
-]:
-    performance_warnings: List[str] = []
-    as_of = date.today()
-    to_date = as_of.isoformat()
-    from_date = (as_of - timedelta(days=HISTORY_LOOKBACK_DAYS)).isoformat()
-
-    history_rows, endpoint_status["fmp_historical_price"], history_warning = _safe_call_list(
-        fmp_client,
-        "historical_price_eod_light",
-        symbol,
-        warnings,
-        from_date=from_date,
-        to_date=to_date,
-    )
-    if history_warning:
-        performance_warnings.append(history_warning)
-
-    status = endpoint_status.get("fmp_historical_price", "UNAVAILABLE")
-    if status != "OK":
-        if status == "RATE_LIMIT":
-            performance_warnings.append(
-                "Fiyat geçmişi sağlayıcı limiti nedeniyle alınamadı."
-            )
-        elif status == "PLAN_RESTRICTED":
-            performance_warnings.append(
-                "Fiyat geçmişi mevcut plan kapsamında erişilemedi."
-            )
-        return None, None, status, performance_warnings
-
-    series = normalize_price_points(
-        symbol,
-        history_rows,
-        source="fmp_historical_price_eod_light",
-    )
-    if not series.points:
-        performance_warnings.append("Fiyat geçmişi boş veya geçersiz.")
-        return None, None, "EMPTY", performance_warnings
-
-    performance = compute_fund_performance_metrics(series, as_of=as_of)
-    risk = compute_fund_risk_metrics(series, asset_class=asset_class)
-
-    combined_warnings = list(performance.warnings)
-    combined_warnings.extend(performance_warnings)
-    performance = FundPerformanceMetrics(
+    series,
+    combined_warnings: List[str],
+) -> FundPerformanceMetrics:
+    history_is_full_year = performance.return_1y_full_confidence is True
+    return_1y_pct = performance.return_1y_pct if history_is_full_year else None
+    return FundPerformanceMetrics(
         return_1m_pct=performance.return_1m_pct,
         return_ytd_pct=performance.return_ytd_pct,
-        return_1y_pct=performance.return_1y_pct,
+        return_1y_pct=return_1y_pct,
         observation_count=performance.observation_count,
         is_stale=performance.is_stale,
-        return_1y_full_confidence=performance.return_1y_full_confidence,
+        return_1y_full_confidence=history_is_full_year if return_1y_pct is not None else False,
+        history_start_date=series.points[0].date.isoformat() if series.points else None,
+        history_end_date=series.points[-1].date.isoformat() if series.points else None,
+        history_is_full_year=history_is_full_year,
         warnings=tuple(combined_warnings),
     )
-    performance_warnings = combined_warnings
-
-    has_performance = performance.has_any_return()
-    has_risk = risk.has_any_metric()
-    if not has_performance and not has_risk:
-        return performance if performance.observation_count else None, risk, status, performance_warnings
-
-    return performance, risk, status, performance_warnings
 
 
-def _safe_call(
-    fmp_client: FMPClient,
+def _safe_alpha_call(
+    client: AlphaVantageClient,
     method_name: str,
     symbol: str,
-    warnings: List[str],
+    **kwargs: str,
 ) -> Tuple[Dict[str, Any], str, Optional[str]]:
-    method = getattr(fmp_client, method_name)
+    method = getattr(client, method_name)
     try:
-        payload = method(symbol) or {}
+        payload = method(symbol, **kwargs) if kwargs else method(symbol)
+        if payload is None:
+            payload = {}
         if not isinstance(payload, dict):
-            return {}, "MALFORMED", f"FMP {method_name} beklenmeyen yanıt döndürdü."
-        if not payload:
-            return {}, "EMPTY", None
-        return payload, "OK", None
-    except FMPError as exc:
-        status = _endpoint_status_from_error(exc)
-        warning = _warning_for_error(method_name, exc)
-        if warning:
-            warnings.append(warning)
-        return {}, status, None
+            return {}, STATUS_MALFORMED, _warning_for_alpha(method_name, STATUS_MALFORMED)
+        return payload, STATUS_OK, None
+    except AlphaVantageError as exc:
+        status = alpha_error_status(exc)
+        warning = _warning_for_alpha(method_name, status)
+        return {}, status, warning
 
 
-def _safe_call_list(
-    fmp_client: FMPClient,
-    method_name: str,
-    symbol: str,
-    warnings: List[str],
-    *,
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-) -> Tuple[List[Dict[str, Any]], str, Optional[str]]:
-    method = getattr(fmp_client, method_name)
-    try:
-        if from_date is not None and to_date is not None:
-            payload = method(symbol, from_date, to_date) or []
-        else:
-            payload = method(symbol) or []
-        if not isinstance(payload, list):
-            return [], "MALFORMED", f"FMP {method_name} beklenmeyen yanıt döndürdü."
-        rows = [row for row in payload if isinstance(row, dict)]
-        if not rows:
-            return [], "EMPTY", None
-        return rows, "OK", None
-    except FMPError as exc:
-        status = _endpoint_status_from_error(exc)
-        warning = _warning_for_error(method_name, exc)
-        if warning:
-            warnings.append(warning)
-        return [], status, None
-
-
-def _endpoint_status_from_error(exc: FMPError) -> str:
-    mapping = {
-        "rate_limit": "RATE_LIMIT",
-        "plan_restricted": "PLAN_RESTRICTED",
-        "auth": "AUTH_ERROR",
-        "timeout": "TIMEOUT",
-        "network": "NETWORK_ERROR",
-        "not_found": "NOT_FOUND",
-        "transient_http": "SERVER_ERROR",
-        "http_error": "SERVER_ERROR",
-        "malformed": "MALFORMED",
-        "empty": "EMPTY",
-    }
-    return mapping.get(exc.error_class, "UNAVAILABLE")
-
-
-def _warning_for_error(method_name: str, exc: FMPError) -> Optional[str]:
-    if exc.error_class == "rate_limit":
-        return f"FMP {method_name}: rate limit nedeniyle veri alınamadı."
-    if exc.error_class == "plan_restricted":
-        return f"FMP {method_name}: plan erişimi yok."
-    if exc.error_class in {"not_found", "empty"}:
-        return None
-    return f"FMP {method_name}: {exc}"
+def _warning_for_alpha(method_name: str, status: str) -> Optional[str]:
+    if status == STATUS_RATE_LIMIT:
+        return f"Alpha Vantage {method_name}: rate limit nedeniyle veri alınamadı."
+    if status == STATUS_PREMIUM_REQUIRED:
+        return f"Alpha Vantage {method_name}: mevcut plan kapsamında erişilemedi."
+    if status == STATUS_AUTH:
+        return f"Alpha Vantage {method_name}: kimlik doğrulama hatası."
+    if status == STATUS_NOT_FOUND:
+        return f"Alpha Vantage {method_name}: sembol bulunamadı."
+    if status == STATUS_MALFORMED:
+        return f"Alpha Vantage {method_name}: beklenmeyen yanıt."
+    if status == STATUS_NETWORK:
+        return f"Alpha Vantage {method_name}: ağ hatası."
+    return None
 
 
 def _first_text(*values: Any) -> Optional[str]:
@@ -435,84 +348,7 @@ def _as_positive_float(value: Any) -> Optional[float]:
     return number
 
 
-def _normalize_expense_ratio(value: Any) -> Optional[float]:
-    if value is None or value == "":
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number <= 0:
-        return None
-    if number <= 0.05:
-        return round(number * 100, 4)
-    return round(number, 4)
-
-
-def _parse_holdings(rows: List[Dict[str, Any]]) -> List[FundHolding]:
-    parsed: List[FundHolding] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        weight = _normalize_weight(
-            row.get("weightPercentage")
-            or row.get("weight")
-            or row.get("percentage")
-            or row.get("portfolioWeight")
-        )
-        if weight is None:
-            continue
-        parsed.append(
-            FundHolding(
-                symbol=_first_text(
-                    row.get("asset"),
-                    row.get("symbol"),
-                    row.get("ticker"),
-                ),
-                name=_first_text(row.get("name"), row.get("companyName")),
-                weight_pct=weight,
-            )
-        )
-    parsed.sort(key=lambda item: item.weight_pct or 0.0, reverse=True)
-    return parsed
-
-
-def _normalize_weight(value: Any) -> Optional[float]:
-    if value is None or value == "":
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number <= 0:
-        return None
-    if number <= 1:
-        return round(number * 100, 4)
-    return round(number, 4)
-
-
-def _holdings_count(
-    etf_info: Dict[str, Any],
-    holdings: List[FundHolding],
-) -> Optional[int]:
-    for key in ("holdingsCount", "numberOfHoldings", "holdings"):
-        raw = etf_info.get(key)
-        if raw is None:
-            continue
-        if isinstance(raw, list):
-            return len(raw)
-        try:
-            count = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if count > 0:
-            return count
-    if holdings:
-        return len(holdings)
-    return None
-
-
-def _top10_concentration(holdings: List[FundHolding]) -> Optional[float]:
+def _top10_concentration(holdings) -> Optional[float]:
     if not holdings:
         return None
     weights = [holding.weight_pct for holding in holdings[:10] if holding.weight_pct is not None]
@@ -530,7 +366,7 @@ def _compute_completeness(
     aum: Optional[float],
     current_price: Optional[float],
     holdings_count: Optional[int],
-    top_holdings: List[FundHolding],
+    top_holdings,
 ) -> float:
     checks = {
         "fund_name": bool(fund_name),
@@ -549,14 +385,11 @@ def _analysis_confidence(
     completeness: float,
     endpoint_status: Dict[str, str],
 ) -> str:
-    core_ok = (
-        endpoint_status.get("fmp_etf_info") == "OK"
-        or endpoint_status.get("fmp_profile") == "OK"
-    )
-    holdings_ok = endpoint_status.get("fmp_etf_holdings") == "OK"
-    if completeness >= 75 and core_ok and holdings_ok:
+    profile_ok = endpoint_status.get("alpha_etf_profile") == STATUS_OK
+    history_ok = endpoint_status.get("alpha_time_series_daily") == STATUS_OK
+    if completeness >= 75 and profile_ok and history_ok:
         return CONFIDENCE_HIGH
-    if completeness >= 50 and core_ok:
+    if completeness >= 50 and profile_ok:
         return CONFIDENCE_MEDIUM
     return CONFIDENCE_LOW
 

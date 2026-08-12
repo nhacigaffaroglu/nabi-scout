@@ -6,6 +6,7 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.daily_brief_service import build_daily_brief
+from services.alpha_vantage_client import AlphaVantageClient
 from services.fmp_client import FMPClient, FMPError
 from services.fund_analysis_contract import (
     BENCHMARK_RELATIVE_DISCLAIMER,
@@ -13,7 +14,9 @@ from services.fund_analysis_contract import (
     PERFORMANCE_SECTION_TITLE,
     PERFORMANCE_UNAVAILABLE_MESSAGE,
     PRICE_RETURN_DISCLAIMER,
+    RETURN_1Y_INSUFFICIENT_MESSAGE,
     RISK_SECTION_TITLE,
+    history_coverage_caption,
 )
 from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
@@ -70,6 +73,7 @@ if analyze_clicked:
         try:
             sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
             fmp_client = FMPClient.from_streamlit_secrets()
+            alpha_vantage_client = AlphaVantageClient.from_streamlit_secrets()
             sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
             engine = ScannerV8Engine(fmp_client, sec_client)
             with st.spinner(f"{normalized} analiz ediliyor..."):
@@ -78,6 +82,7 @@ if analyze_clicked:
                     candidate_repo=repo,
                     scan_repo=scan_repo,
                     fmp_client=fmp_client,
+                    alpha_vantage_client=alpha_vantage_client,
                     sec_client=sec_client,
                     sec_lookup=sec_lookup,
                     engine=engine,
@@ -126,7 +131,7 @@ def _render_fund_performance_risk(fund) -> None:
                 "Veri sağlayıcı limiti nedeniyle fiyat geçmişi alınamadı; "
                 "performans/risk metrikleri hesaplanamadı."
             )
-        elif fund.price_history_status == "PLAN_RESTRICTED":
+        elif fund.price_history_status in {"PLAN_RESTRICTED", "PREMIUM_REQUIRED"}:
             message = (
                 "Fiyat geçmişi mevcut plan kapsamında erişilemedi; "
                 "performans/risk metrikleri hesaplanamadı."
@@ -138,10 +143,15 @@ def _render_fund_performance_risk(fund) -> None:
 
     if performance and performance.has_any_return():
         st.markdown(f"**{PERFORMANCE_SECTION_TITLE}**")
-        perf_cols = st.columns(3)
+        perf_cols = st.columns(2)
         perf_cols[0].metric("1A fiyat getirisi", _format_pct(performance.return_1m_pct))
         perf_cols[1].metric("YBB fiyat getirisi", _format_pct(performance.return_ytd_pct))
-        perf_cols[2].metric("1Y fiyat getirisi", _format_pct(performance.return_1y_pct))
+        if performance.return_1y_pct is not None:
+            st.metric("1Y fiyat getirisi", _format_pct(performance.return_1y_pct))
+        elif not performance.history_is_full_year:
+            st.caption(RETURN_1Y_INSUFFICIENT_MESSAGE)
+        if not performance.history_is_full_year and performance.observation_count > 0:
+            st.caption(history_coverage_caption(performance.observation_count))
         st.caption(PRICE_RETURN_DISCLAIMER)
         for warning in performance.warnings:
             st.warning(warning)
@@ -239,6 +249,18 @@ if manual_result is not None:
     elif manual_result.analysis_kind == "fund" and manual_result.fund_result is not None:
         fund = manual_result.fund_result
         st.caption("ETF / fon analizi — equity NABI skoru uygulanmaz.")
+        if fund.data_provider:
+            st.caption(f"Veri kaynağı: {fund.data_provider}")
+        premium_warning = next(
+            (
+                warning
+                for warning in fund.warnings
+                if "mevcut plan kapsamında" in warning.lower()
+            ),
+            None,
+        )
+        if premium_warning:
+            st.info(premium_warning)
 
         metric_cols = st.columns(5)
         metric_cols[0].metric(
