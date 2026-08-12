@@ -38,3 +38,10 @@ def save_tracked_fund(
         raise ValueError("Yalnızca fon analizi sonuçları takibe alınabilir.")
     payload = build_tracked_fund_payload(fund_result, resolved)
     return tracked_fund_repo.upsert_by_symbol(payload)
+
+
+def untrack_fund(tracked_fund_repo, *, symbol: str) -> bool:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return False
+    return tracked_fund_repo.delete_by_symbol(normalized)

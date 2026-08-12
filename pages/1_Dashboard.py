@@ -24,6 +24,7 @@ from services.manual_analysis_service import (
     analyze_security,
     save_manual_candidate,
     save_tracked_fund,
+    untrack_fund,
 )
 from services.free_universe_client import FreeUniverseClient
 from services.scanner_v8_engine import ScannerV8Engine
@@ -68,42 +69,48 @@ analyze_col, _ = st.columns([1, 3])
 with analyze_col:
     analyze_clicked = st.button("Analiz et", type="primary", key="dashboard_analyze_button")
 
-if analyze_clicked:
-    normalized = (manual_symbol or "").strip().upper()
+
+def _execute_manual_analysis(symbol: str):
+    normalized = str(symbol or "").strip().upper()
     if not normalized:
         st.error("Sembol girin.")
+        return None
+    try:
+        sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
+        fmp_client = FMPClient.from_streamlit_secrets()
+        alpha_vantage_client = AlphaVantageClient.from_streamlit_secrets()
+        sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
+        engine = ScannerV8Engine(fmp_client, sec_client)
+        with st.spinner(f"{normalized} analiz ediliyor..."):
+            return analyze_security(
+                normalized,
+                candidate_repo=repo,
+                scan_repo=scan_repo,
+                fmp_client=fmp_client,
+                alpha_vantage_client=alpha_vantage_client,
+                tracked_fund_repo=tracked_fund_repo,
+                sec_client=sec_client,
+                sec_lookup=sec_lookup,
+                engine=engine,
+            )
+    except SymbolNotFoundError:
+        st.error("Sembol bulunamadı.")
+    except FMPError as exc:
+        if exc.error_class == "rate_limit":
+            st.warning("Veri sağlayıcı limiti nedeniyle analiz şu an tamamlanamadı.")
+        else:
+            st.error(f"Analiz sırasında veri hatası oluştu: {exc}")
+    except Exception as exc:
+        st.error(f"Analiz tamamlanamadı: {exc}")
+    return None
+
+
+if analyze_clicked:
+    analysis = _execute_manual_analysis(manual_symbol)
+    if analysis is not None:
+        st.session_state["manual_analysis_result"] = analysis
     else:
-        try:
-            sec_lookup = load_sec_company_lookup("nabi-scout@example.com")
-            fmp_client = FMPClient.from_streamlit_secrets()
-            alpha_vantage_client = AlphaVantageClient.from_streamlit_secrets()
-            sec_client = SECFinancialClient(contact_email="nabi-scout@example.com")
-            engine = ScannerV8Engine(fmp_client, sec_client)
-            with st.spinner(f"{normalized} analiz ediliyor..."):
-                analysis = analyze_security(
-                    normalized,
-                    candidate_repo=repo,
-                    scan_repo=scan_repo,
-                    fmp_client=fmp_client,
-                    alpha_vantage_client=alpha_vantage_client,
-                    tracked_fund_repo=tracked_fund_repo,
-                    sec_client=sec_client,
-                    sec_lookup=sec_lookup,
-                    engine=engine,
-                )
-            st.session_state["manual_analysis_result"] = analysis
-        except SymbolNotFoundError:
-            st.session_state.pop("manual_analysis_result", None)
-            st.error("Sembol bulunamadı.")
-        except FMPError as exc:
-            st.session_state.pop("manual_analysis_result", None)
-            if exc.error_class == "rate_limit":
-                st.warning("Veri sağlayıcı limiti nedeniyle analiz şu an tamamlanamadı.")
-            else:
-                st.error(f"Analiz sırasında veri hatası oluştu: {exc}")
-        except Exception as exc:
-            st.session_state.pop("manual_analysis_result", None)
-            st.error(f"Analiz tamamlanamadı: {exc}")
+        st.session_state.pop("manual_analysis_result", None)
 
 
 def _format_compact_number(value: float) -> str:
@@ -120,6 +127,80 @@ def _format_pct(value: Optional[float]) -> str:
     if value is None:
         return "—"
     return f"{value:.2f}%"
+
+
+def _format_tracked_participation_label(row: dict) -> str:
+    status = row.get("participation_status")
+    score = row.get("participation_score")
+    if row.get("participation_source") == PARTICIPATION_SOURCE_CONFIGURED and status:
+        score_text = f" / {score}" if score is not None else ""
+        return f"Katılım bilgisi: Yapılandırılmış ({status}{score_text})"
+    if status:
+        score_text = f" ({score})" if score is not None else ""
+        return f"Katılım: {status}{score_text}"
+    return "Katılım: —"
+
+
+def _render_tracked_fund_provider_notice(fund, *, is_tracked: bool) -> None:
+    if not is_tracked or fund is None:
+        return
+    if fund.price_history_status == "RATE_LIMIT":
+        st.info("Canlı fon verisi şu an alınamadı. Takip kaydı korunuyor.")
+    elif fund.price_history_status in {"PLAN_RESTRICTED", "PREMIUM_REQUIRED"}:
+        st.info("Canlı veri mevcut plan kapsamında erişilemedi. Takip kaydı korunuyor.")
+
+
+def _render_tracked_funds_section() -> None:
+    st.markdown("**⭐ Takip Edilen Fonlar**")
+    tracked_rows = tracked_fund_repo.list_all(order_by="updated_at", descending=True)
+    if not tracked_rows:
+        st.info("Henüz takip edilen fon yok.")
+        st.caption(
+            "Bu bilgi bağımsız NABI Şeriat uygunluk doğrulaması değildir."
+        )
+        return
+
+    st.caption(
+        "Bu bilgi bağımsız NABI Şeriat uygunluk doğrulaması değildir."
+    )
+    for index, row in enumerate(tracked_rows):
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        fund_name = row.get("fund_name") or symbol
+        asset_class = row.get("asset_class") or "—"
+        last_updated = row.get("last_reviewed_at") or row.get("updated_at")
+        last_updated_label = (
+            format_datetime_tr(last_updated) if last_updated else "—"
+        )
+        with st.container(border=True):
+            st.markdown(f"**{symbol}** · {fund_name}")
+            st.caption(_format_tracked_participation_label(row))
+            st.caption(f"Sınıf: {asset_class}")
+            st.caption(f"Son takip güncellemesi: {last_updated_label}")
+            if row.get("data_provider"):
+                st.caption(f"Veri kaynağı: {row['data_provider']}")
+            action_cols = st.columns(2)
+            with action_cols[0]:
+                if st.button(
+                    "Analiz et / Güncelle",
+                    key=f"dashboard_tracked_analyze_{symbol}_{index}",
+                ):
+                    analysis = _execute_manual_analysis(symbol)
+                    if analysis is not None:
+                        st.session_state["manual_analysis_result"] = analysis
+                    else:
+                        st.session_state.pop("manual_analysis_result", None)
+            with action_cols[1]:
+                if st.button(
+                    "Takipten çıkar",
+                    key=f"dashboard_tracked_untrack_{symbol}_{index}",
+                ):
+                    if untrack_fund(tracked_fund_repo, symbol=symbol):
+                        st.success(f"{symbol} takipten çıkarıldı.")
+                    else:
+                        st.caption(f"{symbol} zaten takip listesinde değil.")
+                    st.session_state.pop("manual_analysis_result", None)
 
 
 def _render_fund_performance_risk(fund) -> None:
@@ -253,6 +334,10 @@ if manual_result is not None:
     elif manual_result.analysis_kind == "fund" and manual_result.fund_result is not None:
         fund = manual_result.fund_result
         st.caption("ETF / fon analizi — equity NABI skoru uygulanmaz.")
+        _render_tracked_fund_provider_notice(
+            fund,
+            is_tracked=manual_result.is_tracked,
+        )
         if fund.data_provider:
             st.caption(f"Veri kaynağı: {fund.data_provider}")
         premium_warning = next(
@@ -395,6 +480,9 @@ if manual_result is not None:
             st.warning(warning)
 
     st.divider()
+
+_render_tracked_funds_section()
+st.divider()
 
 brief = build_daily_brief(
     scan_repo=scan_repo,

@@ -10,8 +10,16 @@ from services.fund_analysis_contract import (
     PARTICIPATION_SOURCE_CONFIGURED,
 )
 from services.fund_tracking_contract import prepare_tracked_fund_payload
-from services.fund_tracking_service import build_tracked_fund_payload, save_tracked_fund
-from services.manual_analysis_service import analyze_security, save_tracked_fund as manual_save_tracked_fund
+from services.fund_tracking_service import (
+    build_tracked_fund_payload,
+    save_tracked_fund,
+    untrack_fund,
+)
+from services.manual_analysis_service import (
+    analyze_security,
+    save_tracked_fund as manual_save_tracked_fund,
+    untrack_fund as manual_untrack_fund,
+)
 from services.symbol_resolver_service import SECURITY_TYPE_UNRESOLVED
 
 
@@ -73,6 +81,7 @@ class InMemoryTrackedFundStore:
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
         self.upsert_calls = 0
+        self.delete_calls = 0
 
     def upsert_by_symbol(self, payload):
         self.upsert_calls += 1
@@ -89,6 +98,21 @@ class InMemoryTrackedFundStore:
 
     def get_by_symbol(self, symbol: str):
         return self.rows.get(str(symbol or "").strip().upper())
+
+    def list_all(self, *, order_by="updated_at", descending=True, limit=None):
+        rows = list(self.rows.values())
+        rows.sort(key=lambda item: str(item.get(order_by) or ""), reverse=descending)
+        if limit is not None:
+            rows = rows[:limit]
+        return rows
+
+    def delete_by_symbol(self, symbol: str) -> bool:
+        self.delete_calls += 1
+        normalized = str(symbol or "").strip().upper()
+        if normalized not in self.rows:
+            return False
+        del self.rows[normalized]
+        return True
 
 
 class TrackedFundContractTests(unittest.TestCase):
@@ -127,6 +151,8 @@ class TrackedFundPersistenceTests(unittest.TestCase):
         self.repo = MagicMock()
         self.repo.upsert_by_symbol.side_effect = self.store.upsert_by_symbol
         self.repo.get_by_symbol.side_effect = self.store.get_by_symbol
+        self.repo.list_all.side_effect = self.store.list_all
+        self.repo.delete_by_symbol.side_effect = self.store.delete_by_symbol
 
     @patch("services.manual_analysis_service.analyze_fund")
     @patch("services.manual_analysis_service.resolve_symbol")
@@ -271,6 +297,143 @@ class TrackedFundPersistenceTests(unittest.TestCase):
         self.assertTrue(result.is_tracked)
         self.assertEqual(result.tracked_fund_id, "id-SPUS")
 
+    def test_list_all_empty(self) -> None:
+        self.assertEqual(self.repo.list_all(), [])
+
+    def test_list_all_one_spus(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        rows = self.repo.list_all()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["symbol"], "SPUS")
+
+    def test_list_all_orders_by_updated_at_desc(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("HLAL"),
+            resolved=resolved_etf("HLAL"),
+        )
+        self.store.rows["SPUS"]["updated_at"] = "2026-01-01T00:00:00+00:00"
+        self.store.rows["HLAL"]["updated_at"] = "2026-01-02T00:00:00+00:00"
+        rows = self.repo.list_all(order_by="updated_at", descending=True)
+        self.assertEqual([row["symbol"] for row in rows], ["HLAL", "SPUS"])
+
+    @patch("services.manual_analysis_service.analyze_fund")
+    @patch("services.manual_analysis_service.resolve_symbol")
+    def test_tracked_reanalyze_zero_metadata_write(
+        self,
+        mock_resolve,
+        mock_analyze_fund,
+    ) -> None:
+        mock_resolve.return_value = resolved_etf("SPUS")
+        mock_analyze_fund.return_value = sample_fund_result("SPUS")
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        self.store.upsert_calls = 0
+
+        analyze_security(
+            "SPUS",
+            candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
+            scan_repo=MagicMock(),
+            fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
+            tracked_fund_repo=self.repo,
+            sec_client=MagicMock(),
+        )
+
+        self.assertEqual(self.store.upsert_calls, 0)
+
+    @patch("services.manual_analysis_service.analyze_fund")
+    @patch("services.manual_analysis_service.resolve_symbol")
+    def test_partial_provider_result_still_returns_fund(
+        self,
+        mock_resolve,
+        mock_analyze_fund,
+    ) -> None:
+        mock_resolve.return_value = resolved_etf("SPUS")
+        mock_analyze_fund.return_value = sample_fund_result(
+            "SPUS",
+            expense_ratio=None,
+            holdings_count=None,
+            top10_concentration_pct=None,
+        )
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+
+        result = analyze_security(
+            "SPUS",
+            candidate_repo=MagicMock(get_by_symbol=MagicMock(return_value=None)),
+            scan_repo=MagicMock(),
+            fmp_client=MagicMock(),
+            alpha_vantage_client=MagicMock(),
+            tracked_fund_repo=self.repo,
+            sec_client=MagicMock(),
+        )
+
+        self.assertEqual(result.analysis_kind, "fund")
+        self.assertIsNotNone(result.fund_result)
+        self.assertTrue(result.is_tracked)
+
+    def test_delete_by_symbol_removes_row(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+
+        removed = untrack_fund(self.repo, symbol="SPUS")
+
+        self.assertTrue(removed)
+        self.assertIsNone(self.repo.get_by_symbol("SPUS"))
+        self.assertEqual(self.repo.delete_by_symbol.call_count, 1)
+
+    def test_second_delete_is_idempotent(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        untrack_fund(self.repo, symbol="SPUS")
+
+        removed_again = untrack_fund(self.repo, symbol="SPUS")
+
+        self.assertFalse(removed_again)
+
+    def test_untrack_only_affects_tracked_funds(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        candidate_repo = MagicMock()
+
+        untrack_fund(self.repo, symbol="SPUS")
+
+        candidate_repo.upsert_by_symbol.assert_not_called()
+        self.assertEqual(len(self.repo.list_all()), 0)
+
+    def test_manual_untrack_wrapper(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("HLAL"),
+            resolved=resolved_etf("HLAL"),
+        )
+        self.assertTrue(manual_untrack_fund(self.repo, symbol="HLAL"))
+
 
 class DailyBriefIsolationTests(unittest.TestCase):
     def test_daily_brief_does_not_query_tracked_funds(self) -> None:
@@ -292,6 +455,29 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
 
         py_compile.compile("pages/1_Dashboard.py", doraise=True)
 
+    def test_dashboard_tracked_funds_section(self) -> None:
+        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("Takip Edilen Fonlar", source)
+        self.assertIn("_render_tracked_funds_section", source)
+        self.assertIn("Analiz et / Güncelle", source)
+        self.assertIn("Takipten çıkar", source)
+        self.assertIn("Son takip güncellemesi", source)
+        self.assertIn("Henüz takip edilen fon yok.", source)
+        self.assertIn("Katılım bilgisi: Yapılandırılmış", source)
+        tracked_block = source.split("_render_tracked_funds_section")[0]
+        brief_index = source.index("brief = build_daily_brief")
+        tracked_index = source.index("_render_tracked_funds_section()")
+        self.assertLess(tracked_index, brief_index)
+
+    def test_dashboard_list_load_has_no_alpha_client_in_section(self) -> None:
+        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+            source = handle.read()
+        section = source.split("def _render_tracked_funds_section")[1].split("\ndef _render_fund_performance_risk")[0]
+        self.assertIn("list_all", section)
+        self.assertNotIn("AlphaVantageClient", section)
+        self.assertNotIn("analyze_fund", section)
+
     def test_dashboard_fund_tracking_ui(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
             source = handle.read()
@@ -300,6 +486,13 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
         self.assertIn("Bu fon takip listesinde.", fund_block)
         self.assertIn("save_tracked_fund", fund_block)
         self.assertNotIn("Company Report", fund_block)
+        self.assertNotIn("nabi_score", fund_block.lower())
+
+    def test_tracked_provider_failure_copy(self) -> None:
+        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("Canlı fon verisi şu an alınamadı. Takip kaydı korunuyor.", source)
+        self.assertIn("Canlı veri mevcut plan kapsamında erişilemedi. Takip kaydı korunuyor.", source)
 
     def test_unresolved_has_no_track_button(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
@@ -313,6 +506,26 @@ class TrackedFundRepositoryTests(unittest.TestCase):
         client = MagicMock()
         repo = TrackedFundRepository(client)
         self.assertEqual(repo.table, "tracked_funds")
+
+    def test_delete_by_symbol_returns_false_when_missing(self) -> None:
+        client = MagicMock()
+        repo = TrackedFundRepository(client)
+        repo.get_by_symbol = MagicMock(return_value=None)
+        self.assertFalse(repo.delete_by_symbol("SPUS"))
+        client.table.assert_not_called()
+
+    def test_delete_by_symbol_deletes_existing_row(self) -> None:
+        client = MagicMock()
+        table = MagicMock()
+        client.table.return_value = table
+        delete_chain = MagicMock()
+        table.delete.return_value = delete_chain
+        delete_chain.eq.return_value = delete_chain
+        repo = TrackedFundRepository(client)
+        repo.get_by_symbol = MagicMock(return_value={"symbol": "SPUS"})
+        self.assertTrue(repo.delete_by_symbol("spus"))
+        table.delete.assert_called_once()
+        delete_chain.eq.assert_called_once_with("symbol", "SPUS")
 
 
 if __name__ == "__main__":

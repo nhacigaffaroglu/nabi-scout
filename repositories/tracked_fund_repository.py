@@ -51,3 +51,17 @@ class TrackedFundRepository:
         if limit is not None:
             query = query.limit(limit)
         return query.execute().data or []
+
+    def delete_by_symbol(self, symbol: str) -> bool:
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            return False
+        if self.get_by_symbol(normalized) is None:
+            return False
+        (
+            self.client.table(self.table)
+            .delete()
+            .eq("symbol", normalized)
+            .execute()
+        )
+        return True

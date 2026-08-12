@@ -143,6 +143,12 @@ def save_tracked_fund(
     )
 
 
+def untrack_fund(tracked_fund_repo, *, symbol: str) -> bool:
+    from services.fund_tracking_service import untrack_fund as _untrack_fund
+
+    return _untrack_fund(tracked_fund_repo, symbol=symbol)
+
+
 def _analyze_equity(
     resolved: ResolvedSecurity,
     *,
