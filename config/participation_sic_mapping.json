@@ -1,0 +1,156 @@
+{
+  "version": "6B.2d",
+  "notes": "Deterministic SIC-to-prohibited-category mapping. match_strength=definitive only when classification is exact; broad buckets use review_required.",
+  "mappings": [
+    {
+      "sic_code": "7990",
+      "category": "gambling",
+      "match_strength": "definitive",
+      "description": "Amusement and recreation services (casinos/gambling)"
+    },
+    {
+      "sic_code": "7999",
+      "category": "gambling",
+      "match_strength": "review_required",
+      "description": "Amusement and recreation services NEC (mixed activities)"
+    },
+    {
+      "sic_range": { "start": "2080", "end": "2086" },
+      "category": "alcohol",
+      "match_strength": "definitive",
+      "description": "Alcoholic beverage production"
+    },
+    {
+      "sic_code": "2084",
+      "category": "alcohol",
+      "match_strength": "definitive",
+      "description": "Wines, brandy, and brandy spirits"
+    },
+    {
+      "sic_code": "2111",
+      "category": "tobacco",
+      "match_strength": "definitive",
+      "description": "Cigarettes"
+    },
+    {
+      "sic_code": "2121",
+      "category": "tobacco",
+      "match_strength": "definitive",
+      "description": "Cigars"
+    },
+    {
+      "sic_code": "2131",
+      "category": "tobacco",
+      "match_strength": "definitive",
+      "description": "Chewing and smoking tobacco"
+    },
+    {
+      "sic_code": "6021",
+      "category": "conventional_banking",
+      "match_strength": "definitive",
+      "description": "National commercial banks"
+    },
+    {
+      "sic_code": "6022",
+      "category": "conventional_banking",
+      "match_strength": "definitive",
+      "description": "State commercial banks"
+    },
+    {
+      "sic_code": "6029",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Commercial banks NEC (mixed activities)"
+    },
+    {
+      "sic_code": "6035",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Savings institutions, federally chartered"
+    },
+    {
+      "sic_code": "6036",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Savings institutions, not federally chartered"
+    },
+    {
+      "sic_code": "6141",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Personal credit institutions"
+    },
+    {
+      "sic_code": "6159",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Miscellaneous business credit institutions"
+    },
+    {
+      "sic_code": "6162",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Mortgage bankers and loan correspondents"
+    },
+    {
+      "sic_code": "6211",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Security brokers, dealers, and flotation companies"
+    },
+    {
+      "sic_code": "6282",
+      "category": "conventional_banking",
+      "match_strength": "review_required",
+      "description": "Investment advice (mixed/advisory activities)"
+    },
+    {
+      "sic_code": "2011",
+      "category": "pork",
+      "match_strength": "review_required",
+      "description": "Meat packing plants (mixed protein processing)"
+    },
+    {
+      "sic_code": "2013",
+      "category": "pork",
+      "match_strength": "review_required",
+      "description": "Sausages and other prepared meat products"
+    },
+    {
+      "sic_code": "7812",
+      "category": "adult_entertainment",
+      "match_strength": "review_required",
+      "description": "Motion picture and video production (mixed content)"
+    },
+    {
+      "sic_code": "3845",
+      "category": "weapons_defense",
+      "match_strength": "review_required",
+      "description": "Electromedical apparatus (not definitive weapons)"
+    },
+    {
+      "sic_code": "3482",
+      "category": "weapons_defense",
+      "match_strength": "definitive",
+      "description": "Small arms ammunition"
+    },
+    {
+      "sic_code": "3483",
+      "category": "weapons_defense",
+      "match_strength": "definitive",
+      "description": "Ammunition, except for small arms"
+    },
+    {
+      "sic_code": "3484",
+      "category": "weapons_defense",
+      "match_strength": "definitive",
+      "description": "Small arms"
+    },
+    {
+      "sic_code": "3489",
+      "category": "weapons_defense",
+      "match_strength": "review_required",
+      "description": "Ordnance and accessories NEC (mixed)"
+    }
+  ]
+}

@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-"""End-to-end equity participation assessment orchestration (Phase 6B.2c).
+"""End-to-end equity participation assessment orchestration (Phase 6B.2c/6B.2d).
 
-Composes SEC fetch, input resolution, financial screening, and assessment
-composition into a single callable API. Isolated from Scanner, NABI Score,
-decision engine, and persistence.
+Composes SEC fetch, input resolution, financial screening, optional business
+activity screening, and assessment composition into a single callable API.
+Isolated from Scanner, NABI Score, decision engine, and persistence.
 
 Confidence policy (deterministic, conservative):
-- LOW when SEC is unavailable or no meaningful financial rule evaluated
-- MEDIUM when SEC succeeded and at least one financial rule reached PASS/FAIL
-- HIGH is never assigned in 6B.2c (business-activity screening absent)
+- LOW when SEC is unavailable or no meaningful financial/business rule evaluated
+- MEDIUM when SEC succeeded and at least one financial rule reached PASS/FAIL,
+  and business evidence (if provided) produced evaluable business rules
+- HIGH is never assigned in 6B.2c/6B.2d
 """
 
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Tuple
 
+from services.participation_business_contract import (
+    BusinessActivityEvidence,
+    BusinessActivityScreenResult,
+)
+from services.participation_business_engine import evaluate_business_activity
 from services.participation_financial_contract import (
     ParticipationFinancialInputs,
     ParticipationFinancialScreenResult,
@@ -27,6 +33,7 @@ from services.participation_intelligence_contract import (
     ParticipationAssessment,
 )
 from services.participation_intelligence_service import (
+    build_combined_methodology_assessment,
     build_methodology_assessment_from_financial_screen,
     build_unknown_assessment,
 )
@@ -39,8 +46,8 @@ from services.participation_sec_input_resolver import (
 )
 from services.sec_financial_client import SECFinancialClient, SECFinancialError
 
-BUSINESS_ACTIVITY_WARNING = (
-    "Finansal oran taraması tamamlandı; faaliyet alanı taraması bu aşamada uygulanmadı."
+BUSINESS_ACTIVITY_UNAVAILABLE_WARNING = (
+    "Faaliyet alanı kanıtı sağlanmadı; iş faaliyeti taraması uygulanmadı."
 )
 
 DEFAULT_MISSING_CAPABILITIES: Tuple[str, ...] = (
@@ -60,6 +67,7 @@ class ParticipationAssessmentResult:
     participation_assessment: ParticipationAssessment
     financial_screen_result: Optional[ParticipationFinancialScreenResult] = None
     financial_inputs: Optional[ParticipationFinancialInputs] = None
+    business_screen_result: Optional[BusinessActivityScreenResult] = None
     source_evidence: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
     warnings: Tuple[str, ...] = field(default_factory=tuple)
     errors: Tuple[str, ...] = field(default_factory=tuple)
@@ -87,6 +95,8 @@ class ParticipationAssessmentResult:
             )
         if self.financial_inputs is not None:
             payload["financial_inputs"] = self.financial_inputs.to_dict()
+        if self.business_screen_result is not None:
+            payload["business_screen_result"] = self.business_screen_result.to_dict()
         payload["source_evidence"] = dict(self.source_evidence)
         return payload
 
@@ -117,18 +127,46 @@ def _orchestration_confidence(
     *,
     sec_available: bool,
     financial_screen: Optional[ParticipationFinancialScreenResult],
+    business_screen: Optional[BusinessActivityScreenResult] = None,
 ) -> str:
     if not sec_available:
         return CONFIDENCE_LOW
-    if financial_screen is not None and financial_screen.financial_rules_evaluated:
+    financial_medium = (
+        financial_screen is not None and financial_screen.financial_rules_evaluated
+    )
+    business_medium = (
+        business_screen is not None and business_screen.business_rules_evaluated
+    )
+    if financial_medium or business_medium:
+        if business_screen is not None and not business_medium and not financial_medium:
+            return CONFIDENCE_LOW
+        if financial_screen is not None and not financial_medium and not business_medium:
+            return CONFIDENCE_LOW
+        if business_screen is not None and financial_screen is not None:
+            if not financial_medium or not business_medium:
+                return CONFIDENCE_LOW
         return CONFIDENCE_MEDIUM
     return CONFIDENCE_LOW
 
 
-def _append_business_activity_warning(
+def _missing_capabilities_for_result(
+    *,
+    business_evidence_provided: bool,
+    business_screen: Optional[BusinessActivityScreenResult],
+) -> Tuple[str, ...]:
+    missing = list(DEFAULT_MISSING_CAPABILITIES)
+    if business_evidence_provided and business_screen is not None:
+        if "business_activity_screening" in missing:
+            missing.remove("business_activity_screening")
+    return tuple(missing)
+
+
+def _append_business_unavailable_warning(
     assessment: ParticipationAssessment,
 ) -> ParticipationAssessment:
-    warnings = tuple(dict.fromkeys((*assessment.warnings, BUSINESS_ACTIVITY_WARNING)))
+    warnings = tuple(
+        dict.fromkeys((*assessment.warnings, BUSINESS_ACTIVITY_UNAVAILABLE_WARNING))
+    )
     return replace(assessment, warnings=warnings)
 
 
@@ -170,6 +208,7 @@ def assess_equity_participation(
     sec_client: Optional[SECFinancialClient] = None,
     cik: Optional[str | int] = None,
     market_capitalization: Optional[float] = None,
+    business_evidence: Optional[BusinessActivityEvidence] = None,
 ) -> ParticipationAssessmentResult:
     normalized_symbol = _normalize_symbol(symbol)
     normalized_cik = _normalize_cik(cik)
@@ -239,16 +278,32 @@ def assess_equity_participation(
         resolved_methodology_id,
         financial_inputs,
     )
-    assessment = build_methodology_assessment_from_financial_screen(
-        financial_screen,
-        asset_kind=ASSET_KIND_EQUITY,
-    )
-    assessment = _append_business_activity_warning(assessment)
+    business_screen: BusinessActivityScreenResult | None = None
+    if business_evidence is not None:
+        business_screen = evaluate_business_activity(
+            resolved_methodology_id,
+            business_evidence,
+        )
+
+    if business_screen is not None:
+        assessment = build_combined_methodology_assessment(
+            financial_screen,
+            business_screen,
+            asset_kind=ASSET_KIND_EQUITY,
+        )
+    else:
+        assessment = build_methodology_assessment_from_financial_screen(
+            financial_screen,
+            asset_kind=ASSET_KIND_EQUITY,
+        )
+        assessment = _append_business_unavailable_warning(assessment)
+
     assessment = replace(
         assessment,
         confidence=_orchestration_confidence(
             sec_available=sec_available,
             financial_screen=financial_screen,
+            business_screen=business_screen,
         ),
     )
 
@@ -258,6 +313,7 @@ def assess_equity_participation(
                 *sec_warnings,
                 *input_resolution.warnings,
                 *financial_screen.warnings,
+                *(business_screen.warnings if business_screen is not None else ()),
                 *assessment.warnings,
             )
         )
@@ -270,10 +326,15 @@ def assess_equity_participation(
         participation_assessment=assessment,
         financial_screen_result=financial_screen,
         financial_inputs=financial_inputs,
+        business_screen_result=business_screen,
         source_evidence=financial_inputs.source_evidence,
         warnings=warnings,
         errors=tuple(sec_errors),
         provider_status=tuple(provider_status),
         sec_available=sec_available,
         used_market_capitalization=market_capitalization,
+        missing_capabilities=_missing_capabilities_for_result(
+            business_evidence_provided=business_evidence is not None,
+            business_screen=business_screen,
+        ),
     )

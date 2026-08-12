@@ -1,0 +1,239 @@
+{
+  "version": "6B.2d",
+  "notes": "Methodology-scoped business activity rules. No universal prohibited list.",
+  "shared_keyword_policy": {
+    "negation_patterns": [
+      "does not ",
+      "do not ",
+      "no longer ",
+      "without ",
+      "-free ",
+      "non-",
+      "former ",
+      "not engaged in ",
+      "not involved in "
+    ],
+    "fail_patterns": [
+      { "pattern": "operates casinos", "category": "gambling" },
+      { "pattern": "operates a casino", "category": "gambling" },
+      { "pattern": "casino operator", "category": "gambling" },
+      { "pattern": "tobacco manufacturing", "category": "tobacco" },
+      { "pattern": "manufactures tobacco", "category": "tobacco" },
+      { "pattern": "distills spirits", "category": "alcohol" },
+      { "pattern": "brewery operations", "category": "alcohol" },
+      { "pattern": "commercial bank", "category": "conventional_banking" },
+      { "pattern": "investment bank", "category": "conventional_banking" },
+      { "pattern": "pork processing", "category": "pork" },
+      { "pattern": "adult entertainment", "category": "adult_entertainment" }
+    ],
+    "review_patterns": [
+      { "pattern": "casino", "category": "gambling" },
+      { "pattern": "gambling", "category": "gambling" },
+      { "pattern": "gaming software", "category": "gambling" },
+      { "pattern": "tobacco", "category": "tobacco" },
+      { "pattern": "alcohol", "category": "alcohol" },
+      { "pattern": "brewery", "category": "alcohol" },
+      { "pattern": "distillery", "category": "alcohol" },
+      { "pattern": "banking", "category": "conventional_banking" },
+      { "pattern": "lending", "category": "conventional_banking" },
+      { "pattern": "weapons", "category": "weapons_defense" },
+      { "pattern": "defense contractor", "category": "weapons_defense" },
+      { "pattern": "defence contractor", "category": "weapons_defense" },
+      { "pattern": "cyber defense", "category": "weapons_defense" },
+      { "pattern": "defense against", "category": "weapons_defense" }
+    ]
+  },
+  "structured_sector_labels": {
+    "conventional_banking": {
+      "definitive": [
+        "banks",
+        "banks - regional"
+      ],
+      "review_required": [
+        "banks - diversified",
+        "capital markets",
+        "credit services",
+        "financial - credit services",
+        "financial - diversified",
+        "financial - mortgages",
+        "insurance - diversified",
+        "insurance - life",
+        "insurance - property & casualty"
+      ]
+    },
+    "alcohol": {
+      "definitive": [
+        "beverages - brewers",
+        "beverages - wineries & distilleries"
+      ],
+      "review_required": []
+    },
+    "gambling": {
+      "definitive": [
+        "gambling",
+        "resorts & casinos"
+      ],
+      "review_required": []
+    },
+    "tobacco": {
+      "definitive": [
+        "tobacco"
+      ],
+      "review_required": []
+    },
+    "adult_entertainment": {
+      "definitive": [
+        "entertainment - adult"
+      ],
+      "review_required": []
+    },
+    "pork": {
+      "definitive": [],
+      "review_required": [
+        "packaged foods (pork primary)"
+      ]
+    },
+    "weapons_defense": {
+      "definitive": [
+        "defense"
+      ],
+      "review_required": [
+        "aerospace & defense"
+      ]
+    }
+  },
+  "methodologies": {
+    "msci_islamic_index_series": {
+      "version": "2024-10",
+      "business_screen_complete_methodology": false,
+      "prohibited_categories": [
+        "conventional_banking",
+        "alcohol",
+        "gambling",
+        "tobacco",
+        "adult_entertainment",
+        "pork"
+      ],
+      "revenue_rules": [
+        {
+          "rule_id": "msci.non_permissible_revenue",
+          "category": "non_permissible_revenue",
+          "numerator_categories": ["non_permissible"],
+          "denominator_field": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "linked_registry_rule_id": "msci.non_permissible_revenue"
+        }
+      ],
+      "sector_rule_id": "msci.sector_exclusions",
+      "description_rule_id": "msci.description_keywords",
+      "sic_rule_id": "msci.sic_exclusions"
+    },
+    "sp_shariah": {
+      "version": "2023-09",
+      "business_screen_complete_methodology": false,
+      "prohibited_categories": [
+        "conventional_banking",
+        "alcohol",
+        "gambling",
+        "tobacco",
+        "adult_entertainment",
+        "pork",
+        "weapons_defense"
+      ],
+      "revenue_rules": [
+        {
+          "rule_id": "sp.non_permissible_revenue",
+          "category": "non_permissible_income",
+          "numerator_categories": ["non_permissible", "non_permissible_income"],
+          "denominator_field": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "linked_registry_rule_id": "sp.non_permissible_revenue"
+        }
+      ],
+      "sector_rule_id": "sp.sector_exclusions",
+      "description_rule_id": "sp.description_keywords",
+      "sic_rule_id": "sp.sic_exclusions"
+    },
+    "djim": {
+      "version": "2019-05",
+      "business_screen_complete_methodology": false,
+      "prohibited_categories": [
+        "conventional_banking",
+        "alcohol",
+        "gambling",
+        "tobacco",
+        "adult_entertainment",
+        "pork"
+      ],
+      "revenue_rules": [
+        {
+          "rule_id": "djim.non_permissible_revenue",
+          "category": "non_permissible_revenue",
+          "numerator_categories": ["non_permissible"],
+          "denominator_field": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "linked_registry_rule_id": "djim.non_permissible_revenue"
+        }
+      ],
+      "sector_rule_id": "djim.sector_exclusions",
+      "description_rule_id": "djim.description_keywords",
+      "sic_rule_id": "djim.sic_exclusions"
+    },
+    "ftse_yasaar": {
+      "version": "ground_rules",
+      "business_screen_complete_methodology": false,
+      "prohibited_categories": [
+        "conventional_banking",
+        "alcohol",
+        "gambling",
+        "tobacco",
+        "adult_entertainment",
+        "pork",
+        "weapons_defense"
+      ],
+      "revenue_rules": [
+        {
+          "rule_id": "ftse.non_permissible_revenue",
+          "category": "non_compliant_activities_income",
+          "numerator_categories": ["non_compliant", "non_permissible"],
+          "denominator_field": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<=",
+          "linked_registry_rule_id": "ftse.non_permissible_revenue"
+        }
+      ],
+      "sector_rule_id": "ftse.sector_exclusions",
+      "description_rule_id": "ftse.description_keywords",
+      "sic_rule_id": "ftse.sic_exclusions"
+    },
+    "aaoifi_std21": {
+      "version": "std21",
+      "business_screen_complete_methodology": false,
+      "prohibited_categories": [
+        "conventional_banking",
+        "alcohol",
+        "gambling",
+        "tobacco",
+        "adult_entertainment",
+        "pork"
+      ],
+      "revenue_rules": [
+        {
+          "rule_id": "aaoifi.impure_income",
+          "category": "prohibited_component_income",
+          "numerator_categories": ["prohibited", "impure", "non_permissible"],
+          "denominator_field": "total_income",
+          "threshold_pct": 5.0,
+          "comparator": "<=",
+          "linked_registry_rule_id": "aaoifi.impure_income"
+        }
+      ],
+      "sector_rule_id": "aaoifi.sector_exclusions",
+      "description_rule_id": "aaoifi.description_keywords",
+      "sic_rule_id": "aaoifi.sic_exclusions"
+    }
+  }
+}

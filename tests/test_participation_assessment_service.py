@@ -5,9 +5,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from services.participation_assessment_service import (
-    BUSINESS_ACTIVITY_WARNING,
+    BUSINESS_ACTIVITY_UNAVAILABLE_WARNING,
     assess_equity_participation,
 )
+from services.participation_business_contract import BusinessActivityEvidence
 from services.participation_financial_engine import evaluate_financial_rules
 from services.participation_intelligence_contract import (
     CONFIDENCE_LOW,
@@ -210,7 +211,7 @@ class FinancialOutcomeTests(unittest.TestCase):
         result = self._assess()
         self.assertEqual(result.participation_assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
         self.assertFalse(result.financial_screen_result.methodology_complete)
-        self.assertIn(BUSINESS_ACTIVITY_WARNING, result.warnings)
+        self.assertIn(BUSINESS_ACTIVITY_UNAVAILABLE_WARNING, result.warnings)
 
     def test_high_debt_fail_uygun_degil(self) -> None:
         result = self._assess(total_debt=50_000_000.0, total_assets=100_000_000.0)
@@ -519,6 +520,33 @@ for name in (
             check=False,
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+
+class BusinessCompositionTests(unittest.TestCase):
+    def test_business_evidence_composed_without_new_providers(self) -> None:
+        client = MockSECClient()
+        result = assess_equity_participation(
+            "AAPL",
+            sec_client=client,
+            cik=1,
+            business_evidence=BusinessActivityEvidence(
+                symbol="AAPL",
+                industry="Gambling",
+                source="fixture",
+            ),
+        )
+        self.assertIsNotNone(result.business_screen_result)
+        self.assertEqual(result.participation_assessment.status, PARTICIPATION_STATUS_UYGUN_DEGIL)
+        self.assertEqual(len(client.company_facts_calls), 1)
+
+    def test_no_business_evidence_keeps_unavailable_warning(self) -> None:
+        result = assess_equity_participation(
+            "AAPL",
+            sec_client=MockSECClient(),
+            cik=1,
+        )
+        self.assertIsNone(result.business_screen_result)
+        self.assertIn(BUSINESS_ACTIVITY_UNAVAILABLE_WARNING, result.warnings)
 
 
 if __name__ == "__main__":
