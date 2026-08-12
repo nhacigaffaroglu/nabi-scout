@@ -1,4 +1,7 @@
 import streamlit as st
+from supabase import Client
+
+from services.auth_service import is_authenticated, sign_out
 
 
 def configure_page(title: str, icon: str) -> None:
@@ -17,6 +20,25 @@ def render_sidebar() -> None:
         st.divider()
         st.write("Candidate Intelligence v0.3")
         st.write("Wealth OS verilerini değiştirmez.")
+        if is_authenticated():
+            email = st.session_state.get("nabi_auth_user_email")
+            if email:
+                st.caption(f"Oturum: {email}")
+            if st.button("Çıkış yap", key="nabi_auth_logout"):
+                sign_out()
+                st.rerun()
+
+
+def require_authentication() -> Client:
+    from services.auth_service import require_authentication as _require_authentication
+
+    return _require_authentication()
+
+
+def prepare_protected_page(title: str, icon: str) -> Client:
+    configure_page(title, icon)
+    render_sidebar()
+    return require_authentication()
 
 
 def show_connection_status() -> None:

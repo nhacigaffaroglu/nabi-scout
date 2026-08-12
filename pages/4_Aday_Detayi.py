@@ -3,14 +3,12 @@ import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
 from services.academy_renderer import render_metric_explanation
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Investment Thesis | NABI Scout", "📑")
-render_sidebar()
+client = prepare_protected_page("Investment Thesis | NABI Scout", "📑")
 st.title("📑 NABI Investment Thesis")
 
-repo = CandidateRepository(get_supabase_client())
+repo = CandidateRepository(client)
 rows = repo.get_all(order_by="nabi_score", descending=True)
 if not rows:
     st.info("Henüz aday bulunmuyor.")

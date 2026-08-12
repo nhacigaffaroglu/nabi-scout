@@ -1,8 +1,7 @@
 import streamlit as st
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Derin Analiz | NABI Scout", "🔬")
-render_sidebar()
+prepare_protected_page("Derin Analiz | NABI Scout", "🔬")
 
 st.title("🔬 Derin Analiz")
 st.info(

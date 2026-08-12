@@ -41,14 +41,11 @@ from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
 from services.ui_formatters import format_datetime_tr, format_research_status
 from services.research_workflow_service import normalize_research_status
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Dashboard | NABI Scout", "📊")
-render_sidebar()
+client = prepare_protected_page("Dashboard | NABI Scout", "📊")
 
 st.title("📊 Scout Dashboard")
-client = get_supabase_client()
 repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)

@@ -14,14 +14,12 @@ from services.scoring_engine import (
     financial_health_score,
     valuation_score_from_prices,
 )
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Aday Havuzu | NABI Scout", "🧭")
-render_sidebar()
+client = prepare_protected_page("Aday Havuzu | NABI Scout", "🧭")
 
 st.title("🧭 Aday Havuzu")
-repo = CandidateRepository(get_supabase_client())
+repo = CandidateRepository(client)
 
 if "candidate_editor_id" not in st.session_state:
     st.session_state.candidate_editor_id = None

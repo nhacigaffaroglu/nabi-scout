@@ -20,11 +20,9 @@ from services.ui_formatters import (
     format_freshness_label,
     format_priority_reasons,
 )
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Research Monitor | NABI Scout", "🔬")
-render_sidebar()
+client = prepare_protected_page("Research Monitor | NABI Scout", "🔬")
 
 st.title("🔬 Research Monitor")
 st.caption(
@@ -32,7 +30,6 @@ st.caption(
     "önceliklerini gösterir."
 )
 
-client = get_supabase_client()
 candidate_repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)

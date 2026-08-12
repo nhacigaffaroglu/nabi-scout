@@ -3,12 +3,10 @@ import streamlit as st
 
 from repositories.universe_repository import UniverseRepository
 from services.free_universe_client import FreeUniverseClient
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 from services.universe_engine import UniverseEngine
 
-configure_page("Evren Motoru v2 | NABI Scout", "🌍")
-render_sidebar()
+client = prepare_protected_page("Evren Motoru v2 | NABI Scout", "🌍")
 
 st.title("🌍 Scout Universe Engine v2")
 st.caption(
@@ -16,7 +14,6 @@ st.caption(
     "kaynaklarından oluşturur ve CIK bilgilerini Supabase'e kaydeder."
 )
 
-client = get_supabase_client()
 repo = UniverseRepository(client)
 
 with st.form("universe_form"):

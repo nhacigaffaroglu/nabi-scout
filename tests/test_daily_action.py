@@ -702,8 +702,14 @@ class DashboardSmokeTests(unittest.TestCase):
         }
 
         with patch.dict(sys.modules, {"streamlit": mock_st}):
-            with patch("services.supabase_client.get_supabase_client") as mock_client:
-                mock_client.return_value = MagicMock()
+            import importlib
+
+            ui_module = importlib.import_module("services.ui")
+            with patch.object(
+                ui_module,
+                "prepare_protected_page",
+                return_value=MagicMock(),
+            ):
                 with patch("services.daily_brief_service.build_daily_brief", return_value=brief):
                     load_dashboard_page()
 

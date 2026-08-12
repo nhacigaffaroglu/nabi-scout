@@ -71,5 +71,28 @@ publishable_key = "SUPABASE_PUBLISHABLE_KEY"
 ## Güvenlik uyarısı
 
 İlk starter sürüm, kolay kurulum testi için geçici `anon` erişim politikaları içerir.
-Uygulama internette herkese açık tutulmamalıdır. Bir sonraki aşamada Supabase Auth
-ekleyip bu geçici politikaları kaldıracağız.
+Uygulamayı internette herkese açık tutulmamalıdır.
+
+## Aşama 6 — Supabase Auth ve RLS sıkılaştırma
+
+1. Supabase Dashboard → **Authentication → Users** → **Add user**.
+2. Uygulamaya giriş yapacak e-posta ve güçlü bir parola oluşturun.
+3. SQL Editor'da `database/migration_auth_rls_hardening.sql` dosyasını çalıştırın.
+4. Bu migration geçici `anon` erişim politikalarını kaldırır; yalnızca oturum açmış
+   kullanıcılar (`authenticated`) veri okuyup yazabilir.
+5. Streamlit uygulamasını yeniden başlatın ve giriş ekranından test kullanıcısıyla oturum açın.
+6. Çıkış yapıldığında araştırma sayfalarının veri göstermediğini doğrulayın.
+
+**GitHub Actions / headless tarama:** `SUPABASE_KEY` ortam değişkeni artık **service_role**
+anahtarı olmalıdır. Publishable/anon anahtar RLS'i bypass etmez.
+
+**Streamlit Secrets** (değişmedi):
+
+```toml
+[supabase]
+url = "SUPABASE_PROJECT_URL"
+publishable_key = "SUPABASE_PUBLISHABLE_KEY"
+```
+
+Parolalar veya service_role anahtarı Streamlit Secrets'a eklenmez; yalnızca Supabase Auth
+üzerinden giriş yapılır.

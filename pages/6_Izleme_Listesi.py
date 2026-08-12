@@ -8,15 +8,12 @@ from services.research_monitor_service import (
     summarize_change,
 )
 from services.ui_formatters import format_datetime_tr, format_freshness_label
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("İzleme Listesi | NABI Scout", "⭐")
-render_sidebar()
+client = prepare_protected_page("İzleme Listesi | NABI Scout", "⭐")
 
 st.title("⭐ İzleme Listesi")
 
-client = get_supabase_client()
 watchlist_repo = WatchlistRepository(client)
 scan_repo = ScanRepository(client)
 

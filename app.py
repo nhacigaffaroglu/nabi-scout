@@ -1,17 +1,15 @@
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar, show_connection_status
+from services.ui import prepare_protected_page, show_connection_status
 
-configure_page("NABI Scout", "🔭")
-render_sidebar()
+client = prepare_protected_page("NABI Scout", "🔭")
 
 st.title("🔭 NABI Scout")
 st.caption("Nabi için doğru yatırım araçlarını araştıran bağımsız yatırım araştırma platformu.")
 show_connection_status()
 
-repo = CandidateRepository(get_supabase_client())
+repo = CandidateRepository(client)
 stats = repo.get_dashboard_stats()
 
 cols = st.columns(5)

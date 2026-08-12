@@ -1,8 +1,7 @@
 import streamlit as st
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Haberler | NABI Scout", "📰")
-render_sidebar()
+prepare_protected_page("Haberler | NABI Scout", "📰")
 
 st.title("📰 Haber & Katalizör")
 st.info("Otomatik haber toplama ve AI haber analizi v0.4 sprintinde eklenecek.")

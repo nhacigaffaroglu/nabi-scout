@@ -19,16 +19,13 @@ from services.manual_analysis_service import analyze_security, refresh_tracked_f
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 from services.ui_formatters import format_datetime_tr
 
-configure_page("Fund Report | NABI Scout", "📊")
-render_sidebar()
+client = prepare_protected_page("Fund Report | NABI Scout", "📊")
 
 st.title("📊 Fon Raporu")
 
-client = get_supabase_client()
 tracked_fund_repo = TrackedFundRepository(client)
 candidate_repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)

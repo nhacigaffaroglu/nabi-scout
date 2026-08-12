@@ -632,7 +632,7 @@ brief = {
     "data_issues": [],
 }
 
-with patch("services.supabase_client.get_supabase_client", return_value=MagicMock()):
+with patch("services.ui.prepare_protected_page", return_value=MagicMock()):
     with patch("services.daily_brief_service.build_daily_brief", return_value=brief):
         with patch(
             "repositories.candidate_repository.CandidateRepository.get_all",

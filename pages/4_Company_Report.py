@@ -38,18 +38,16 @@ from services.academy_ui import (
     render_metric_card,
     render_metric_explanation,
 )
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Company Report | NABI Scout", "📄")
-render_sidebar()
+client = prepare_protected_page("Company Report | NABI Scout", "📄")
 
 st.title("📄 NABI Company Report")
 
-repo = CandidateRepository(get_supabase_client())
-tracked_fund_repo = TrackedFundRepository(get_supabase_client())
-watchlist_repo = WatchlistRepository(get_supabase_client())
-scan_repo = ScanRepository(get_supabase_client())
+repo = CandidateRepository(client)
+tracked_fund_repo = TrackedFundRepository(client)
+watchlist_repo = WatchlistRepository(client)
+scan_repo = ScanRepository(client)
 candidate = st.session_state.get("company_report_candidate")
 
 if candidate is None:
@@ -365,7 +363,7 @@ st.info(
     )
 )
 
-participation_repo = ParticipationAssessmentRepository(get_supabase_client())
+participation_repo = ParticipationAssessmentRepository(client)
 participation_symbol = str(candidate.get("symbol") or "").strip().upper()
 participation_view = build_company_report_participation(
     candidate,

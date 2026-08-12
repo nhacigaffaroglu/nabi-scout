@@ -12,11 +12,9 @@ from services.scan_runner_service import run_scan
 from services.scan_universe_service import build_fixed_universe_rows
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
-from services.supabase_client import get_supabase_client
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("Scout Scanner v9 | NABI Scout", "🧭")
-render_sidebar()
+client = prepare_protected_page("Scout Scanner v9 | NABI Scout", "🧭")
 
 st.title("🧭 Scout Scanner v9")
 st.caption(
@@ -41,7 +39,6 @@ def load_sec_company_lookup(contact_email: str) -> dict:
     }
 
 
-client = get_supabase_client()
 candidate_repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 universe_repo = UniverseRepository(client)

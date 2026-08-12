@@ -2,10 +2,9 @@ import streamlit as st
 
 from services.academy_renderer import render_metric_explanation
 from services.financial_glossary import GLOSSARY
-from services.ui import configure_page, render_sidebar
+from services.ui import prepare_protected_page
 
-configure_page("NABI Akademi | NABI Scout", "📚")
-render_sidebar()
+prepare_protected_page("NABI Akademi | NABI Scout", "📚")
 
 st.title("📚 NABI Akademi")
 st.caption(
