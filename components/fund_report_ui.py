@@ -17,6 +17,7 @@ from services.fund_analysis_contract import (
     history_coverage_caption,
 )
 from services.fund_report_service import (
+    COLD_OPEN_BANNER,
     LIVE_DATA_PROMPT,
     SHARIAH_DISCLAIMER,
     FundReportViewModel,
@@ -355,7 +356,9 @@ def render_tracked_provider_notice(
 
 def render_fund_report(view: FundReportViewModel, *, format_datetime) -> None:
     for message in view.state_messages:
-        if "takip listesinde değil" in message.lower():
+        if message == COLD_OPEN_BANNER:
+            st.warning(message)
+        elif "takip listesinde değil" in message.lower():
             st.warning(message)
         else:
             st.info(message)

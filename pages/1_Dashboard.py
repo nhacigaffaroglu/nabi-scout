@@ -6,6 +6,7 @@ from repositories.tracked_fund_repository import TrackedFundRepository
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.candidate_surface_service import filter_equity_candidate_surface
 from services.daily_brief_service import build_daily_brief
 from services.alpha_vantage_client import AlphaVantageClient
 from services.fmp_client import FMPClient, FMPError
@@ -25,6 +26,7 @@ from services.fund_report_service import (
     FUND_REPORT_SESSION_LIVE,
     FUND_REPORT_SESSION_RESOLVED,
     FUND_REPORT_SESSION_SYMBOL,
+    resolve_display_fund_name,
 )
 from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
@@ -161,7 +163,12 @@ def _render_tracked_funds_section() -> None:
         symbol = str(row.get("symbol") or "").strip().upper()
         if not symbol:
             continue
-        fund_name = row.get("fund_name") or symbol
+        candidate_row = repo.get_by_symbol(symbol)
+        fund_name = resolve_display_fund_name(
+            symbol,
+            tracked_row=row,
+            candidate_row=candidate_row,
+        )
         asset_class = row.get("asset_class") or "—"
         last_updated = row.get("last_reviewed_at") or row.get("updated_at")
         last_updated_label = (
@@ -570,7 +577,7 @@ cols[3].metric("Katılım uygun", dashboard_stats["participation_ok"])
 cols[4].metric("Açık Araştırma", dashboard_stats["open_research"])
 
 candidates = repo.get_all(order_by="nabi_score", descending=True)
-rows = candidates
+rows = filter_equity_candidate_surface(candidates)
 df = pd.DataFrame(rows)
 
 if df.empty:

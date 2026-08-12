@@ -15,7 +15,7 @@ from services.fund_report_service import (
     build_fund_report_view,
     resolve_requested_symbol,
 )
-from services.manual_analysis_service import analyze_security
+from services.manual_analysis_service import analyze_security, refresh_tracked_fund_metadata
 from services.scanner_v8_engine import ScannerV8Engine
 from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
@@ -81,6 +81,13 @@ def _refresh_live_fund_analysis(symbol: str):
     return None
 
 
+def _return_to_dashboard() -> None:
+    st.session_state.pop(FUND_REPORT_SESSION_SYMBOL, None)
+    if FUND_REPORT_QUERY_PARAM in st.query_params:
+        del st.query_params[FUND_REPORT_QUERY_PARAM]
+    st.switch_page("pages/1_Dashboard.py")
+
+
 requested_symbol = resolve_requested_symbol(
     session_symbol=st.session_state.get(FUND_REPORT_SESSION_SYMBOL),
     query_symbol=st.query_params.get(FUND_REPORT_QUERY_PARAM),
@@ -89,13 +96,14 @@ requested_symbol = resolve_requested_symbol(
 if not requested_symbol:
     st.info("Fon raporu açmak için Dashboard'daki takip edilen fonlardan «Fon Raporu» seçin.")
     if st.button("← Dashboard"):
-        st.switch_page("pages/1_Dashboard.py")
+        _return_to_dashboard()
     st.stop()
 
 st.session_state[FUND_REPORT_SESSION_SYMBOL] = requested_symbol
 st.query_params[FUND_REPORT_QUERY_PARAM] = requested_symbol
 
 tracked_row = tracked_fund_repo.get_by_symbol(requested_symbol)
+candidate_row = candidate_repo.get_by_symbol(requested_symbol)
 session_live = st.session_state.get(FUND_REPORT_SESSION_LIVE)
 session_resolved = st.session_state.get(FUND_REPORT_SESSION_RESOLVED)
 manual_result = st.session_state.get("manual_analysis_result")
@@ -125,12 +133,13 @@ view = build_fund_report_view(
     resolved=resolved,
     analysis_kind=analysis_kind,
     had_tracked_context=had_tracked_context and tracked_row is None,
+    candidate_row=candidate_row,
 )
 
 if not view.entry_allowed:
     st.error(view.block_reason or "Fon raporu açılamadı.")
     if st.button("← Dashboard", key="fund_report_blocked_dashboard"):
-        st.switch_page("pages/1_Dashboard.py")
+        _return_to_dashboard()
     st.stop()
 
 header_left, header_right = st.columns([4, 1])
@@ -139,14 +148,28 @@ with header_left:
     st.caption("ETF / fon raporu — equity NABI skoru uygulanmaz.")
 with header_right:
     if st.button("← Dashboard", key="fund_report_back_dashboard", use_container_width=True):
-        st.switch_page("pages/1_Dashboard.py")
+        _return_to_dashboard()
 
-action_cols = st.columns([1, 3])
+action_cols = st.columns([1, 1, 2])
 with action_cols[0]:
     refresh_clicked = st.button(
         "Canlı veriyi yenile",
         type="primary",
         key="fund_report_refresh_live",
+    )
+with action_cols[1]:
+    metadata_refresh_disabled = not (
+        view.is_tracked and view.has_live_data and view.live_result is not None
+    )
+    metadata_refresh_clicked = st.button(
+        "Kayıtlı bilgileri güncelle",
+        key="fund_report_refresh_metadata",
+        disabled=metadata_refresh_disabled,
+        help=(
+            "Canlı veri oturumu gerekir. Önce «Canlı veriyi yenile» kullanın."
+            if metadata_refresh_disabled
+            else None
+        ),
     )
 
 if refresh_clicked:
@@ -158,6 +181,20 @@ if refresh_clicked:
             st.session_state[FUND_REPORT_SESSION_LIVE] = analysis.fund_result
             st.session_state[FUND_REPORT_SESSION_RESOLVED] = analysis.resolved
             st.rerun()
+
+if metadata_refresh_clicked and view.live_result is not None and view.resolved is not None:
+    try:
+        refresh_tracked_fund_metadata(
+            tracked_fund_repo,
+            fund_result=view.live_result,
+            resolved=view.resolved,
+        )
+        st.success("Takip metadata güncellendi.")
+        st.rerun()
+    except ValueError as exc:
+        st.error(str(exc))
+    except Exception as exc:
+        st.error(f"Takip metadata güncellenemedi: {exc}")
 
 render_tracked_provider_notice(view.live_result, is_tracked=view.is_tracked)
 render_fund_report(view, format_datetime=format_datetime_tr)

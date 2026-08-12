@@ -16,6 +16,7 @@ from services.fund_analysis_contract import (
 )
 from services.fund_analysis_service import analyze_fund
 from services.fund_report_service import (
+    COLD_OPEN_BANNER,
     FUND_REPORT_QUERY_PARAM,
     FUND_REPORT_SESSION_LIVE,
     FUND_REPORT_SESSION_RESOLVED,
@@ -24,6 +25,7 @@ from services.fund_report_service import (
     build_fund_report_view,
     is_valid_session_fund_handoff,
     merge_live_result_for_symbol,
+    resolve_display_fund_name,
     validate_fund_report_entry,
 )
 from services.manual_analysis_service import analyze_security
@@ -210,7 +212,28 @@ class FundReportServiceTests(unittest.TestCase):
 
     def test_cold_load_has_live_prompt(self) -> None:
         view = build_fund_report_view("SPUS", tracked_row=tracked_spus_row())
-        self.assertTrue(any("Canlı veriyi yenile" in msg for msg in view.state_messages))
+        self.assertIn(COLD_OPEN_BANNER, view.state_messages)
+
+    def test_display_fund_name_uses_candidate_hint(self) -> None:
+        view = build_fund_report_view(
+            "SPUS",
+            tracked_row=tracked_spus_row(),
+            candidate_row={
+                "symbol": "SPUS",
+                "company_name": "SP Funds S&P 500 Sharia Industry Exclusions ETF",
+            },
+        )
+        self.assertIn("Sharia", view.fund_name)
+
+    def test_resolve_display_fund_name_prefers_meaningful_name(self) -> None:
+        name = resolve_display_fund_name(
+            "SPUS",
+            tracked_row={"fund_name": "SPUS"},
+            candidate_row={
+                "company_name": "SP Funds S&P 500 Sharia Industry Exclusions ETF",
+            },
+        )
+        self.assertIn("Sharia", name)
 
     def test_is_valid_session_fund_handoff_uses_live_kind(self) -> None:
         live = sample_fund_result("SPUS")
@@ -342,6 +365,12 @@ class FundReportSemanticsTests(unittest.TestCase):
         self.assertNotIn("if refresh_clicked:", pre_view)
         after_refresh_click = source.split("if refresh_clicked:")[1]
         self.assertIn("_refresh_live_fund_analysis(requested_symbol)", after_refresh_click)
+
+    def test_fund_report_metadata_refresh_button(self) -> None:
+        with open("pages/9_Fund_Report.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("Kayıtlı bilgileri güncelle", source)
+        self.assertIn("refresh_tracked_fund_metadata", source)
 
     def test_dashboard_navigation_contract(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:

@@ -5,6 +5,7 @@ import streamlit as st
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.candidate_surface_service import filter_equity_candidate_surface
 from services.research_monitor_service import build_monitor_feed
 from services.research_workflow_service import (
     WORKFLOW_FILTER_OPTIONS,
@@ -71,7 +72,9 @@ universe_label = control_right.selectbox(
 since = datetime.now(timezone.utc) - timedelta(days=WINDOW_OPTIONS[window_label])
 universe_name = None if universe_label == "Tüm evrenler" else universe_label
 
-candidates = candidate_repo.get_all(order_by="nabi_score", descending=True)
+candidates = filter_equity_candidate_surface(
+    candidate_repo.get_all(order_by="nabi_score", descending=True)
+)
 watched_ids = watchlist_repo.watched_candidate_ids()
 
 feed = build_monitor_feed(

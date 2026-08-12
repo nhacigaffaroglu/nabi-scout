@@ -143,6 +143,23 @@ def save_tracked_fund(
     )
 
 
+def refresh_tracked_fund_metadata(
+    tracked_fund_repo,
+    *,
+    fund_result,
+    resolved: ResolvedSecurity,
+):
+    from services.fund_tracking_service import (
+        refresh_tracked_fund_metadata as _refresh_tracked_fund_metadata,
+    )
+
+    return _refresh_tracked_fund_metadata(
+        tracked_fund_repo,
+        fund_result=fund_result,
+        resolved=resolved,
+    )
+
+
 def untrack_fund(tracked_fund_repo, *, symbol: str) -> bool:
     from services.fund_tracking_service import untrack_fund as _untrack_fund
 

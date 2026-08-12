@@ -2,6 +2,7 @@ import streamlit as st
 
 from components.candidate_cards import render_candidate_card
 from repositories.candidate_repository import CandidateRepository
+from services.candidate_surface_service import filter_equity_candidate_surface
 from services.research_workflow_service import (
     DEFAULT_RESEARCH_STATUS,
     normalize_research_status,
@@ -32,7 +33,7 @@ with st.expander("➕ Yeni aday ekle", expanded=False):
         company_name = c2.text_input("Şirket / Fon adı")
         asset_type = c3.selectbox(
             "Varlık türü",
-            ["Hisse", "ETF", "Fon", "Sukuk", "Altın", "Gümüş", "Diğer"],
+            ["Hisse", "Fon", "Sukuk", "Altın", "Gümüş", "Diğer"],
         )
 
         c4, c5, c6 = st.columns(3)
@@ -180,12 +181,15 @@ with st.expander("➕ Yeni aday ekle", expanded=False):
                 st.error(f"Kayıt başarısız: {exc}")
 
 st.subheader("Ara ve filtrele")
+st.caption(
+    "ETF/fon takibi Dashboard'daki Takip Edilen Fonlar bölümünden yönetilir."
+)
 q1, q2, q3, q4, q5 = st.columns([2, 1, 1, 1, 1])
 
 query = q1.text_input("Ara")
 asset_filter = q2.selectbox(
     "Tür",
-    ["Tümü", "Hisse", "ETF", "Fon", "Sukuk", "Altın", "Gümüş", "Diğer"],
+    ["Tümü", "Hisse", "Fon", "Sukuk", "Altın", "Gümüş", "Diğer"],
 )
 market_filter = q3.selectbox(
     "Piyasa",
@@ -200,15 +204,17 @@ participation_filter = q5.selectbox(
     ["Tümü", "Uygun", "Kontrol Et", "Uygun Değil"],
 )
 
-rows = repo.search(
-    query=query,
-    asset_type=None if asset_filter == "Tümü" else asset_filter,
-    market=None if market_filter == "Tümü" else market_filter,
-    decision=None if decision_filter == "Tümü" else decision_filter,
-    participation_status=(
-        None if participation_filter == "Tümü"
-        else participation_filter
-    ),
+rows = filter_equity_candidate_surface(
+    repo.search(
+        query=query,
+        asset_type=None if asset_filter == "Tümü" else asset_filter,
+        market=None if market_filter == "Tümü" else market_filter,
+        decision=None if decision_filter == "Tümü" else decision_filter,
+        participation_status=(
+            None if participation_filter == "Tümü"
+            else participation_filter
+        ),
+    )
 )
 
 st.caption(f"{len(rows)} aday bulundu")

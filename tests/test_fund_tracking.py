@@ -12,6 +12,8 @@ from services.fund_analysis_contract import (
 from services.fund_tracking_contract import prepare_tracked_fund_payload
 from services.fund_tracking_service import (
     build_tracked_fund_payload,
+    merge_tracked_fund_metadata,
+    refresh_tracked_fund_metadata,
     save_tracked_fund,
     untrack_fund,
 )
@@ -83,16 +85,21 @@ class InMemoryTrackedFundStore:
         self.upsert_calls = 0
         self.delete_calls = 0
 
-    def upsert_by_symbol(self, payload):
+    def upsert_by_symbol(self, payload, touch_last_reviewed=True):
+        cleaned = prepare_tracked_fund_payload(
+            payload,
+            touch_last_reviewed=touch_last_reviewed,
+        )
         self.upsert_calls += 1
-        symbol = payload["symbol"]
+        symbol = cleaned["symbol"]
         existing = self.rows.get(symbol)
         row = {
+            **(existing or {}),
             "id": (existing or {}).get("id", f"id-{symbol}"),
-            **payload,
+            **cleaned,
         }
         if existing is None:
-            row["created_at"] = payload.get("updated_at")
+            row["created_at"] = cleaned.get("updated_at")
         self.rows[symbol] = row
         return row
 
@@ -433,6 +440,74 @@ class TrackedFundPersistenceTests(unittest.TestCase):
             resolved=resolved_etf("HLAL"),
         )
         self.assertTrue(manual_untrack_fund(self.repo, symbol="HLAL"))
+
+
+class TrackedFundMetadataRefreshTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = InMemoryTrackedFundStore()
+        self.repo = MagicMock()
+        self.repo.upsert_by_symbol.side_effect = self.store.upsert_by_symbol
+        self.repo.get_by_symbol.side_effect = self.store.get_by_symbol
+
+    def test_merge_prefers_meaningful_fund_name(self) -> None:
+        existing = {
+            "symbol": "SPUS",
+            "fund_name": "SPUS",
+            "exchange": "NYSE Arca",
+        }
+        fund = sample_fund_result(
+            "SPUS",
+            fund_name="SP Funds S&P 500 Sharia Industry Exclusions ETF",
+        )
+        merged = merge_tracked_fund_metadata(
+            existing,
+            fund,
+            resolved_etf("SPUS"),
+        )
+        self.assertEqual(
+            merged["fund_name"],
+            "SP Funds S&P 500 Sharia Industry Exclusions ETF",
+        )
+        self.assertEqual(merged["exchange"], "NYSE Arca")
+
+    def test_merge_does_not_overwrite_with_null(self) -> None:
+        existing = {
+            "symbol": "SPUS",
+            "fund_name": "SPUS ETF",
+            "asset_class": "Equity",
+        }
+        fund = sample_fund_result("SPUS", asset_class=None)
+        merged = merge_tracked_fund_metadata(existing, fund, resolved_etf("SPUS"))
+        self.assertEqual(merged["asset_class"], "Equity")
+
+    def test_refresh_metadata_sets_last_reviewed_at(self) -> None:
+        save_tracked_fund(
+            self.repo,
+            fund_result=sample_fund_result("SPUS", fund_name="SPUS"),
+            resolved=resolved_etf("SPUS"),
+        )
+        first = self.store.get_by_symbol("SPUS")
+        first_reviewed = first["last_reviewed_at"]
+
+        refresh_tracked_fund_metadata(
+            self.repo,
+            fund_result=sample_fund_result(
+                "SPUS",
+                fund_name="SP Funds S&P 500 Sharia Industry Exclusions ETF",
+            ),
+            resolved=resolved_etf("SPUS"),
+        )
+        updated = self.store.get_by_symbol("SPUS")
+        self.assertNotEqual(updated["last_reviewed_at"], first_reviewed)
+        self.assertIn("Sharia", updated["fund_name"])
+
+    def test_refresh_metadata_requires_tracked_row(self) -> None:
+        with self.assertRaises(ValueError):
+            refresh_tracked_fund_metadata(
+                self.repo,
+                fund_result=sample_fund_result("SPUS"),
+                resolved=resolved_etf("SPUS"),
+            )
 
 
 class DailyBriefIsolationTests(unittest.TestCase):

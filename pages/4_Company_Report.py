@@ -3,8 +3,14 @@ import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
+from repositories.tracked_fund_repository import TrackedFundRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.candidate_surface_service import (
+    enrich_candidate_classification_from_db,
+    is_equity_candidate_surface_eligible,
+)
 from services.company_intelligence_service import build_company_intelligence
+from services.fund_report_service import FUND_REPORT_QUERY_PARAM, FUND_REPORT_SESSION_SYMBOL
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -31,6 +37,7 @@ render_sidebar()
 st.title("📄 NABI Company Report")
 
 repo = CandidateRepository(get_supabase_client())
+tracked_fund_repo = TrackedFundRepository(get_supabase_client())
 watchlist_repo = WatchlistRepository(get_supabase_client())
 scan_repo = ScanRepository(get_supabase_client())
 candidate = st.session_state.get("company_report_candidate")
@@ -40,36 +47,75 @@ if candidate is None:
         order_by="nabi_score",
         descending=True,
     )
-
-    if not rows:
-        st.info(
-            "Henüz raporlanacak şirket bulunmuyor. "
-            "Önce Scout Scanner ekranında tarama yapın."
-        )
-        st.stop()
+    rows = [
+        row
+        for row in rows
+        if is_equity_candidate_surface_eligible(row)
+    ]
 
     query_symbol = st.query_params.get("symbol")
-    default_index = 0
-    labels = []
-    row_lookup = {}
+    if query_symbol:
+        direct = repo.get_by_symbol(query_symbol)
+        if direct and not is_equity_candidate_surface_eligible(direct):
+            candidate = direct
 
-    for index, row in enumerate(rows):
-        label = (
-            f"{row['symbol']} — "
-            f"{row.get('company_name') or row['symbol']}"
+    if candidate is None:
+        if not rows:
+            st.info(
+                "Henüz raporlanacak şirket bulunmuyor. "
+                "Önce Scout Scanner ekranında tarama yapın."
+            )
+            st.stop()
+
+        default_index = 0
+        labels = []
+        row_lookup = {}
+
+        for index, row in enumerate(rows):
+            label = (
+                f"{row['symbol']} — "
+                f"{row.get('company_name') or row['symbol']}"
+            )
+            labels.append(label)
+            row_lookup[label] = row["id"]
+
+            if query_symbol and row["symbol"] == query_symbol:
+                default_index = index
+
+        selected = st.selectbox(
+            "Şirket seç",
+            labels,
+            index=default_index,
         )
-        labels.append(label)
-        row_lookup[label] = row["id"]
+        candidate = repo.get_by_id(row_lookup[selected])
 
-        if query_symbol and row["symbol"] == query_symbol:
-            default_index = index
-
-    selected = st.selectbox(
-        "Şirket seç",
-        labels,
-        index=default_index,
+if candidate is not None:
+    candidate = enrich_candidate_classification_from_db(
+        candidate,
+        repo.get_by_symbol,
     )
-    candidate = repo.get_by_id(row_lookup[selected])
+
+if not is_equity_candidate_surface_eligible(candidate):
+    symbol = str(candidate.get("symbol") or "").strip().upper()
+    tracked_row = tracked_fund_repo.get_by_symbol(symbol) if symbol else None
+    st.warning(
+        "Bu sembol equity Company Report kapsamında değil. "
+        "ETF/fonlar için Dashboard'daki Takip Edilen Fonlar ve Fon Raporu kullanılır."
+    )
+    if tracked_row is not None and symbol:
+        if st.button("📊 Fon Raporu", type="primary", key="company_report_fund_redirect"):
+            st.session_state[FUND_REPORT_SESSION_SYMBOL] = symbol
+            st.query_params[FUND_REPORT_QUERY_PARAM] = symbol
+            st.session_state.pop("company_report_candidate", None)
+            if "symbol" in st.query_params:
+                del st.query_params["symbol"]
+            st.switch_page("pages/9_Fund_Report.py")
+    if st.button("← Dashboard", key="company_report_non_equity_dashboard"):
+        st.session_state.pop("company_report_candidate", None)
+        if "symbol" in st.query_params:
+            del st.query_params["symbol"]
+        st.switch_page("pages/1_Dashboard.py")
+    st.stop()
 
 candidate_id = candidate.get("id")
 if not candidate_id and candidate.get("symbol"):

@@ -20,6 +20,10 @@ SHARIAH_DISCLAIMER = (
 LIVE_DATA_PROMPT = (
     "Canlı veri yok. Ayrıntılar için «Canlı veriyi yenile» kullanın."
 )
+COLD_OPEN_BANNER = (
+    "Takip metadata görünür. Canlı portföy, performans ve risk için "
+    "«Canlı veriyi yenile» kullanın."
+)
 UNTRACKED_WHILE_OPEN_MESSAGE = "Bu fon artık takip listesinde değil."
 
 
@@ -130,6 +134,39 @@ def merge_resolved_for_symbol(
     return resolved
 
 
+def _has_meaningful_fund_name(symbol: str, value: Optional[str]) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return text.upper() != normalize_fund_report_symbol(symbol)
+
+
+def resolve_display_fund_name(
+    symbol: str,
+    *,
+    tracked_row: Optional[Dict[str, Any]] = None,
+    live_result: Optional[FundAnalysisResult] = None,
+    candidate_row: Optional[Dict[str, Any]] = None,
+) -> str:
+    normalized = normalize_fund_report_symbol(symbol)
+    candidates: List[str] = []
+    for source in (
+        (live_result.fund_name if live_result else None),
+        (tracked_row or {}).get("fund_name"),
+        (candidate_row or {}).get("company_name"),
+    ):
+        text = str(source or "").strip()
+        if text:
+            candidates.append(text)
+
+    meaningful = [name for name in candidates if _has_meaningful_fund_name(normalized, name)]
+    if meaningful:
+        return max(meaningful, key=len)
+    if candidates:
+        return candidates[0]
+    return normalized
+
+
 def build_fund_report_view(
     symbol: str,
     *,
@@ -138,6 +175,7 @@ def build_fund_report_view(
     resolved: Optional[ResolvedSecurity] = None,
     analysis_kind: Optional[str] = None,
     had_tracked_context: bool = False,
+    candidate_row: Optional[Dict[str, Any]] = None,
 ) -> FundReportViewModel:
     normalized = normalize_fund_report_symbol(symbol)
     matched_live = merge_live_result_for_symbol(normalized, live_result)
@@ -145,11 +183,12 @@ def build_fund_report_view(
     is_tracked = tracked_row is not None
     has_live_data = matched_live is not None
 
-    fund_name = normalized
-    if tracked_row and tracked_row.get("fund_name"):
-        fund_name = str(tracked_row["fund_name"])
-    elif matched_live and matched_live.fund_name:
-        fund_name = matched_live.fund_name
+    fund_name = resolve_display_fund_name(
+        normalized,
+        tracked_row=tracked_row,
+        live_result=matched_live,
+        candidate_row=candidate_row,
+    )
 
     entry_allowed, block_reason = validate_fund_report_entry(
         normalized,
@@ -161,7 +200,7 @@ def build_fund_report_view(
 
     state_messages: List[str] = []
     if entry_allowed and is_tracked and not has_live_data:
-        state_messages.append(LIVE_DATA_PROMPT)
+        state_messages.append(COLD_OPEN_BANNER)
     if entry_allowed and had_tracked_context and not is_tracked:
         state_messages.append(UNTRACKED_WHILE_OPEN_MESSAGE)
     if entry_allowed and not is_tracked and has_live_data:

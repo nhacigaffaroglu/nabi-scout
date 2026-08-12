@@ -10,8 +10,16 @@ class TrackedFundRepository:
         self.client = client
         self.table = "tracked_funds"
 
-    def upsert_by_symbol(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        cleaned = prepare_tracked_fund_payload(payload)
+    def upsert_by_symbol(
+        self,
+        payload: Dict[str, Any],
+        *,
+        touch_last_reviewed: bool = True,
+    ) -> Dict[str, Any]:
+        cleaned = prepare_tracked_fund_payload(
+            payload,
+            touch_last_reviewed=touch_last_reviewed,
+        )
         response = (
             self.client.table(self.table)
             .upsert(cleaned, on_conflict="symbol")

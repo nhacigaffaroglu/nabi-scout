@@ -43,7 +43,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def prepare_tracked_fund_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def prepare_tracked_fund_payload(
+    payload: Dict[str, Any],
+    *,
+    touch_last_reviewed: bool = True,
+) -> Dict[str, Any]:
     cleaned: Dict[str, Any] = {}
     for key, value in payload.items():
         if key not in TRACKED_FUND_COLUMNS:
@@ -56,7 +60,7 @@ def prepare_tracked_fund_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("Sembol gerekli.")
     cleaned["symbol"] = symbol
     cleaned["updated_at"] = _now_iso()
-    if cleaned.get("last_reviewed_at") is None:
+    if touch_last_reviewed and cleaned.get("last_reviewed_at") is None:
         cleaned["last_reviewed_at"] = cleaned["updated_at"]
     score = cleaned.get("participation_score")
     if score is not None:
