@@ -461,10 +461,11 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
         self.assertIn("Takip Edilen Fonlar", source)
         self.assertIn("_render_tracked_funds_section", source)
         self.assertIn("Analiz et / Güncelle", source)
+        self.assertIn("📊 Fon Raporu", source)
         self.assertIn("Takipten çıkar", source)
         self.assertIn("Son takip güncellemesi", source)
         self.assertIn("Henüz takip edilen fon yok.", source)
-        self.assertIn("Katılım bilgisi: Yapılandırılmış", source)
+        self.assertIn("format_tracked_participation_label", source)
         tracked_block = source.split("_render_tracked_funds_section")[0]
         brief_index = source.index("brief = build_daily_brief")
         tracked_index = source.index("_render_tracked_funds_section()")
@@ -473,15 +474,25 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
     def test_dashboard_list_load_has_no_alpha_client_in_section(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
             source = handle.read()
-        section = source.split("def _render_tracked_funds_section")[1].split("\ndef _render_fund_performance_risk")[0]
+        section = source.split("def _render_tracked_funds_section")[1].split("\n\nmanual_result = st.session_state.get")[0]
         self.assertIn("list_all", section)
         self.assertNotIn("AlphaVantageClient", section)
         self.assertNotIn("analyze_fund", section)
+        self.assertNotIn("9_Fund_Report", section)
+
+    def test_dashboard_fund_report_navigation(self) -> None:
+        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("FUND_REPORT_SESSION_SYMBOL", source)
+        self.assertIn("FUND_REPORT_QUERY_PARAM", source)
+        self.assertIn("pages/9_Fund_Report.py", source)
+        open_block = source.split("def _open_fund_report")[1].split("def _render_tracked_funds_section")[0]
+        self.assertNotIn("company_report_candidate", open_block)
 
     def test_dashboard_fund_tracking_ui(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
             source = handle.read()
-        fund_block = source.split('manual_result.analysis_kind == "fund"')[1].split('elif manual_result.analysis_kind == "etf_metadata"')[0]
+        fund_block = source.split('elif manual_result.analysis_kind == "fund"')[1].split('elif manual_result.analysis_kind == "etf_metadata"')[0]
         self.assertIn("Takibe al", fund_block)
         self.assertIn("Bu fon takip listesinde.", fund_block)
         self.assertIn("save_tracked_fund", fund_block)
@@ -489,7 +500,7 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
         self.assertNotIn("nabi_score", fund_block.lower())
 
     def test_tracked_provider_failure_copy(self) -> None:
-        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+        with open("components/fund_report_ui.py", encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn("Canlı fon verisi şu an alınamadı. Takip kaydı korunuyor.", source)
         self.assertIn("Canlı veri mevcut plan kapsamında erişilemedi. Takip kaydı korunuyor.", source)

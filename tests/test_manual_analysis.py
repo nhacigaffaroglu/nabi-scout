@@ -523,15 +523,16 @@ class RuntimeImportContractTests(unittest.TestCase):
             source = handle.read()
         self.assertIn("analysis_kind == \"fund\"", source)
         self.assertIn("bağımsız NABI Şeriat uygunluk doğrulaması değildir", source)
-        self.assertIn("PERFORMANCE_SECTION_TITLE", source)
-        self.assertIn("PRICE_RETURN_DISCLAIMER", source)
-        self.assertIn("RETURN_1Y_INSUFFICIENT_MESSAGE", source)
-        self.assertIn("history_coverage_caption", source)
+        self.assertIn("render_fund_performance_risk", source)
+        self.assertIn("components.fund_report_ui", source)
         self.assertIn("Takibe al", source)
         self.assertIn("save_tracked_fund", source)
         self.assertIn("_render_tracked_funds_section", source)
         self.assertIn("Takipten çıkar", source)
-        self.assertNotIn("Company Report", source.split("analysis_kind == \"fund\"")[1].split("elif")[0])
+        self.assertNotIn(
+            "Company Report",
+            source.split('elif manual_result.analysis_kind == "fund"')[1].split('elif manual_result.analysis_kind == "etf_metadata"')[0],
+        )
 
     def test_manual_analysis_imports_in_fresh_process(self) -> None:
         import subprocess

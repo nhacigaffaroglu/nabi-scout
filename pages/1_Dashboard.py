@@ -12,12 +12,19 @@ from services.fmp_client import FMPClient, FMPError
 from services.fund_analysis_contract import (
     BENCHMARK_RELATIVE_DISCLAIMER,
     PARTICIPATION_SOURCE_CONFIGURED,
-    PERFORMANCE_SECTION_TITLE,
-    PERFORMANCE_UNAVAILABLE_MESSAGE,
-    PRICE_RETURN_DISCLAIMER,
-    RETURN_1Y_INSUFFICIENT_MESSAGE,
-    RISK_SECTION_TITLE,
-    history_coverage_caption,
+)
+from components.fund_report_ui import (
+    format_compact_number,
+    format_pct,
+    format_tracked_participation_label,
+    render_fund_performance_risk,
+    render_tracked_provider_notice,
+)
+from services.fund_report_service import (
+    FUND_REPORT_QUERY_PARAM,
+    FUND_REPORT_SESSION_LIVE,
+    FUND_REPORT_SESSION_RESOLVED,
+    FUND_REPORT_SESSION_SYMBOL,
 )
 from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
@@ -105,49 +112,36 @@ def _execute_manual_analysis(symbol: str):
     return None
 
 
+def _open_fund_report(symbol: str) -> None:
+    normalized = str(symbol or "").strip().upper()
+    if not normalized:
+        return
+    st.session_state[FUND_REPORT_SESSION_SYMBOL] = normalized
+    manual_result = st.session_state.get("manual_analysis_result")
+    if (
+        manual_result is not None
+        and manual_result.analysis_kind == "fund"
+        and str(manual_result.symbol or "").strip().upper() == normalized
+        and manual_result.fund_result is not None
+        and manual_result.resolved is not None
+        and manual_result.resolved.is_etf
+    ):
+        st.session_state[FUND_REPORT_SESSION_LIVE] = manual_result.fund_result
+        st.session_state[FUND_REPORT_SESSION_RESOLVED] = manual_result.resolved
+    else:
+        st.session_state.pop(FUND_REPORT_SESSION_LIVE, None)
+        st.session_state.pop(FUND_REPORT_SESSION_RESOLVED, None)
+    st.session_state["fund_report_had_tracked_context"] = True
+    st.query_params[FUND_REPORT_QUERY_PARAM] = normalized
+    st.switch_page("pages/9_Fund_Report.py")
+
+
 if analyze_clicked:
     analysis = _execute_manual_analysis(manual_symbol)
     if analysis is not None:
         st.session_state["manual_analysis_result"] = analysis
     else:
         st.session_state.pop("manual_analysis_result", None)
-
-
-def _format_compact_number(value: float) -> str:
-    if value >= 1_000_000_000_000:
-        return f"${value / 1_000_000_000_000:.2f}T"
-    if value >= 1_000_000_000:
-        return f"${value / 1_000_000_000:.2f}B"
-    if value >= 1_000_000:
-        return f"${value / 1_000_000:.2f}M"
-    return f"${value:,.0f}"
-
-
-def _format_pct(value: Optional[float]) -> str:
-    if value is None:
-        return "—"
-    return f"{value:.2f}%"
-
-
-def _format_tracked_participation_label(row: dict) -> str:
-    status = row.get("participation_status")
-    score = row.get("participation_score")
-    if row.get("participation_source") == PARTICIPATION_SOURCE_CONFIGURED and status:
-        score_text = f" / {score}" if score is not None else ""
-        return f"Katılım bilgisi: Yapılandırılmış ({status}{score_text})"
-    if status:
-        score_text = f" ({score})" if score is not None else ""
-        return f"Katılım: {status}{score_text}"
-    return "Katılım: —"
-
-
-def _render_tracked_fund_provider_notice(fund, *, is_tracked: bool) -> None:
-    if not is_tracked or fund is None:
-        return
-    if fund.price_history_status == "RATE_LIMIT":
-        st.info("Canlı fon verisi şu an alınamadı. Takip kaydı korunuyor.")
-    elif fund.price_history_status in {"PLAN_RESTRICTED", "PREMIUM_REQUIRED"}:
-        st.info("Canlı veri mevcut plan kapsamında erişilemedi. Takip kaydı korunuyor.")
 
 
 def _render_tracked_funds_section() -> None:
@@ -175,12 +169,12 @@ def _render_tracked_funds_section() -> None:
         )
         with st.container(border=True):
             st.markdown(f"**{symbol}** · {fund_name}")
-            st.caption(_format_tracked_participation_label(row))
+            st.caption(format_tracked_participation_label(row))
             st.caption(f"Sınıf: {asset_class}")
             st.caption(f"Son takip güncellemesi: {last_updated_label}")
             if row.get("data_provider"):
                 st.caption(f"Veri kaynağı: {row['data_provider']}")
-            action_cols = st.columns(2)
+            action_cols = st.columns(3)
             with action_cols[0]:
                 if st.button(
                     "Analiz et / Güncelle",
@@ -193,6 +187,12 @@ def _render_tracked_funds_section() -> None:
                         st.session_state.pop("manual_analysis_result", None)
             with action_cols[1]:
                 if st.button(
+                    "📊 Fon Raporu",
+                    key=f"dashboard_tracked_fund_report_{symbol}_{index}",
+                ):
+                    _open_fund_report(symbol)
+            with action_cols[2]:
+                if st.button(
                     "Takipten çıkar",
                     key=f"dashboard_tracked_untrack_{symbol}_{index}",
                 ):
@@ -201,68 +201,6 @@ def _render_tracked_funds_section() -> None:
                     else:
                         st.caption(f"{symbol} zaten takip listesinde değil.")
                     st.session_state.pop("manual_analysis_result", None)
-
-
-def _render_fund_performance_risk(fund) -> None:
-    performance = fund.performance_metrics
-    risk = fund.risk_metrics
-    has_metrics = fund.has_performance_or_risk_metrics()
-
-    if not has_metrics:
-        st.markdown(f"**{PERFORMANCE_SECTION_TITLE}**")
-        message = PERFORMANCE_UNAVAILABLE_MESSAGE
-        if fund.price_history_status == "RATE_LIMIT":
-            message = (
-                "Veri sağlayıcı limiti nedeniyle fiyat geçmişi alınamadı; "
-                "performans/risk metrikleri hesaplanamadı."
-            )
-        elif fund.price_history_status in {"PLAN_RESTRICTED", "PREMIUM_REQUIRED"}:
-            message = (
-                "Fiyat geçmişi mevcut plan kapsamında erişilemedi; "
-                "performans/risk metrikleri hesaplanamadı."
-            )
-        st.info(message)
-        for warning in fund.performance_warnings:
-            st.warning(warning)
-        return
-
-    if performance and performance.has_any_return():
-        st.markdown(f"**{PERFORMANCE_SECTION_TITLE}**")
-        perf_cols = st.columns(2)
-        perf_cols[0].metric("1A fiyat getirisi", _format_pct(performance.return_1m_pct))
-        perf_cols[1].metric("YBB fiyat getirisi", _format_pct(performance.return_ytd_pct))
-        if performance.return_1y_pct is not None:
-            st.metric("1Y fiyat getirisi", _format_pct(performance.return_1y_pct))
-        elif not performance.history_is_full_year:
-            st.caption(RETURN_1Y_INSUFFICIENT_MESSAGE)
-        if not performance.history_is_full_year and performance.observation_count > 0:
-            st.caption(history_coverage_caption(performance.observation_count))
-        st.caption(PRICE_RETURN_DISCLAIMER)
-        for warning in performance.warnings:
-            st.warning(warning)
-
-    if risk and risk.has_any_metric():
-        st.markdown(f"**{RISK_SECTION_TITLE}**")
-        risk_cols = st.columns(2)
-        risk_cols[0].metric(
-            "Yıllıklandırılmış oynaklık (fiyat)",
-            _format_pct(risk.annualized_volatility_pct),
-        )
-        risk_cols[1].metric(
-            "Maksimum düşüş (fiyat)",
-            _format_pct(risk.max_drawdown_pct),
-        )
-        label_parts = [
-            label
-            for label in (risk.volatility_label, risk.drawdown_label)
-            if label
-        ]
-        if label_parts:
-            st.caption(" · ".join(label_parts))
-
-    for warning in fund.performance_warnings:
-        if warning not in (performance.warnings if performance else ()):
-            st.warning(warning)
 
 
 manual_result = st.session_state.get("manual_analysis_result")
@@ -334,7 +272,7 @@ if manual_result is not None:
     elif manual_result.analysis_kind == "fund" and manual_result.fund_result is not None:
         fund = manual_result.fund_result
         st.caption("ETF / fon analizi — equity NABI skoru uygulanmaz.")
-        _render_tracked_fund_provider_notice(
+        render_tracked_provider_notice(
             fund,
             is_tracked=manual_result.is_tracked,
         )
@@ -358,7 +296,7 @@ if manual_result is not None:
         )
         metric_cols[1].metric(
             "AUM",
-            _format_compact_number(fund.aum) if fund.aum is not None else "—",
+            format_compact_number(fund.aum) if fund.aum is not None else "—",
         )
         metric_cols[2].metric(
             "Holdings",
@@ -430,7 +368,7 @@ if manual_result is not None:
                     f"{dimension.observation}"
                 )
 
-        _render_fund_performance_risk(fund)
+        render_fund_performance_risk(fund)
 
         if fund.labels:
             st.markdown("**Etiketler:** " + ", ".join(f"`{label}`" for label in fund.labels))
