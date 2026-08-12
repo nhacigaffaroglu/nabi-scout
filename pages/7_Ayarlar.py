@@ -11,4 +11,4 @@ st.subheader("NABI Score v2 ağırlıkları")
 for key, value in WEIGHTS.items():
     st.write(f"**{key}:** %{value * 100:.0f}")
 
-st.info("Bir sonraki sürümde bu ağırlıklar Supabase üzerinden düzenlenebilir olacak.")
+st.info("Bu sürümde ağırlıklar salt okunurdur; aktif NABI Score v4 scanner yolunu etkilemez.")

@@ -1,13 +1,21 @@
-# NABI Scout v0.3 — Candidate Intelligence
+# NABI Scout
 
-## Yeni özellikler
+Bağımsız yatırım araştırma platformu (Streamlit + Supabase).
 
-- NABI Score v2
-- Finansal sağlık skoru
-- Güncel fiyat / adil değer karşılaştırması
-- İskonto oranı
-- F/K, PEG, ROIC, marj ve borçluluk alanları
-- Yatırım tezi
-- Büyüme katalizörleri
-- Gelişmiş aday detay ekranı
-- Katılım filtresi
+## Aktif modüller
+
+- **Dashboard** — günlük özet, manuel sembol analizi, takip edilen fonlar
+- **Scout Scanner** — evren taraması, aday havuzu, scan geçmişi
+- **Company Report** — şirket raporu, NABI Academy, katılım incelemesi
+- **Research Monitor** — çoklu tarama değişiklikleri ve araştırma önceliği
+- **Fund Report** — ETF/fon analizi ve takibi
+- **Günlük otomatik tarama** — GitHub Actions (`scripts/run_daily_scan.py`)
+
+## Kurulum
+
+Bkz. [ADIM_ADIM_KURULUM.md](ADIM_ADIM_KURULUM.md)
+
+## Ertelenen
+
+- Otomatik haber/katalizör toplama
+- Supabase üzerinden düzenlenebilir skor ağırlıkları

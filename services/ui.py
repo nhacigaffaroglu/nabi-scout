@@ -18,7 +18,7 @@ def render_sidebar() -> None:
         st.title("NABI Scout")
         st.caption("Investment Intelligence")
         st.divider()
-        st.write("Candidate Intelligence v0.3")
+        st.caption("Research Platform")
         st.write("Wealth OS verilerini değiştirmez.")
         if is_authenticated():
             email = st.session_state.get("nabi_auth_user_email")

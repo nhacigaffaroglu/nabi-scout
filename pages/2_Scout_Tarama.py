@@ -149,7 +149,7 @@ if "latest_scan_candidates" not in st.session_state:
 if "latest_scan_changes" not in st.session_state:
     st.session_state["latest_scan_changes"] = []
 
-if st.button("Sprint 9 taramasını başlat", type="primary"):
+if st.button("Taramayı başlat", type="primary"):
     fmp_client = FMPClient.from_streamlit_secrets()
     engine = ScannerV8Engine(
         fmp_client,
@@ -190,7 +190,7 @@ if st.button("Sprint 9 taramasını başlat", type="primary"):
         st.error("Tarama başarısız oldu — hiçbir sembol işlenemedi.")
     else:
         st.success(
-            f"Sprint 9 taraması tamamlandı. "
+            f"Tarama tamamlandı. "
             f"{scan_result.updated} araştırma adayı güncellendi, "
             f"{scan_result.excluded} özel menkul kıymet elendi."
         )
