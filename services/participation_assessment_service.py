@@ -209,6 +209,7 @@ def assess_equity_participation(
     cik: Optional[str | int] = None,
     market_capitalization: Optional[float] = None,
     business_evidence: Optional[BusinessActivityEvidence] = None,
+    sec_financials: Optional[dict[str, Any]] = None,
 ) -> ParticipationAssessmentResult:
     normalized_symbol = _normalize_symbol(symbol)
     normalized_cik = _normalize_cik(cik)
@@ -229,7 +230,17 @@ def assess_equity_participation(
     methodology = get_methodology(resolved_methodology_id)
     resolved_version = methodology.version if methodology else None
 
-    if normalized_cik is None or sec_client is None:
+    sec_financials_payload: dict[str, Any] = {}
+    sec_warnings: list[str] = []
+    sec_errors: list[str] = []
+    sec_available = False
+    provider_status: list[tuple[str, str]] = [("sec", "skipped")]
+
+    if sec_financials is not None:
+        sec_financials_payload = dict(sec_financials)
+        sec_available = True
+        provider_status[0] = ("sec", "provided")
+    elif normalized_cik is None or sec_client is None:
         warnings = (
             "CIK sağlanmadı; SEC finansal verisi kullanılamadı."
             if normalized_cik is None
@@ -245,30 +256,25 @@ def assess_equity_participation(
             sec_available=False,
             used_market_capitalization=market_capitalization,
         )
-
-    sec_financials: dict[str, Any] = {}
-    sec_warnings: list[str] = []
-    sec_errors: list[str] = []
-    sec_available = False
-    provider_status: list[tuple[str, str]] = [("sec", "attempted")]
-
-    try:
-        payload = sec_client.company_facts(normalized_cik)
-        sec_financials = sec_client.extract_financials(payload)
-        sec_available = True
-        provider_status[0] = ("sec", "ok")
-    except SECFinancialError as exc:
-        sec_errors.append(str(exc))
-        provider_status[0] = ("sec", "error")
-        sec_warnings.append("SEC finansal verisi alınamadı.")
-    except (TypeError, ValueError) as exc:
-        sec_errors.append(f"SEC payload is malformed: {exc}")
-        provider_status[0] = ("sec", "malformed")
-        sec_warnings.append("SEC finansal verisi çözümlenemedi.")
+    else:
+        provider_status[0] = ("sec", "attempted")
+        try:
+            payload = sec_client.company_facts(normalized_cik)
+            sec_financials_payload = sec_client.extract_financials(payload)
+            sec_available = True
+            provider_status[0] = ("sec", "ok")
+        except SECFinancialError as exc:
+            sec_errors.append(str(exc))
+            provider_status[0] = ("sec", "error")
+            sec_warnings.append("SEC finansal verisi alınamadı.")
+        except (TypeError, ValueError) as exc:
+            sec_errors.append(f"SEC payload is malformed: {exc}")
+            provider_status[0] = ("sec", "malformed")
+            sec_warnings.append("SEC finansal verisi çözümlenemedi.")
 
     input_resolution = build_participation_inputs_from_sec(
         normalized_symbol,
-        sec_financials,
+        sec_financials_payload,
         market_capitalization=market_capitalization,
         cik=normalized_cik,
     )

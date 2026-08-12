@@ -9,6 +9,8 @@ class EquitySurfacePageSmokeTests(unittest.TestCase):
         self.assertIn("enrich_candidate_classification_from_db", source)
         self.assertIn("is_equity_candidate_surface_eligible", source)
         self.assertIn("build_company_intelligence", source)
+        self.assertIn("build_company_report_participation", source)
+        self.assertIn("render_company_report_participation_section", source)
         enrich_index = source.index("enrich_candidate_classification_from_db")
         guard_index = source.index("if not is_equity_candidate_surface_eligible(candidate):")
         intelligence_index = source.index("intelligence = build_company_intelligence(")

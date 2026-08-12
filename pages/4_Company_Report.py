@@ -10,7 +10,10 @@ from services.candidate_surface_service import (
     is_equity_candidate_surface_eligible,
 )
 from services.company_intelligence_service import build_company_intelligence
+from services.company_report_participation_service import build_company_report_participation
 from services.fund_report_service import FUND_REPORT_QUERY_PARAM, FUND_REPORT_SESSION_SYMBOL
+from services.sec_financial_client import SECFinancialClient
+from components.company_report_ui import render_company_report_participation_section
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -354,6 +357,12 @@ st.info(
         or "Ek finansal doğrulama yap."
     )
 )
+
+participation_view = build_company_report_participation(
+    candidate,
+    sec_client=SECFinancialClient(),
+)
+render_company_report_participation_section(participation_view)
 
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []
