@@ -62,6 +62,10 @@ _US_GAAP_TAGS = {
     ],
     "current_assets": ["AssetsCurrent"],
     "current_liabilities": ["LiabilitiesCurrent"],
+    "accounts_receivable": [
+        "AccountsReceivableNetCurrent",
+        "AccountsReceivableNet",
+    ],
 }
 
 _IFRS_TAGS = {
@@ -106,6 +110,10 @@ _IFRS_TAGS = {
     "cash": ["CashAndCashEquivalents"],
     "current_assets": ["CurrentAssets"],
     "current_liabilities": ["CurrentLiabilities"],
+    "accounts_receivable": [
+        "TradeAndOtherCurrentReceivables",
+        "TradeReceivables",
+    ],
 }
 
 _US_GAAP_DEBT_TAGS = [
@@ -276,6 +284,11 @@ class SECFinancialClient:
             tag_map["current_liabilities"],
             monetary_units,
         )
+        accounts_receivable = self._instant_series(
+            facts,
+            tag_map["accounts_receivable"],
+            monetary_units,
+        )
         debt = self._debt_series(
             facts,
             monetary_units,
@@ -302,6 +315,7 @@ class SECFinancialClient:
         cash_latest = latest(cash)
         current_assets_latest = latest(current_assets)
         current_liabilities_latest = latest(current_liabilities)
+        accounts_receivable_latest = latest(accounts_receivable)
         debt_latest = latest(debt)
 
         free_cash_flow = (
@@ -422,6 +436,7 @@ class SECFinancialClient:
             "total_assets": assets_latest,
             "equity": equity_latest,
             "cash": cash_latest,
+            "accounts_receivable": accounts_receivable_latest,
             "total_debt": debt_latest,
             "net_debt": net_debt,
             "current_ratio": current_ratio,
