@@ -32,6 +32,7 @@ class MethodologyDefinition:
     source_reference: str
     denominator_policy: str
     notes: str
+    financial_screen_complete_methodology: bool = False
     rules: Tuple[MethodologyRuleDefinition, ...] = field(default_factory=tuple)
 
 
@@ -67,6 +68,9 @@ def _parse_methodology(raw: Dict[str, Any]) -> MethodologyDefinition:
         source_reference=str(raw.get("source_reference") or ""),
         denominator_policy=str(raw.get("denominator_policy") or ""),
         notes=str(raw.get("notes") or ""),
+        financial_screen_complete_methodology=bool(
+            raw.get("financial_screen_complete_methodology", False)
+        ),
         rules=rules,
     )
 

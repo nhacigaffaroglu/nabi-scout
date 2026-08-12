@@ -31,6 +31,8 @@ ASSET_KIND_FUND = "fund"
 
 METHODOLOGY_COMPLETENESS_NOT_APPLICABLE = "not_applicable"
 METHODOLOGY_COMPLETENESS_NONE = "none"
+METHODOLOGY_COMPLETENESS_PARTIAL = "partial"
+METHODOLOGY_COMPLETENESS_COMPLETE = "complete"
 
 PARTICIPATION_DISCLAIMER_FULL = (
     "NABI Scout bir dinî otorite değildir; bu sonuç Şeriat uygunluk sertifikası, "

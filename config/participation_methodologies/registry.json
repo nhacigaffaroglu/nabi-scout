@@ -9,6 +9,7 @@
       "source_reference": "MSCI Islamic Index Series Methodology (October 2024)",
       "denominator_policy": "total_assets",
       "notes": "Descriptive registry entry only; not calculated in NABI Scout 6B.1.",
+      "financial_screen_complete_methodology": false,
       "rules": [
         {
           "rule_id": "msci.total_debt_to_total_assets",
@@ -57,6 +58,7 @@
       "source_reference": "S&P Shariah Indices Methodology",
       "denominator_policy": "trailing_36_month_average_market_value_of_equity",
       "notes": "Receivables threshold documented at 49% for S&P Shariah; distinct from MSCI/FTSE.",
+      "financial_screen_complete_methodology": false,
       "rules": [
         {
           "rule_id": "sp.debt_to_avg_equity_36m",
@@ -104,6 +106,7 @@
       "source_reference": "Dow Jones Islamic Market Indices Methodology",
       "denominator_policy": "trailing_24_month_average_market_capitalization",
       "notes": "Includes ±2 percentage point buffer/grace rules in index methodology; not modeled in 6B.1.",
+      "financial_screen_complete_methodology": false,
       "rules": [
         {
           "rule_id": "djim.total_debt_to_avg_mcap_24m",
@@ -151,6 +154,7 @@
       "source_reference": "FTSE Yasaar Global Equity Shariah Index Series Ground Rules",
       "denominator_policy": "total_assets",
       "notes": "FTSE uses receivable+cash combined at 50% threshold; distinct from MSCI receivables rule.",
+      "financial_screen_complete_methodology": false,
       "rules": [
         {
           "rule_id": "ftse.debt_to_total_assets",
@@ -198,6 +202,7 @@
       "source_reference": "AAOIFI Shariah Standard No. 21 (equity screening excerpts)",
       "denominator_policy": "market_capitalization",
       "notes": "AAOIFI uses 30% thresholds and market-cap denominators; receivables screen not documented in reviewed Std 21 excerpt.",
+      "financial_screen_complete_methodology": false,
       "rules": [
         {
           "rule_id": "aaoifi.interest_bearing_debt_to_market_cap",
