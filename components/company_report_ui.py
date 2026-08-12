@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from typing import Any, Mapping, Optional, Sequence
+
 import streamlit as st
 
 from services.company_report_participation_service import CompanyReportParticipationView
+from services.participation_assessment_change_service import annotate_history_with_changes
 from services.participation_intelligence_contract import (
     PARTICIPATION_DISCLAIMER_SHORT,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
+from services.ui_formatters import format_datetime_tr
 
 
 def _status_container(status: str):
@@ -15,9 +19,19 @@ def _status_container(status: str):
     return st.warning
 
 
+def _format_outcome(value: Optional[str]) -> str:
+    if not value:
+        return "—"
+    return str(value)
+
+
 def render_company_report_participation_section(
     view: CompanyReportParticipationView,
-) -> None:
+    *,
+    history: Optional[Sequence[Mapping[str, Any]]] = None,
+    save_message: Optional[str] = None,
+    save_skipped_duplicate: bool = False,
+) -> bool:
     st.subheader("Katılım İncelemesi")
     st.caption(
         "Bağımsız katılım metodolojisi taraması. NABI Skoru, yatırım kararı, "
@@ -29,12 +43,14 @@ def render_company_report_participation_section(
             view.error_message
             or "Katılım incelemesi şu anda gösterilemiyor."
         )
-        return
+        _render_participation_history(history)
+        return False
 
     result = view.result
     if result is None:
         st.info("Katılım incelemesi sonucu üretilemedi.")
-        return
+        _render_participation_history(history)
+        return False
 
     assessment = result.participation_assessment
     _status_container(assessment.status)(f"**Durum:** {assessment.status}")
@@ -74,4 +90,41 @@ def render_company_report_participation_section(
         for error in result.errors[:4]:
             st.caption(error)
 
+    save_clicked = st.button(
+        "Katılım incelemesini kaydet",
+        key=f"save_participation_assessment_{view.symbol}",
+    )
+    if save_message:
+        if save_skipped_duplicate:
+            st.info(save_message)
+        else:
+            st.success(save_message)
+
     st.caption(PARTICIPATION_DISCLAIMER_SHORT)
+    _render_participation_history(history)
+    return save_clicked
+
+
+def _render_participation_history(
+    history: Optional[Sequence[Mapping[str, Any]]],
+) -> None:
+    st.markdown("**Katılım geçmişi**")
+    rows = list(history or [])
+    if not rows:
+        st.caption("Henüz kaydedilmiş katılım incelemesi yok.")
+        return
+
+    annotated = annotate_history_with_changes(rows)
+    for row in annotated[:5]:
+        assessed_at = format_datetime_tr(row.get("assessed_at"))
+        methodology = row.get("methodology_id") or "—"
+        version = row.get("methodology_version") or "—"
+        change = row.get("change_from_previous") or {}
+        change_summary = change.get("summary") or "—"
+        st.caption(
+            f"{assessed_at} · {row.get('status')} · {methodology} ({version}) · "
+            f"Güven: {row.get('confidence') or '—'} · "
+            f"Finansal: {_format_outcome(row.get('financial_overall_outcome'))} · "
+            f"Faaliyet: {_format_outcome(row.get('business_overall_outcome'))} · "
+            f"Değişim: {change_summary}"
+        )

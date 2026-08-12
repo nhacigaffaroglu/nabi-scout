@@ -10,8 +10,15 @@ from services.candidate_surface_service import (
     is_equity_candidate_surface_eligible,
 )
 from services.company_intelligence_service import build_company_intelligence
+from repositories.participation_assessment_repository import (
+    ParticipationAssessmentRepository,
+)
 from services.company_report_participation_service import build_company_report_participation
 from services.fund_report_service import FUND_REPORT_QUERY_PARAM, FUND_REPORT_SESSION_SYMBOL
+from services.participation_assessment_persistence_service import (
+    fetch_participation_assessment_history,
+    save_participation_assessment_snapshot,
+)
 from services.sec_financial_client import SECFinancialClient
 from components.company_report_ui import render_company_report_participation_section
 from services.research_workflow_service import (
@@ -358,11 +365,38 @@ st.info(
     )
 )
 
+participation_repo = ParticipationAssessmentRepository(get_supabase_client())
+participation_symbol = str(candidate.get("symbol") or "").strip().upper()
 participation_view = build_company_report_participation(
     candidate,
     sec_client=SECFinancialClient(),
 )
-render_company_report_participation_section(participation_view)
+participation_history = fetch_participation_assessment_history(
+    participation_repo,
+    participation_symbol,
+    limit=5,
+)
+save_message_key = f"participation_save_message_{participation_symbol}"
+save_skipped_key = f"participation_save_skipped_{participation_symbol}"
+save_clicked = render_company_report_participation_section(
+    participation_view,
+    history=participation_history,
+    save_message=st.session_state.get(save_message_key),
+    save_skipped_duplicate=st.session_state.get(save_skipped_key, False),
+)
+if save_clicked:
+    save_result = save_participation_assessment_snapshot(
+        participation_repo,
+        participation_view,
+    )
+    st.session_state[save_message_key] = save_result.message
+    st.session_state[save_skipped_key] = save_result.skipped_duplicate
+    participation_history = fetch_participation_assessment_history(
+        participation_repo,
+        participation_symbol,
+        limit=5,
+    )
+    st.rerun()
 
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []

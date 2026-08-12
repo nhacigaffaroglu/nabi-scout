@@ -182,6 +182,7 @@ class CompanyReportPageTests(unittest.TestCase):
         self.assertIn("render_company_report_participation_section", source)
         self.assertIn("build_company_report_participation", source)
         self.assertIn("Katılım İncelemesi", ui_source)
+        self.assertIn("Katılım incelemesini kaydet", ui_source)
         self.assertNotIn("participation_score", source)
 
     def test_participation_after_decision_not_in_nabi_metrics(self) -> None:
