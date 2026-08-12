@@ -1,0 +1,233 @@
+{
+  "default_equity_methodology_id": "msci_islamic_index_series",
+  "methodologies": [
+    {
+      "methodology_id": "msci_islamic_index_series",
+      "label": "MSCI Islamic Index Series",
+      "version": "2024-10",
+      "asset_scope": ["equity"],
+      "source_reference": "MSCI Islamic Index Series Methodology (October 2024)",
+      "denominator_policy": "total_assets",
+      "notes": "Descriptive registry entry only; not calculated in NABI Scout 6B.1.",
+      "rules": [
+        {
+          "rule_id": "msci.total_debt_to_total_assets",
+          "screen": "leverage",
+          "numerator": "total_debt",
+          "denominator": "total_assets",
+          "threshold_pct": 33.33,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report"
+        },
+        {
+          "rule_id": "msci.cash_and_interest_bearing_to_total_assets",
+          "screen": "cash_interest",
+          "numerator": "cash_and_interest_bearing_securities",
+          "denominator": "total_assets",
+          "threshold_pct": 33.33,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report"
+        },
+        {
+          "rule_id": "msci.receivables_and_cash_to_total_assets",
+          "screen": "receivables",
+          "numerator": "accounts_receivable_plus_cash",
+          "denominator": "total_assets",
+          "threshold_pct": 33.33,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report",
+          "notes": "MSCI consultation documents note receivables threshold evolution; verify active version before calculation."
+        },
+        {
+          "rule_id": "msci.non_permissible_revenue",
+          "screen": "business_activity",
+          "numerator": "non_permissible_revenue",
+          "denominator": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "measurement_period": "latest_reporting_period"
+        }
+      ]
+    },
+    {
+      "methodology_id": "sp_shariah",
+      "label": "S&P Shariah Indices",
+      "version": "2023-09",
+      "asset_scope": ["equity"],
+      "source_reference": "S&P Shariah Indices Methodology",
+      "denominator_policy": "trailing_36_month_average_market_value_of_equity",
+      "notes": "Receivables threshold documented at 49% for S&P Shariah; distinct from MSCI/FTSE.",
+      "rules": [
+        {
+          "rule_id": "sp.debt_to_avg_equity_36m",
+          "screen": "leverage",
+          "numerator": "total_debt",
+          "denominator": "trailing_36_month_average_market_value_of_equity",
+          "threshold_pct": 33.0,
+          "comparator": "<",
+          "measurement_period": "trailing_36_months"
+        },
+        {
+          "rule_id": "sp.cash_interest_to_avg_equity_36m",
+          "screen": "cash_interest",
+          "numerator": "cash_plus_interest_bearing_securities",
+          "denominator": "trailing_36_month_average_market_value_of_equity",
+          "threshold_pct": 33.0,
+          "comparator": "<",
+          "measurement_period": "trailing_36_months"
+        },
+        {
+          "rule_id": "sp.receivables_to_avg_equity_36m",
+          "screen": "receivables",
+          "numerator": "accounts_receivable",
+          "denominator": "trailing_36_month_average_market_value_of_equity",
+          "threshold_pct": 49.0,
+          "comparator": "<",
+          "measurement_period": "trailing_36_months"
+        },
+        {
+          "rule_id": "sp.non_permissible_revenue",
+          "screen": "business_activity",
+          "numerator": "non_permissible_income_excluding_interest",
+          "denominator": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "measurement_period": "latest_reporting_period"
+        }
+      ]
+    },
+    {
+      "methodology_id": "djim",
+      "label": "Dow Jones Islamic Market Indices",
+      "version": "2019-05",
+      "asset_scope": ["equity"],
+      "source_reference": "Dow Jones Islamic Market Indices Methodology",
+      "denominator_policy": "trailing_24_month_average_market_capitalization",
+      "notes": "Includes ±2 percentage point buffer/grace rules in index methodology; not modeled in 6B.1.",
+      "rules": [
+        {
+          "rule_id": "djim.total_debt_to_avg_mcap_24m",
+          "screen": "leverage",
+          "numerator": "total_debt",
+          "denominator": "trailing_24_month_average_market_capitalization",
+          "threshold_pct": 33.0,
+          "comparator": "<",
+          "measurement_period": "trailing_24_months"
+        },
+        {
+          "rule_id": "djim.cash_interest_to_avg_mcap_24m",
+          "screen": "cash_interest",
+          "numerator": "cash_plus_interest_bearing_securities",
+          "denominator": "trailing_24_month_average_market_capitalization",
+          "threshold_pct": 33.0,
+          "comparator": "<",
+          "measurement_period": "trailing_24_months"
+        },
+        {
+          "rule_id": "djim.receivables_to_avg_mcap_24m",
+          "screen": "receivables",
+          "numerator": "accounts_receivable",
+          "denominator": "trailing_24_month_average_market_capitalization",
+          "threshold_pct": 33.0,
+          "comparator": "<",
+          "measurement_period": "trailing_24_months"
+        },
+        {
+          "rule_id": "djim.non_permissible_revenue",
+          "screen": "business_activity",
+          "numerator": "non_permissible_revenue",
+          "denominator": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "measurement_period": "latest_reporting_period"
+        }
+      ]
+    },
+    {
+      "methodology_id": "ftse_yasaar",
+      "label": "FTSE Yasaar Global Equity Shariah",
+      "version": "ground_rules",
+      "asset_scope": ["equity"],
+      "source_reference": "FTSE Yasaar Global Equity Shariah Index Series Ground Rules",
+      "denominator_policy": "total_assets",
+      "notes": "FTSE uses receivable+cash combined at 50% threshold; distinct from MSCI receivables rule.",
+      "rules": [
+        {
+          "rule_id": "ftse.debt_to_total_assets",
+          "screen": "leverage",
+          "numerator": "interest_bearing_debt",
+          "denominator": "total_assets",
+          "threshold_pct": 33.333,
+          "comparator": "<",
+          "measurement_period": "latest_financial_statement"
+        },
+        {
+          "rule_id": "ftse.cash_interest_to_total_assets",
+          "screen": "cash_interest",
+          "numerator": "cash_and_interest_bearing_items",
+          "denominator": "total_assets",
+          "threshold_pct": 33.333,
+          "comparator": "<",
+          "measurement_period": "latest_financial_statement"
+        },
+        {
+          "rule_id": "ftse.receivables_and_cash_to_total_assets",
+          "screen": "receivables",
+          "numerator": "accounts_receivable_plus_cash",
+          "denominator": "total_assets",
+          "threshold_pct": 50.0,
+          "comparator": "<",
+          "measurement_period": "latest_financial_statement"
+        },
+        {
+          "rule_id": "ftse.non_permissible_revenue",
+          "screen": "business_activity",
+          "numerator": "non_compliant_activities_income",
+          "denominator": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<=",
+          "measurement_period": "latest_reporting_period"
+        }
+      ]
+    },
+    {
+      "methodology_id": "aaoifi_std21",
+      "label": "AAOIFI Shariah Standard No. 21",
+      "version": "std21",
+      "asset_scope": ["equity"],
+      "source_reference": "AAOIFI Shariah Standard No. 21 (equity screening excerpts)",
+      "denominator_policy": "market_capitalization",
+      "notes": "AAOIFI uses 30% thresholds and market-cap denominators; receivables screen not documented in reviewed Std 21 excerpt.",
+      "rules": [
+        {
+          "rule_id": "aaoifi.interest_bearing_debt_to_market_cap",
+          "screen": "leverage",
+          "numerator": "interest_bearing_debt",
+          "denominator": "market_capitalization",
+          "threshold_pct": 30.0,
+          "comparator": "<=",
+          "measurement_period": "point_in_time",
+          "notes": "Denominator averaging policy not fully specified in reviewed excerpt."
+        },
+        {
+          "rule_id": "aaoifi.interest_deposits_to_market_cap",
+          "screen": "cash_interest",
+          "numerator": "interest_taking_deposits",
+          "denominator": "market_capitalization",
+          "threshold_pct": 30.0,
+          "comparator": "<=",
+          "measurement_period": "point_in_time"
+        },
+        {
+          "rule_id": "aaoifi.impure_income",
+          "screen": "business_activity",
+          "numerator": "prohibited_component_income",
+          "denominator": "total_income",
+          "threshold_pct": 5.0,
+          "comparator": "<=",
+          "measurement_period": "latest_reporting_period"
+        }
+      ]
+    }
+  ]
+}

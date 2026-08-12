@@ -11,8 +11,7 @@ SCAN_UNIVERSES = {
     ],
 }
 
-PARTICIPATION_DEFAULTS = {
-    "SPUS": ("Uygun", 100),
-    "HLAL": ("Uygun", 100),
-    "SPSK": ("Uygun", 100),
-}
+from config.participation_catalog import CONFIGURED_PARTICIPATION_CATALOG
+
+# Backward-compatible alias for scan/fund imports.
+PARTICIPATION_DEFAULTS = CONFIGURED_PARTICIPATION_CATALOG

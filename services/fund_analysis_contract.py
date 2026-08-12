@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.participation_intelligence_contract import ParticipationAssessment
+
 ANALYSIS_KIND_FUND = "fund"
 
 CONFIDENCE_HIGH = "HIGH"
@@ -176,6 +178,7 @@ class FundAnalysisResult:
     participation_status: Optional[str] = None
     participation_score: Optional[int] = None
     participation_source: Optional[str] = None
+    participation_assessment: Optional[ParticipationAssessment] = None
     data_completeness_pct: float = 0.0
     analysis_confidence: str = CONFIDENCE_LOW
     data_provider: Optional[str] = None
@@ -199,6 +202,10 @@ class FundAnalysisResult:
             payload["performance_metrics"] = self.performance_metrics.to_dict()
         if self.risk_metrics is not None:
             payload["risk_metrics"] = self.risk_metrics.to_dict()
+        if self.participation_assessment is not None:
+            payload["participation_assessment"] = (
+                self.participation_assessment.to_dict()
+            )
         return payload
 
     def has_performance_or_risk_metrics(self) -> bool:

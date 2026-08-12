@@ -7,7 +7,6 @@ import streamlit as st
 
 from services.fund_analysis_contract import (
     BENCHMARK_RELATIVE_DISCLAIMER,
-    PARTICIPATION_SOURCE_CONFIGURED,
     PERFORMANCE_SECTION_TITLE,
     PERFORMANCE_UNAVAILABLE_MESSAGE,
     PRICE_RETURN_DISCLAIMER,
@@ -15,6 +14,14 @@ from services.fund_analysis_contract import (
     RISK_SECTION_TITLE,
     FundAnalysisResult,
     history_coverage_caption,
+)
+from services.participation_intelligence_contract import (
+    PARTICIPATION_DISCLAIMER_SHORT,
+    PARTICIPATION_SOURCE_CONFIGURED,
+    ParticipationAssessment,
+)
+from services.participation_intelligence_service import (
+    get_participation_assessment_for_fund,
 )
 from services.fund_report_service import (
     COLD_OPEN_BANNER,
@@ -40,15 +47,66 @@ def format_pct(value: Optional[float]) -> str:
     return f"{value:.2f}%"
 
 
+def _resolve_participation_assessment(
+    *,
+    symbol: str,
+    live_result: Optional[FundAnalysisResult],
+    tracked_row: Optional[Dict[str, Any]],
+) -> Optional[ParticipationAssessment]:
+    if live_result is not None and live_result.participation_assessment is not None:
+        return live_result.participation_assessment
+    normalized = str(symbol or "").strip().upper()
+    if not normalized and tracked_row:
+        normalized = str(tracked_row.get("symbol") or "").strip().upper()
+    if normalized:
+        return get_participation_assessment_for_fund(normalized)
+    return None
+
+
+def _format_source_label(source: Optional[str]) -> str:
+    return str(source or "—")
+
+
+def render_participation_assessment(assessment: ParticipationAssessment) -> None:
+    if assessment.is_configured_only():
+        st.info("Katılım bilgisi: Yapılandırılmış")
+    else:
+        st.caption(f"Katılım durumu: {assessment.status}")
+
+    st.markdown(f"**Durum:** {assessment.status}")
+    st.markdown(f"**Kaynak:** {_format_source_label(assessment.source)}")
+    st.markdown(f"**Güven:** {assessment.confidence}")
+
+    if assessment.methodology_label:
+        version = assessment.methodology_version or "—"
+        st.markdown(
+            f"**Metodoloji:** {assessment.methodology_label} ({version})"
+        )
+    elif assessment.is_configured_only():
+        st.markdown("**Bağımsız metodoloji taraması:** yapılmadı")
+
+    if assessment.as_of_date is not None:
+        st.caption(f"Tarih: {assessment.as_of_date.isoformat()}")
+
+    for warning in assessment.warnings:
+        st.caption(warning)
+
+    st.caption(assessment.disclaimer)
+
+
 def format_tracked_participation_label(row: dict) -> str:
+    symbol = str(row.get("symbol") or "").strip().upper()
+    if symbol:
+        assessment = get_participation_assessment_for_fund(symbol)
+        if assessment.is_configured_only():
+            return (
+                f"Katılım bilgisi: Yapılandırılmış ({assessment.status})"
+            )
     status = row.get("participation_status")
-    score = row.get("participation_score")
     if row.get("participation_source") == PARTICIPATION_SOURCE_CONFIGURED and status:
-        score_text = f" / {score}" if score is not None else ""
-        return f"Katılım bilgisi: Yapılandırılmış ({status}{score_text})"
+        return f"Katılım bilgisi: Yapılandırılmış ({status})"
     if status:
-        score_text = f" ({score})" if score is not None else ""
-        return f"Katılım: {status}{score_text}"
+        return f"Katılım: {status}"
     return "Katılım: —"
 
 
@@ -60,35 +118,23 @@ def render_participation_section(
     *,
     tracked_row: Optional[Dict[str, Any]],
     live_result: Optional[FundAnalysisResult],
+    symbol: Optional[str] = None,
 ) -> None:
     st.subheader("Katılım")
-    st.caption(SHARIAH_DISCLAIMER)
+    st.caption(PARTICIPATION_DISCLAIMER_SHORT)
 
-    if live_result is not None:
-        if (
-            live_result.participation_source == PARTICIPATION_SOURCE_CONFIGURED
-            and live_result.participation_status
-        ):
-            score_text = (
-                f" / {live_result.participation_score}"
-                if live_result.participation_score is not None
-                else ""
-            )
-            st.info(
-                f"Katılım bilgisi: Yapılandırılmış "
-                f"({live_result.participation_status}{score_text})"
-            )
-        elif live_result.participation_status:
-            st.caption(
-                f"Katılım: {live_result.participation_status} "
-                f"({live_result.participation_score})"
-            )
-        else:
-            st.caption("Katılım: —")
-        return
-
-    if tracked_row:
-        st.info(format_tracked_participation_label(tracked_row))
+    resolved_symbol = (
+        str(symbol or "").strip().upper()
+        or (live_result.symbol if live_result else "")
+        or str((tracked_row or {}).get("symbol") or "").strip().upper()
+    )
+    assessment = _resolve_participation_assessment(
+        symbol=resolved_symbol,
+        live_result=live_result,
+        tracked_row=tracked_row,
+    )
+    if assessment is not None:
+        render_participation_assessment(assessment)
         return
 
     st.caption("Katılım: —")
@@ -367,6 +413,7 @@ def render_fund_report(view: FundReportViewModel, *, format_datetime) -> None:
     render_participation_section(
         tracked_row=view.tracked_row,
         live_result=view.live_result,
+        symbol=view.symbol,
     )
     render_cost_section(view.live_result)
     render_portfolio_section(view.live_result)

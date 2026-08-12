@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
-from config.scan_universe import PARTICIPATION_DEFAULTS
+from config.participation_catalog import CONFIGURED_PARTICIPATION_CATALOG
 from services.alpha_vantage_adapter import (
     alpha_daily_rows,
     normalize_alpha_expense_ratio,
@@ -49,6 +49,9 @@ from services.fund_performance_service import (
     compute_fund_performance_metrics,
     compute_fund_risk_metrics,
     normalize_price_points,
+)
+from services.participation_intelligence_service import (
+    get_participation_assessment_for_fund,
 )
 from services.symbol_resolver_service import ResolvedSecurity, participation_for_symbol
 
@@ -130,9 +133,10 @@ def analyze_fund(
     participation_status, participation_score = participation_for_symbol(symbol)
     participation_source = (
         PARTICIPATION_SOURCE_CONFIGURED
-        if symbol in PARTICIPATION_DEFAULTS
+        if symbol in CONFIGURED_PARTICIPATION_CATALOG
         else None
     )
+    participation_assessment = get_participation_assessment_for_fund(symbol)
 
     performance_metrics: Optional[FundPerformanceMetrics] = None
     risk_metrics: Optional[FundRiskMetrics] = None
@@ -254,6 +258,7 @@ def analyze_fund(
         participation_status=participation_status,
         participation_score=participation_score,
         participation_source=participation_source,
+        participation_assessment=participation_assessment,
         data_completeness_pct=completeness,
         analysis_confidence=confidence,
         data_provider=DATA_PROVIDER_ALPHA_VANTAGE,

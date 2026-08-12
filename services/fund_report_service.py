@@ -14,9 +14,9 @@ FUND_REPORT_SESSION_LIVE = "fund_report_live"
 FUND_REPORT_SESSION_RESOLVED = "fund_report_resolved"
 FUND_REPORT_QUERY_PARAM = "fund_symbol"
 
-SHARIAH_DISCLAIMER = (
-    "Bu bilgi bağımsız NABI Şeriat uygunluk doğrulaması değildir."
-)
+from services.participation_intelligence_contract import PARTICIPATION_DISCLAIMER_SHORT
+
+SHARIAH_DISCLAIMER = PARTICIPATION_DISCLAIMER_SHORT
 LIVE_DATA_PROMPT = (
     "Canlı veri yok. Ayrıntılar için «Canlı veriyi yenile» kullanın."
 )
