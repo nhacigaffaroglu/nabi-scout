@@ -29,8 +29,10 @@ def render_company_report_participation_section(
     view: CompanyReportParticipationView,
     *,
     history: Optional[Sequence[Mapping[str, Any]]] = None,
+    history_unavailable_message: Optional[str] = None,
     save_message: Optional[str] = None,
     save_skipped_duplicate: bool = False,
+    save_failed: bool = False,
 ) -> bool:
     st.subheader("Katılım İncelemesi")
     st.caption(
@@ -43,13 +45,13 @@ def render_company_report_participation_section(
             view.error_message
             or "Katılım incelemesi şu anda gösterilemiyor."
         )
-        _render_participation_history(history)
+        _render_participation_history(history, history_unavailable_message)
         return False
 
     result = view.result
     if result is None:
         st.info("Katılım incelemesi sonucu üretilemedi.")
-        _render_participation_history(history)
+        _render_participation_history(history, history_unavailable_message)
         return False
 
     assessment = result.participation_assessment
@@ -95,20 +97,26 @@ def render_company_report_participation_section(
         key=f"save_participation_assessment_{view.symbol}",
     )
     if save_message:
-        if save_skipped_duplicate:
+        if save_failed:
+            st.warning(save_message)
+        elif save_skipped_duplicate:
             st.info(save_message)
         else:
             st.success(save_message)
 
     st.caption(PARTICIPATION_DISCLAIMER_SHORT)
-    _render_participation_history(history)
+    _render_participation_history(history, history_unavailable_message)
     return save_clicked
 
 
 def _render_participation_history(
     history: Optional[Sequence[Mapping[str, Any]]],
+    unavailable_message: Optional[str] = None,
 ) -> None:
     st.markdown("**Katılım geçmişi**")
+    if unavailable_message:
+        st.info(unavailable_message)
+        return
     rows = list(history or [])
     if not rows:
         st.caption("Henüz kaydedilmiş katılım incelemesi yok.")

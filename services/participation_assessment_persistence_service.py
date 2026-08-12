@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from repositories.participation_assessment_repository import (
     ParticipationAssessmentRepository,
@@ -18,8 +18,24 @@ from services.participation_intelligence_contract import PARTICIPATION_STATUS_UY
 class SaveParticipationAssessmentResult:
     saved: bool
     skipped_duplicate: bool = False
+    persistence_failed: bool = False
     row: Optional[Dict[str, Any]] = None
     message: str = ""
+
+
+@dataclass(frozen=True)
+class ParticipationHistoryResult:
+    history: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
+    available: bool = True
+    message: str = ""
+
+
+PERSISTENCE_HISTORY_UNAVAILABLE_MESSAGE = (
+    "Katılım geçmişi şu anda yüklenemedi. Veritabanı kaydı kullanılamıyor."
+)
+PERSISTENCE_SAVE_FAILED_MESSAGE = (
+    "Katılım incelemesi kaydedilemedi. Veritabanı kaydı kullanılamıyor."
+)
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -151,20 +167,28 @@ def save_participation_assessment_snapshot(
         )
 
     payload = build_snapshot_payload(view.result)
-    if skip_if_identical:
-        latest = repo.get_latest(payload["symbol"])
-        if (
-            latest is not None
-            and latest.get("semantic_identity") == payload["semantic_identity"]
-        ):
-            return SaveParticipationAssessmentResult(
-                saved=False,
-                skipped_duplicate=True,
-                row=latest,
-                message="Bu katılım incelemesi zaten kayıtlı; tekrar eklenmedi.",
-            )
+    try:
+        if skip_if_identical:
+            latest = repo.get_latest(payload["symbol"])
+            if (
+                latest is not None
+                and latest.get("semantic_identity") == payload["semantic_identity"]
+            ):
+                return SaveParticipationAssessmentResult(
+                    saved=False,
+                    skipped_duplicate=True,
+                    row=latest,
+                    message="Bu katılım incelemesi zaten kayıtlı; tekrar eklenmedi.",
+                )
 
-    row = repo.append_snapshot(payload)
+        row = repo.append_snapshot(payload)
+    except Exception:
+        return SaveParticipationAssessmentResult(
+            saved=False,
+            persistence_failed=True,
+            message=PERSISTENCE_SAVE_FAILED_MESSAGE,
+        )
+
     return SaveParticipationAssessmentResult(
         saved=True,
         row=row,
@@ -176,7 +200,10 @@ def fetch_latest_participation_assessment(
     repo: ParticipationAssessmentRepository,
     symbol: str,
 ) -> Optional[Dict[str, Any]]:
-    row = repo.get_latest(symbol)
+    try:
+        row = repo.get_latest(symbol)
+    except Exception:
+        return None
     return snapshot_from_row(row) if row is not None else None
 
 
@@ -185,11 +212,19 @@ def fetch_participation_assessment_history(
     symbol: str,
     *,
     limit: int = 10,
-) -> List[Dict[str, Any]]:
-    return [
-        snapshot_from_row(row)
-        for row in repo.get_recent_history(symbol, limit=limit)
-    ]
+) -> ParticipationHistoryResult:
+    try:
+        rows = repo.get_recent_history(symbol, limit=limit)
+    except Exception:
+        return ParticipationHistoryResult(
+            history=(),
+            available=False,
+            message=PERSISTENCE_HISTORY_UNAVAILABLE_MESSAGE,
+        )
+    return ParticipationHistoryResult(
+        history=tuple(snapshot_from_row(row) for row in rows),
+        available=True,
+    )
 
 
 def saved_snapshot_is_final_uygun(snapshot: Mapping[str, Any]) -> bool:

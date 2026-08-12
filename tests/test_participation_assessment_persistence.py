@@ -281,8 +281,9 @@ class ParticipationPersistenceServiceTests(unittest.TestCase):
         repo = ParticipationAssessmentRepository(InMemorySupabase())
         repo.append_snapshot(build_snapshot_payload(sample_assessment_result()))
         history = fetch_participation_assessment_history(repo, "AAPL", limit=3)
-        self.assertEqual(len(history), 1)
-        self.assertEqual(history[0]["status"], PARTICIPATION_STATUS_KONTROL_ET)
+        self.assertTrue(history.available)
+        self.assertEqual(len(history.history), 1)
+        self.assertEqual(history.history[0]["status"], PARTICIPATION_STATUS_KONTROL_ET)
 
     def test_no_final_uygun_in_saved_snapshot(self) -> None:
         snapshot = snapshot_from_row(
@@ -340,8 +341,19 @@ class CompanyReportPersistenceIntegrationTests(unittest.TestCase):
     def test_page_save_only_on_button_click(self) -> None:
         with open("pages/4_Company_Report.py", encoding="utf-8") as handle:
             source = handle.read()
-        save_block = source.split("if save_clicked:")[1].split("st.rerun()")[0]
+        save_block = source.split("if save_clicked:")[1]
         self.assertIn("save_participation_assessment_snapshot", save_block)
+        self.assertIn("if save_result.saved or save_result.skipped_duplicate:", save_block)
+
+    def test_failed_save_does_not_rerun(self) -> None:
+        with open("pages/4_Company_Report.py", encoding="utf-8") as handle:
+            source = handle.read()
+        save_block = source.split("if save_clicked:")[1]
+        self.assertIn("if save_result.saved or save_result.skipped_duplicate:", save_block)
+        self.assertNotIn(
+            "persistence_failed",
+            save_block.split("if save_result.saved or save_result.skipped_duplicate:")[1],
+        )
 
     def test_ui_save_button_and_history(self) -> None:
         render_source = inspect.getsource(
@@ -387,15 +399,91 @@ class CompanyReportPersistenceIntegrationTests(unittest.TestCase):
         isolated_repo = ParticipationAssessmentRepository(client)
         isolated_repo.get_recent_history = repo.get_recent_history  # type: ignore[method-assign]
         history = fetch_participation_assessment_history(isolated_repo, "AAPL")
-        self.assertEqual(len(history), 1)
+        self.assertTrue(history.available)
+        self.assertEqual(len(history.history), 1)
         client.table.assert_not_called()
+
+
+class ParticipationPersistenceHardeningTests(unittest.TestCase):
+    def test_history_db_failure_returns_unavailable(self) -> None:
+        repo = ParticipationAssessmentRepository(MagicMock())
+        repo.get_recent_history = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError(
+                'relation "participation_assessment_snapshots" does not exist'
+            )
+        )
+        history = fetch_participation_assessment_history(repo, "AAPL")
+        self.assertFalse(history.available)
+        self.assertEqual(history.history, ())
+        self.assertIn("yüklenemedi", history.message)
+
+    def test_save_select_failure_is_graceful(self) -> None:
+        repo = ParticipationAssessmentRepository(MagicMock())
+        repo.get_latest = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("connection failed")
+        )
+        view = CompanyReportParticipationView(
+            symbol="AAPL",
+            available=True,
+            result=sample_assessment_result(),
+        )
+        result = save_participation_assessment_snapshot(repo, view)
+        self.assertFalse(result.saved)
+        self.assertTrue(result.persistence_failed)
+        repo.append_snapshot = MagicMock()  # type: ignore[method-assign]
+        repo.append_snapshot.assert_not_called()
+
+    def test_save_insert_failure_is_graceful(self) -> None:
+        repo = ParticipationAssessmentRepository(MagicMock())
+        repo.get_latest = MagicMock(return_value=None)  # type: ignore[method-assign]
+        repo.append_snapshot = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("insert failed")
+        )
+        view = CompanyReportParticipationView(
+            symbol="AAPL",
+            available=True,
+            result=sample_assessment_result(),
+        )
+        result = save_participation_assessment_snapshot(repo, view)
+        self.assertFalse(result.saved)
+        self.assertTrue(result.persistence_failed)
+
+    def test_successful_save_unchanged(self) -> None:
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        view = CompanyReportParticipationView(
+            symbol="AAPL",
+            available=True,
+            result=sample_assessment_result(),
+        )
+        result = save_participation_assessment_snapshot(repo, view)
+        self.assertTrue(result.saved)
+        self.assertFalse(result.persistence_failed)
+
+    def test_persistence_failure_handling_has_zero_provider_calls(self) -> None:
+        import services.participation_assessment_persistence_service as module
+
+        source = inspect.getsource(module)
+        self.assertNotIn("SECFinancialClient", source)
+        self.assertNotIn("company_facts", source)
+
+    def test_ui_shows_history_unavailable_state(self) -> None:
+        source = inspect.getsource(company_report_ui._render_participation_history)
+        self.assertIn("unavailable_message", source)
+        self.assertIn("st.info(unavailable_message)", source)
+
+    def test_ui_shows_save_failure_warning(self) -> None:
+        source = inspect.getsource(company_report_ui.render_company_report_participation_section)
+        self.assertIn("save_failed", source)
+        self.assertIn("st.warning(save_message)", source)
 
 
 class CompanyReportParticipationRenderTests(unittest.TestCase):
     def test_render_signature_supports_history_and_save_feedback(self) -> None:
         source = inspect.getsource(company_report_ui.render_company_report_participation_section)
         self.assertIn("history:", source)
+        self.assertIn("history_unavailable_message:", source)
         self.assertIn("save_message:", source)
+        self.assertIn("save_failed:", source)
         self.assertIn("return save_clicked", source)
 
     def test_empty_history_message_present(self) -> None:

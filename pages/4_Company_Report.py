@@ -371,18 +371,25 @@ participation_view = build_company_report_participation(
     candidate,
     sec_client=SECFinancialClient(),
 )
-participation_history = fetch_participation_assessment_history(
+participation_history_result = fetch_participation_assessment_history(
     participation_repo,
     participation_symbol,
     limit=5,
 )
 save_message_key = f"participation_save_message_{participation_symbol}"
 save_skipped_key = f"participation_save_skipped_{participation_symbol}"
+save_failed_key = f"participation_save_failed_{participation_symbol}"
 save_clicked = render_company_report_participation_section(
     participation_view,
-    history=participation_history,
+    history=participation_history_result.history,
+    history_unavailable_message=(
+        participation_history_result.message
+        if not participation_history_result.available
+        else None
+    ),
     save_message=st.session_state.get(save_message_key),
     save_skipped_duplicate=st.session_state.get(save_skipped_key, False),
+    save_failed=st.session_state.get(save_failed_key, False),
 )
 if save_clicked:
     save_result = save_participation_assessment_snapshot(
@@ -391,12 +398,9 @@ if save_clicked:
     )
     st.session_state[save_message_key] = save_result.message
     st.session_state[save_skipped_key] = save_result.skipped_duplicate
-    participation_history = fetch_participation_assessment_history(
-        participation_repo,
-        participation_symbol,
-        limit=5,
-    )
-    st.rerun()
+    st.session_state[save_failed_key] = save_result.persistence_failed
+    if save_result.saved or save_result.skipped_duplicate:
+        st.rerun()
 
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []
