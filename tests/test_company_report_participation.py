@@ -185,6 +185,15 @@ class CompanyReportPageTests(unittest.TestCase):
         self.assertIn("Katılım incelemesini kaydet", ui_source)
         self.assertNotIn("participation_score", source)
 
+    def test_company_report_sec_client_has_contact_email(self) -> None:
+        with open("pages/4_Company_Report.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertNotIn("SECFinancialClient()", source)
+        self.assertIn(
+            'SECFinancialClient(contact_email="nabi-scout@example.com")',
+            source,
+        )
+
     def test_participation_after_decision_not_in_nabi_metrics(self) -> None:
         with open("pages/4_Company_Report.py", encoding="utf-8") as handle:
             source = handle.read()

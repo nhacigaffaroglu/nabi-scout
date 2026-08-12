@@ -369,7 +369,7 @@ participation_repo = ParticipationAssessmentRepository(get_supabase_client())
 participation_symbol = str(candidate.get("symbol") or "").strip().upper()
 participation_view = build_company_report_participation(
     candidate,
-    sec_client=SECFinancialClient(),
+    sec_client=SECFinancialClient(contact_email="nabi-scout@example.com"),
 )
 participation_history_result = fetch_participation_assessment_history(
     participation_repo,
