@@ -11,6 +11,7 @@ from services.alpha_vantage_adapter import (
     parse_alpha_holdings,
     parse_alpha_sector_weights,
 )
+from services.alpha_vantage_cache import AlphaVantageFundCache, get_fund_cache
 from services.alpha_vantage_client import (
     STATUS_AUTH,
     STATUS_MALFORMED,
@@ -78,7 +79,9 @@ def analyze_fund(
     resolved: ResolvedSecurity,
     *,
     alpha_vantage_client: AlphaVantageClient,
+    alpha_cache: Optional[AlphaVantageFundCache] = None,
 ) -> FundAnalysisResult:
+    cache = alpha_cache if alpha_cache is not None else get_fund_cache()
     symbol = resolved.symbol
     endpoint_status: Dict[str, str] = {}
     warnings: List[str] = []
@@ -89,6 +92,7 @@ def analyze_fund(
         alpha_vantage_client,
         "etf_profile",
         symbol,
+        cache=cache,
     )
     if profile_warning:
         warnings.append(profile_warning)
@@ -144,6 +148,7 @@ def analyze_fund(
                 alpha_vantage_client,
                 "time_series_daily",
                 symbol,
+                cache=cache,
                 outputsize="compact",
             )
         )
@@ -296,19 +301,37 @@ def _safe_alpha_call(
     client: AlphaVantageClient,
     method_name: str,
     symbol: str,
+    *,
+    cache: Optional[AlphaVantageFundCache] = None,
     **kwargs: str,
 ) -> Tuple[Dict[str, Any], str, Optional[str]]:
+    if cache is not None:
+        cached = cache.get(method_name, symbol, **kwargs)
+        if cached is not None:
+            warning = None if cached.status == STATUS_OK else _warning_for_alpha(
+                method_name,
+                cached.status,
+            )
+            return cached.payload, cached.status, warning
+
     method = getattr(client, method_name)
     try:
         payload = method(symbol, **kwargs) if kwargs else method(symbol)
         if payload is None:
             payload = {}
         if not isinstance(payload, dict):
-            return {}, STATUS_MALFORMED, _warning_for_alpha(method_name, STATUS_MALFORMED)
+            result = ({}, STATUS_MALFORMED, _warning_for_alpha(method_name, STATUS_MALFORMED))
+            if cache is not None:
+                cache.set(method_name, symbol, result[0], result[1], **kwargs)
+            return result
+        if cache is not None:
+            cache.set(method_name, symbol, payload, STATUS_OK, **kwargs)
         return payload, STATUS_OK, None
     except AlphaVantageError as exc:
         status = alpha_error_status(exc)
         warning = _warning_for_alpha(method_name, status)
+        if cache is not None:
+            cache.set(method_name, symbol, {}, status, **kwargs)
         return {}, status, warning
 
 

@@ -28,7 +28,13 @@ from services.fund_analysis_service import (
     score_cost_dimension,
     score_liquidity_dimension,
 )
+from services.alpha_vantage_cache import reset_fund_cache
 from services.symbol_resolver_service import ResolvedSecurity
+
+
+class FundAnalysisTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        reset_fund_cache()
 
 
 def resolved_etf(symbol: str, **overrides):
@@ -126,7 +132,7 @@ def make_alpha_client(
     return client
 
 
-class FundAnalysisServiceTests(unittest.TestCase):
+class FundAnalysisServiceTests(FundAnalysisTestCase):
     def test_spus_full_fund_result(self) -> None:
         alpha = make_alpha_client(profile=sample_alpha_etf_profile("SPUS"))
 
@@ -342,7 +348,7 @@ class FundDimensionThresholdTests(unittest.TestCase):
         self.assertIsNone(score_concentration_dimension(None))
 
 
-class FundAnalysisRoutingTests(unittest.TestCase):
+class FundAnalysisRoutingTests(FundAnalysisTestCase):
     @unittest.mock.patch("services.manual_analysis_service.run_scan")
     @unittest.mock.patch("services.manual_analysis_service.analyze_fund")
     @unittest.mock.patch("services.manual_analysis_service.resolve_symbol")
@@ -489,7 +495,7 @@ class FundAnalysisRoutingTests(unittest.TestCase):
         self.assertNotIn("decision_label", payload)
 
 
-class FundAnalysisPerformanceIntegrationTests(unittest.TestCase):
+class FundAnalysisPerformanceIntegrationTests(FundAnalysisTestCase):
     def test_available_history_attaches_metrics(self) -> None:
         alpha = make_alpha_client()
 
