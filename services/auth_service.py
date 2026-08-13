@@ -89,6 +89,16 @@ def sign_out() -> None:
     clear_auth_session()
 
 
+def get_current_user_id(client: Client) -> str:
+    """Return authenticated Supabase user id for user-scoped Wealth data."""
+    response = client.auth.get_user()
+    user = getattr(response, "user", None)
+    user_id = getattr(user, "id", None) if user is not None else None
+    if not user_id:
+        raise AuthenticationRequired("Oturum gerekli.")
+    return str(user_id)
+
+
 def require_authentication() -> Client:
     """Render login when needed; return authenticated Supabase client or stop."""
     if is_authenticated():
