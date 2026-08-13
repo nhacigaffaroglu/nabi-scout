@@ -7,6 +7,10 @@ from services.nabi_intelligence_facade import get_investment_intelligence
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.ui import prepare_protected_page
 from services.wealth_benchmark_service import WealthBenchmarkService
+from services.wealth_comparison_chart import (
+    build_benchmark_comparison_altair_chart,
+    build_benchmark_comparison_chart_frame,
+)
 from services.wealth_contract import (
     ACCOUNT_TYPE_BROKERAGE,
     ACCOUNT_TYPE_CASH,
@@ -691,21 +695,13 @@ with tab_history:
         provider_calls = benchmark_service.fetch_count - fetch_before
 
         if benchmark_view.performance_comparable:
-            comparison_rows = []
-            for point in benchmark_view.portfolio_normalized:
-                comparison_rows.append(
-                    {
-                        "portfolio_index": point.portfolio_index,
-                        "benchmark_index": point.benchmark_index,
-                    }
-                )
-            comparison_df = pd.DataFrame(
-                comparison_rows,
-                index=[
-                    point.label_date for point in benchmark_view.portfolio_normalized
-                ],
+            comparison_df = build_benchmark_comparison_chart_frame(
+                benchmark_view.portfolio_normalized,
             )
-            st.line_chart(comparison_df)
+            st.altair_chart(
+                build_benchmark_comparison_altair_chart(comparison_df),
+                use_container_width=True,
+            )
 
             c1, c2, c3 = st.columns(3)
             if benchmark_view.portfolio_return_pct is not None:

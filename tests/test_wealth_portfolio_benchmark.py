@@ -26,7 +26,17 @@ from services.wealth_portfolio_return_engine import (
     compute_subperiod_return_decimal,
     compute_subperiod_return_for_period,
 )
-from services.wealth_timeline_contract import PortfolioLinkedPerformance, PortfolioSnapshotView
+from services.wealth_comparison_chart import (
+    BENCHMARK_SERIES_LABEL,
+    PORTFOLIO_SERIES_LABEL,
+    build_benchmark_comparison_altair_chart,
+    build_benchmark_comparison_chart_frame,
+)
+from services.wealth_timeline_contract import (
+    NormalizedSeriesPoint,
+    PortfolioLinkedPerformance,
+    PortfolioSnapshotView,
+)
 from services.wealth_timeline_service import WealthTimelineService
 
 
@@ -875,6 +885,82 @@ class WealthPerformanceIntegrationTests(unittest.TestCase):
             self.assertNotIn("nabi_score", lowered)
             self.assertNotIn("participation", lowered)
             self.assertNotIn("decision", lowered)
+
+
+class BenchmarkComparisonChartTests(unittest.TestCase):
+    def _points(
+        self,
+        portfolio_values: list[float],
+        benchmark_values: list[float],
+    ) -> list[NormalizedSeriesPoint]:
+        timestamps = [
+            "2026-08-01T10:00:00+00:00",
+            "2026-08-13T15:00:00+00:00",
+        ][: len(portfolio_values)]
+        return [
+            NormalizedSeriesPoint(
+                label_date=timestamps[index],
+                portfolio_index=portfolio_values[index],
+                benchmark_index=benchmark_values[index],
+            )
+            for index in range(len(portfolio_values))
+        ]
+
+    def test_flat_comparison_chart_values_near_100(self) -> None:
+        frame = build_benchmark_comparison_chart_frame(
+            self._points([100.0, 100.0], [100.0, 100.0]),
+        )
+        self.assertListEqual(list(frame.columns), ["timestamp", "Portföy", "SPY"])
+        self.assertTrue(frame["Portföy"].between(95, 105).all())
+        self.assertTrue(frame["SPY"].between(95, 105).all())
+        self.assertFalse(frame["timestamp"].dtype == object)
+
+    def test_positive_movement_chart_values(self) -> None:
+        frame = build_benchmark_comparison_chart_frame(
+            self._points([100.0, 105.0], [100.0, 102.0]),
+        )
+        self.assertAlmostEqual(frame["Portföy"].iloc[-1], 105.0)
+        self.assertAlmostEqual(frame["SPY"].iloc[-1], 102.0)
+
+    def test_negative_movement_chart_values(self) -> None:
+        frame = build_benchmark_comparison_chart_frame(
+            self._points([100.0, 95.0], [100.0, 98.0]),
+        )
+        self.assertAlmostEqual(frame["Portföy"].iloc[-1], 95.0)
+        self.assertAlmostEqual(frame["SPY"].iloc[-1], 98.0)
+
+    def test_timestamp_is_x_dimension_not_y_value(self) -> None:
+        frame = build_benchmark_comparison_chart_frame(
+            self._points([100.0, 105.0], [100.0, 102.0]),
+        )
+        self.assertIn("timestamp", frame.columns)
+        self.assertNotIn("timestamp", [PORTFOLIO_SERIES_LABEL, BENCHMARK_SERIES_LABEL])
+        chart = build_benchmark_comparison_altair_chart(frame)
+        spec = chart.to_dict()
+        self.assertEqual(spec["encoding"]["x"]["field"], "timestamp")
+        self.assertEqual(spec["encoding"]["y"]["field"], "Normalize endeks")
+        self.assertFalse(spec["encoding"]["y"]["scale"].get("zero", True))
+
+    def test_display_series_labels(self) -> None:
+        frame = build_benchmark_comparison_chart_frame(
+            self._points([100.0, 100.0], [100.0, 100.0]),
+        )
+        self.assertEqual(PORTFOLIO_SERIES_LABEL, "Portföy")
+        self.assertEqual(BENCHMARK_SERIES_LABEL, "SPY")
+        chart = build_benchmark_comparison_altair_chart(frame)
+        color_scale = chart.to_dict()["encoding"]["color"]["scale"]
+        self.assertEqual(color_scale["domain"], ["Portföy", "SPY"])
+
+    def test_missing_normalized_values_fail_closed(self) -> None:
+        points = [
+            NormalizedSeriesPoint(
+                label_date="2026-08-01T10:00:00+00:00",
+                portfolio_index=None,
+                benchmark_index=100.0,
+            )
+        ]
+        with self.assertRaises(ValueError):
+            build_benchmark_comparison_chart_frame(points)
 
 
 if __name__ == "__main__":
