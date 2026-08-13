@@ -28,6 +28,7 @@ from services.wealth_contract import (
     WealthValidationError,
 )
 from services.wealth_core_service import WealthCoreService
+from services.wealth_adviser_service import WealthAdviserService
 from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
 from services.wealth_diagnostics_engine import effective_position_count
 from services.wealth_diagnostics_service import WealthDiagnosticsService
@@ -80,6 +81,7 @@ intelligence = PortfolioIntelligenceService(
 )
 timeline = WealthTimelineService(wealth)
 diagnostics_service = WealthDiagnosticsService(wealth)
+adviser_service = WealthAdviserService()
 
 
 def _severity_badge(severity: DiagnosticSeverity) -> str:
@@ -139,6 +141,16 @@ def _render_diagnostic_card(diagnostic) -> None:
             if diagnostic.evidence:
                 st.json(diagnostic.evidence)
 
+def _render_adviser_finding(finding) -> None:
+    with st.expander(f"{finding.title}"):
+        st.write(finding.statement)
+        if finding.affected_symbols:
+            st.caption(f"Semboller: {', '.join(finding.affected_symbols)}")
+        if finding.limitations:
+            for note in finding.limitations:
+                st.caption(f"Not: {note}")
+
+
 st.title("💰 Wealth Core")
 st.caption(
     "Manuel portföy, hesap, varlık ve işlem kaydı. "
@@ -160,7 +172,7 @@ col6.metric("İşlem", summary.transaction_count)
 
 st.divider()
 
-tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis = st.tabs(
+tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis, tab_adviser = st.tabs(
     [
         "Özet",
         "Hesaplar",
@@ -170,6 +182,7 @@ tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, 
         "Borçlar",
         "Geçmiş",
         "Analiz",
+        "Danışman",
     ]
 )
 
@@ -916,3 +929,49 @@ with tab_analysis:
     else:
         for diagnostic in nabi_items:
             _render_diagnostic_card(diagnostic)
+
+with tab_adviser:
+    st.subheader("Danışman")
+    st.info("AI danışman henüz etkin değil.")
+    st.caption(
+        "Bu görünüm deterministik Wealth verilerinden üretilir; "
+        "henüz bir dil modeli tarafından yorumlanmamaktadır."
+    )
+
+    adviser_performance_view = timeline.build_performance_view(portfolio)
+    adviser_diagnostics_view = diagnostics_service.build_diagnostics_view(
+        portfolio,
+        portfolio_view,
+        performance_view=adviser_performance_view,
+        benchmark_view=None,
+    )
+    _, adviser_brief = adviser_service.build_preview(
+        portfolio_view,
+        adviser_diagnostics_view,
+        performance_view=adviser_performance_view,
+        benchmark_view=None,
+        generated_from_snapshot_count=len(adviser_performance_view.history_points),
+    )
+
+    st.markdown(f"**{adviser_brief.headline}**")
+    st.write(adviser_brief.portfolio_summary)
+
+    if adviser_brief.data_quality_notes:
+        st.warning("Veri kalitesi sınırlamaları:")
+        for note in adviser_brief.data_quality_notes:
+            st.write(f"- {note}")
+
+    st.markdown("**Öne çıkan bulgular**")
+    if not adviser_brief.top_findings:
+        st.info("Öne çıkan bulgu yok.")
+    else:
+        for finding in adviser_brief.top_findings:
+            _render_adviser_finding(finding)
+
+    if adviser_brief.questions_for_user:
+        st.markdown("**Sorulabilecek sorular**")
+        for question in adviser_brief.questions_for_user:
+            st.write(f"- {question}")
+
+    with st.expander("Teknik bağlam"):
+        st.json(adviser_brief.to_dict())
