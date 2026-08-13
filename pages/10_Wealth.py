@@ -1,7 +1,9 @@
 import streamlit as st
 
 from services.auth_service import get_current_user_id
+from services.fmp_client import FMPClient, FMPError
 from services.nabi_intelligence_facade import get_investment_intelligence
+from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.ui import prepare_protected_page
 from services.wealth_contract import (
     ACCOUNT_TYPE_BROKERAGE,
@@ -20,10 +22,44 @@ from services.wealth_contract import (
     WealthValidationError,
 )
 from services.wealth_core_service import WealthCoreService
+from services.wealth_price_service import WealthPriceService
+
+
+def _format_money(value, currency: str) -> str:
+    if value is None:
+        return "—"
+    return f"{value:,.2f} {currency}"
+
+
+def _load_price_service() -> WealthPriceService:
+    try:
+        fmp = FMPClient.from_streamlit_secrets()
+    except FMPError:
+        fmp = None
+    return WealthPriceService(fmp)
+
+
+def _render_allocation(title: str, slices, currency: str) -> None:
+    if not slices:
+        return
+    st.markdown(f"**{title}**")
+    for row in slices:
+        st.progress(min(max(row.weight_pct / 100.0, 0.0), 1.0))
+        st.caption(
+            f"{row.label}: {_format_money(row.market_value, currency)} "
+            f"({row.weight_pct:.1f}%)"
+        )
+
 
 client = prepare_protected_page("Wealth | NABI Scout", "💰")
 user_id = get_current_user_id(client)
 wealth = WealthCoreService(client, user_id)
+price_service = _load_price_service()
+intelligence = PortfolioIntelligenceService(
+    wealth,
+    price_service,
+    nabi_client=client,
+)
 
 st.title("💰 Wealth Core")
 st.caption(
@@ -34,6 +70,7 @@ st.caption(
 
 portfolio = wealth.ensure_default_portfolio()
 summary = wealth.get_summary()
+portfolio_view = intelligence.build_view(portfolio, enrich_nabi=True)
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 col1.metric("Portföy", summary.portfolio_count)
@@ -67,25 +104,107 @@ asset_by_id = {row["id"]: row for row in assets}
 
 with tab_summary:
     st.subheader("Portföy özeti")
-    st.write(f"**{portfolio.get('name')}** ({portfolio.get('base_currency')})")
-    if not accounts and not positions and not liabilities:
+    st.write(
+        f"**{portfolio_view.portfolio_name}** "
+        f"({portfolio_view.base_currency})"
+    )
+
+    if portfolio_view.total_position_count == 0 and not accounts and not liabilities:
         st.info("Henüz wealth kaydı yok. Hesap ve varlık ekleyerek başlayın.")
     else:
+        base_ccy = portfolio_view.base_currency
+        v1, v2, v3, v4 = st.columns(4)
+        partial = (
+            portfolio_view.unpriced_position_count > 0
+            or portfolio_view.foreign_currency_position_count > 0
+            or portfolio_view.priced_position_count < portfolio_view.total_position_count
+        )
+        if partial:
+            st.caption(
+                f"Toplamlar yalnızca fiyatlı {base_ccy} pozisyonlarını kapsar; "
+                "tam portföy değeri değildir."
+            )
+
+        v1.metric(
+            f"Piyasa değeri (fiyatlı {base_ccy})",
+            _format_money(portfolio_view.priced_total_market_value, base_ccy),
+        )
+        v2.metric(
+            f"Maliyet (fiyatlı {base_ccy})",
+            _format_money(portfolio_view.priced_total_cost_basis, base_ccy),
+        )
+        v3.metric(
+            f"Gerçekleşmemiş K/Z ({base_ccy})",
+            _format_money(portfolio_view.priced_total_unrealized_pl, base_ccy),
+        )
+        v4.metric(
+            "Nakit / Yatırım (fiyatlı)",
+            f"{portfolio_view.health.cash_pct:.1f}% / "
+            f"{portfolio_view.health.invested_pct:.1f}%",
+        )
+
+        if portfolio_view.mixed_currency_warning:
+            st.warning(
+                f"{portfolio_view.foreign_currency_position_count} pozisyon "
+                f"baz para birimi ({base_ccy}) dışında. "
+                "FX dönüşümü yok; bu pozisyonlar toplam değere dahil değil."
+            )
+        if portfolio_view.unpriced_position_count:
+            st.warning(
+                f"{portfolio_view.unpriced_position_count} pozisyon için güncel "
+                "fiyat yok; toplamlardan hariç tutuldu."
+            )
+        if portfolio_view.valuation_errors:
+            with st.expander("Fiyat sağlayıcı uyarıları"):
+                for msg in portfolio_view.valuation_errors:
+                    st.write(f"- {msg}")
+
+        st.markdown("**Sağlık göstergeleri**")
+        st.caption(
+            "Ağırlık ve yoğunluk: fiyatlı baz para birimi pozisyonları."
+        )
+        h1, h2, h3, h4, h5 = st.columns(5)
+        h1.metric(
+            "En büyük ağırlık",
+            f"{portfolio_view.health.largest_position_weight_pct:.1f}%",
+        )
+        h2.metric(
+            "Top-3 yoğunluk",
+            f"{portfolio_view.health.top3_concentration_pct:.1f}%",
+        )
+        h3.metric(
+            "Varlık sınıfı yoğunluğu",
+            f"{portfolio_view.health.largest_asset_class_concentration_pct:.1f}%",
+        )
+        priced_any = portfolio_view.total_position_count - portfolio_view.unpriced_position_count
+        h4.metric(
+            "Fiyat kapsamı (pozisyon)",
+            f"{portfolio_view.health.priced_position_coverage_pct:.0f}%",
+            delta=f"{priced_any}/{portfolio_view.total_position_count}",
+            delta_color="off",
+        )
+        h5.metric(
+            "Fiyat çağrısı",
+            f"{portfolio_view.unique_price_symbols_fetched}",
+        )
+
+        _render_allocation(
+            f"Varlık sınıfı dağılımı (fiyatlı {base_ccy})",
+            portfolio_view.asset_class_allocation,
+            base_ccy,
+        )
+        _render_allocation(
+            f"Hesap dağılımı (fiyatlı {base_ccy})",
+            portfolio_view.account_allocation,
+            base_ccy,
+        )
+
         if accounts:
             st.markdown("**Hesaplar**")
             for row in accounts:
                 st.write(
                     f"- {row.get('name')} · {row.get('account_type')} · "
                     f"{row.get('currency')}"
-                )
-        if positions:
-            st.markdown("**Açık pozisyonlar**")
-            for row in positions:
-                asset = asset_by_id.get(row.get("asset_id"), {})
-                account = account_by_id.get(row.get("account_id"), {})
-                st.write(
-                    f"- {asset.get('symbol', '?')} @ {account.get('name', '?')}: "
-                    f"{row.get('quantity')} (ort. maliyet {row.get('average_cost')})"
                 )
         if liabilities:
             st.markdown("**Borçlar**")
@@ -311,14 +430,59 @@ with tab_positions:
     if not positions:
         st.info("Henüz açık pozisyon yok.")
     else:
-        for row in positions:
-            asset = asset_by_id.get(row.get("asset_id"), {})
-            account = account_by_id.get(row.get("account_id"), {})
-            st.write(
-                f"**{asset.get('symbol', '?')}** · {account.get('name', '?')} · "
-                f"miktar={row.get('quantity')} · ort. maliyet={row.get('average_cost')} "
-                f"{row.get('cost_currency')}"
+        base_ccy = portfolio_view.base_currency
+        if portfolio_view.mixed_currency_warning:
+            st.warning(
+                "Baz para birimi dışı pozisyonlar yerel para biriminde gösterilir; "
+                "portföy toplamlarına dahil değildir."
             )
+
+        st.markdown("**Fiyatlı pozisyonlar**")
+        if not portfolio_view.priced_positions:
+            st.info("Fiyatlı pozisyon yok.")
+        else:
+            for row in portfolio_view.priced_positions:
+                pl_label = _format_money(row.unrealized_pl, row.valuation_currency)
+                weight = f"{row.weight_pct:.1f}%" if row.weight_pct is not None else "—"
+                nabi_label = ""
+                if row.nabi and row.nabi.has_candidate:
+                    nabi_label = (
+                        f" · NABI {row.nabi.decision or '—'}"
+                        f" ({row.nabi.nabi_score or '—'})"
+                    )
+                st.write(
+                    f"**{row.symbol}** · {row.account_name} · "
+                    f"miktar={row.quantity} · ort. maliyet={row.average_cost} · "
+                    f"fiyat={_format_money(row.price, row.valuation_currency)} · "
+                    f"piyasa değeri={_format_money(row.market_value, row.valuation_currency)} · "
+                    f"K/Z={pl_label} · ağırlık={weight}{nabi_label}"
+                )
+
+        if portfolio_view.unpriced_positions:
+            st.markdown("**Fiyatı olmayan pozisyonlar**")
+            for row in portfolio_view.unpriced_positions:
+                st.write(
+                    f"**{row.symbol}** · {row.account_name} · "
+                    f"miktar={row.quantity} · ort. maliyet={row.average_cost} "
+                    f"{row.valuation_currency} · _fiyat mevcut değil_"
+                )
+
+        if portfolio_view.foreign_currency_positions:
+            st.markdown("**Farklı para birimi (toplama dahil değil)**")
+            for row in portfolio_view.foreign_currency_positions:
+                if row.price_available:
+                    st.write(
+                        f"**{row.symbol}** · {row.account_name} · "
+                        f"miktar={row.quantity} · "
+                        f"piyasa değeri={_format_money(row.market_value, row.valuation_currency)} "
+                        f"({row.valuation_currency})"
+                    )
+                else:
+                    st.write(
+                        f"**{row.symbol}** · {row.account_name} · "
+                        f"miktar={row.quantity} · _fiyat mevcut değil_ "
+                        f"({row.valuation_currency})"
+                    )
 
 with tab_liabilities:
     st.subheader("Borç ekle")
