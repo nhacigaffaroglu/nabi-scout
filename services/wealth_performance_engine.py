@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -218,6 +219,124 @@ def aggregate_cash_flows(
         )
 
     return inflows, outflows, dividend_income, fee_cost, warnings
+
+
+@dataclass(frozen=True)
+class TimedCashFlow:
+    executed_at: datetime
+    signed_amount: float
+
+
+def _signed_external_flow_amount(txn_type: str, amount: float, *, sign: int) -> Optional[float]:
+    if txn_type == TXN_TYPE_DEPOSIT:
+        return amount * sign
+    if txn_type == TXN_TYPE_WITHDRAW:
+        return -amount * sign
+    return None
+
+
+def collect_timed_external_flows(
+    transactions: Iterable[Dict[str, Any]],
+    *,
+    account_ids: Set[str],
+    base_currency: str,
+    period_start: datetime,
+    period_end: datetime,
+) -> List[TimedCashFlow]:
+    """Signed external flows in period: deposit positive, withdraw negative."""
+    normalized_base = _normalize_currency(base_currency)
+    txn_list = list(transactions)
+    by_id = {str(row["id"]): row for row in txn_list if row.get("id")}
+    reversed_as_of_end = _reversed_original_ids_as_of(txn_list, period_end)
+
+    def _has_in_period_reversal(original_id: str) -> bool:
+        for candidate in txn_list:
+            if str(candidate.get("reversal_of_id") or "") != original_id:
+                continue
+            rev_at = _parse_ts(str(candidate.get("executed_at") or ""))
+            if _txn_in_period(rev_at, period_start=period_start, period_end=period_end):
+                return True
+        return False
+
+    flows: List[TimedCashFlow] = []
+
+    for row in txn_list:
+        account_id = str(row.get("account_id") or "")
+        if account_id not in account_ids:
+            continue
+
+        executed_at = _parse_ts(str(row.get("executed_at") or ""))
+        reversal_of = row.get("reversal_of_id")
+
+        if reversal_of:
+            if not _txn_in_period(
+                executed_at,
+                period_start=period_start,
+                period_end=period_end,
+            ):
+                continue
+            original = by_id.get(str(reversal_of))
+            if original is None:
+                continue
+            txn_type = str(original.get("txn_type") or "").strip().lower()
+            amount = float(original.get("amount") or 0.0)
+            txn_currency = _normalize_currency(original.get("currency"))
+            if txn_currency != normalized_base:
+                continue
+            signed = _signed_external_flow_amount(txn_type, amount, sign=-1)
+            if signed is None:
+                continue
+            flows.append(TimedCashFlow(executed_at=executed_at, signed_amount=signed))
+            continue
+
+        if not _txn_in_period(
+            executed_at,
+            period_start=period_start,
+            period_end=period_end,
+        ):
+            continue
+
+        row_id = str(row.get("id") or "")
+        if row_id in reversed_as_of_end and not _has_in_period_reversal(row_id):
+            continue
+
+        txn_type = str(row.get("txn_type") or "").strip().lower()
+        amount = float(row.get("amount") or 0.0)
+        txn_currency = _normalize_currency(row.get("currency"))
+
+        if txn_type in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
+            continue
+        if txn_currency != normalized_base:
+            continue
+
+        signed = _signed_external_flow_amount(txn_type, amount, sign=1)
+        if signed is None:
+            continue
+        flows.append(TimedCashFlow(executed_at=executed_at, signed_amount=signed))
+
+    flows.sort(key=lambda flow: flow.executed_at)
+    return flows
+
+
+def modified_dietz_denominator(
+    *,
+    start_value: float,
+    timed_flows: Iterable[TimedCashFlow],
+    period_start: datetime,
+    period_end: datetime,
+) -> Optional[float]:
+    duration_seconds = (period_end - period_start).total_seconds()
+    if duration_seconds <= 0:
+        return None
+
+    denominator = start_value
+    for flow in timed_flows:
+        remaining_seconds = (period_end - flow.executed_at).total_seconds()
+        if remaining_seconds < 0:
+            continue
+        weight = remaining_seconds / duration_seconds
+        denominator += weight * flow.signed_amount
+    return denominator
 
 
 def build_performance_period(

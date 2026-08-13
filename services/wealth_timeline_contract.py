@@ -55,3 +55,52 @@ class WealthTimelineView:
     base_currency: str
     snapshots: List[PortfolioSnapshotView]
     latest_period: Optional[PortfolioPerformancePeriod]
+
+
+@dataclass(frozen=True)
+class PortfolioHistoryPoint:
+    captured_at: str
+    priced_market_value: float
+    base_currency: str
+    is_partial: bool
+    partial_reasons: List[str]
+
+
+@dataclass(frozen=True)
+class PortfolioLinkedPerformance:
+    period_start_at: str
+    period_end_at: str
+    base_currency: str
+    subperiod_count: int
+    linked_return_pct: Optional[float]
+    performance_comparable: bool
+    warnings: List[str]
+    subperiods: List[PortfolioPerformancePeriod]
+
+
+@dataclass(frozen=True)
+class NormalizedSeriesPoint:
+    label_date: str
+    portfolio_index: Optional[float]
+    benchmark_index: Optional[float]
+
+
+@dataclass(frozen=True)
+class BenchmarkComparisonView:
+    benchmark_symbol: str
+    portfolio_normalized: List[NormalizedSeriesPoint]
+    portfolio_return_pct: Optional[float]
+    benchmark_return_pct: Optional[float]
+    relative_return_pct: Optional[float]
+    performance_comparable: bool
+    warnings: List[str]
+    provider_fetch_count: int
+
+
+@dataclass(frozen=True)
+class WealthPerformanceView:
+    portfolio_id: str
+    portfolio_name: str
+    base_currency: str
+    history_points: List[PortfolioHistoryPoint]
+    linked_performance: Optional[PortfolioLinkedPerformance]

@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 
 from services.auth_service import get_current_user_id
@@ -5,6 +6,7 @@ from services.fmp_client import FMPClient, FMPError
 from services.nabi_intelligence_facade import get_investment_intelligence
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.ui import prepare_protected_page
+from services.wealth_benchmark_service import WealthBenchmarkService
 from services.wealth_contract import (
     ACCOUNT_TYPE_BROKERAGE,
     ACCOUNT_TYPE_CASH,
@@ -38,6 +40,14 @@ def _load_price_service() -> WealthPriceService:
     except FMPError:
         fmp = None
     return WealthPriceService(fmp)
+
+
+def _load_benchmark_service() -> WealthBenchmarkService:
+    try:
+        fmp = FMPClient.from_streamlit_secrets()
+    except FMPError:
+        fmp = None
+    return WealthBenchmarkService(fmp)
 
 
 def _render_allocation(title: str, slices, currency: str) -> None:
@@ -543,6 +553,36 @@ with tab_history:
             st.error(str(exc))
 
     timeline_view = timeline.build_timeline_view(portfolio)
+    performance_view = timeline.build_performance_view(portfolio)
+
+    if performance_view.history_points:
+        st.divider()
+        st.markdown("**Kayıtlı görüntü geçmişi**")
+        st.caption(
+            "Grafik yalnızca kaydedilmiş anlık görüntülerin fiyatlı baz para birimi "
+            "değerini gösterir; yeni değerleme veya sağlayıcı çağrısı yapılmaz."
+        )
+        history_df = pd.DataFrame(
+            {
+                "priced_market_value": [
+                    point.priced_market_value for point in performance_view.history_points
+                ],
+            },
+            index=[point.captured_at for point in performance_view.history_points],
+        )
+        st.line_chart(history_df)
+        partial_points = [
+            point for point in performance_view.history_points if point.is_partial
+        ]
+        if partial_points:
+            st.warning(
+                "Bazı görüntüler kısmi: fiyatlanmamış pozisyon, karışık para birimi "
+                "veya %100 altı kapsam."
+            )
+            for point in partial_points:
+                st.write(
+                    f"- {point.captured_at}: {', '.join(point.partial_reasons)}"
+                )
 
     if not timeline_view.snapshots:
         st.info("Henüz kayıtlı görüntü yok. Mevcut değerlendirmeyi kaydetmek için düğmeyi kullanın.")
@@ -611,3 +651,84 @@ with tab_history:
                 "Basit dönem yüzdesi gösterilmedi; dış nakit akışı veya veri kalitesi "
                 "nedeniyle yatırım getirisi iddiası yok."
             )
+
+    linked = performance_view.linked_performance
+    if linked is not None:
+        st.divider()
+        st.markdown("**Zincirlenmiş dönem getirisi**")
+        st.caption(
+            "Fiyatlı baz para birimi portföyü; dış akışlar (yatırım/çekim) ayıklanmış "
+            "alt dönem getirilerinin Modified Dietz ile zincirlenmesi."
+        )
+        st.write(f"{linked.period_start_at} → {linked.period_end_at}")
+        if linked.performance_comparable and linked.linked_return_pct is not None:
+            st.metric(
+                "Portföy dönem getirisi",
+                f"{linked.linked_return_pct:.2f}%",
+            )
+        else:
+            st.warning(
+                "Portföy dönem getirisi tam karşılaştırılabilir değil; "
+                "eksik veya kısmi veri nedeniyle yüzde gösterilmiyor."
+            )
+            for warning in linked.warnings:
+                st.write(f"- {warning}")
+
+    if len(timeline_view.snapshots) >= 2:
+        st.divider()
+        st.markdown("**Tarihsel karşılaştırma (portföy vs SPY)**")
+        st.caption(
+            "Normalleştirilmiş seriler ilk karşılaştırılabilir görüntüde 100'e "
+            "ölçeklenir. Yalnızca bilgilendirme amaçlı tarihsel karşılaştırmadır."
+        )
+        benchmark_service = _load_benchmark_service()
+        fetch_before = benchmark_service.fetch_count
+        benchmark_view = timeline.build_benchmark_comparison(
+            portfolio,
+            performance_view,
+            benchmark_service,
+        )
+        provider_calls = benchmark_service.fetch_count - fetch_before
+
+        if benchmark_view.performance_comparable:
+            comparison_rows = []
+            for point in benchmark_view.portfolio_normalized:
+                comparison_rows.append(
+                    {
+                        "portfolio_index": point.portfolio_index,
+                        "benchmark_index": point.benchmark_index,
+                    }
+                )
+            comparison_df = pd.DataFrame(
+                comparison_rows,
+                index=[
+                    point.label_date for point in benchmark_view.portfolio_normalized
+                ],
+            )
+            st.line_chart(comparison_df)
+
+            c1, c2, c3 = st.columns(3)
+            if benchmark_view.portfolio_return_pct is not None:
+                c1.metric(
+                    "Portföy getirisi",
+                    f"{benchmark_view.portfolio_return_pct:.2f}%",
+                )
+            if benchmark_view.benchmark_return_pct is not None:
+                c2.metric(
+                    f"{benchmark_view.benchmark_symbol} getirisi",
+                    f"{benchmark_view.benchmark_return_pct:.2f}%",
+                )
+            if benchmark_view.relative_return_pct is not None:
+                c3.metric(
+                    "Göreli tarihsel performans",
+                    f"{benchmark_view.relative_return_pct:+.2f} puan",
+                )
+        else:
+            st.warning(
+                "SPY karşılaştırması tam karşılaştırılabilir değil; "
+                "eksik benchmark fiyatı veya portföy veri kalitesi."
+            )
+            for warning in benchmark_view.warnings:
+                st.write(f"- {warning}")
+
+        st.caption(f"Benchmark sağlayıcı çağrısı (bu görünüm): {provider_calls}")
