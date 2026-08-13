@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from repositories.wealth_account_repository import WealthAccountRepository
 from repositories.wealth_asset_repository import WealthAssetRepository
@@ -398,3 +398,58 @@ class WealthCoreService:
 
     def list_transactions(self, *, limit: int = 100) -> List[Dict[str, Any]]:
         return self.transactions.list_for_user(self.user_id, limit=limit)
+
+    @staticmethod
+    def collect_reversed_original_ids(transactions: Iterable[Dict[str, Any]]) -> set[str]:
+        from services.wealth_position_engine import _collect_reversed_original_ids
+
+        return _collect_reversed_original_ids(transactions)
+
+    @staticmethod
+    def is_transaction_reversal_eligible(
+        txn: Dict[str, Any],
+        reversed_original_ids: set[str],
+    ) -> bool:
+        if txn.get("reversal_of_id"):
+            return False
+        txn_id = str(txn.get("id") or "")
+        if not txn_id:
+            return False
+        return txn_id not in reversed_original_ids
+
+    @staticmethod
+    def _price_from_original(original: Dict[str, Any]) -> Optional[float]:
+        price = original.get("price")
+        if price is not None and float(price) > 0:
+            return float(price)
+        quantity = float(original.get("quantity") or 0.0)
+        amount = float(original.get("amount") or 0.0)
+        if quantity > 0 and amount > 0:
+            return amount / quantity
+        return None
+
+    def reverse_transaction(self, original_txn_id: str) -> Dict[str, Any]:
+        original = self.transactions.get_by_id(self.user_id, original_txn_id)
+        if original is None:
+            raise WealthValidationError("İşlem bulunamadı.")
+        if original.get("reversal_of_id"):
+            raise WealthValidationError("Ters kayıt satırı geri alınamaz.")
+
+        recent = self.transactions.list_for_user(self.user_id, limit=1000)
+        reversed_ids = self.collect_reversed_original_ids(recent)
+        if not self.is_transaction_reversal_eligible(original, reversed_ids):
+            raise WealthValidationError("Bu işlem zaten geri alınmış.")
+
+        asset_id = original.get("asset_id")
+        price = self._price_from_original(original)
+        return self.post_transaction(
+            account_id=str(original["account_id"]),
+            asset_id=str(asset_id) if asset_id else None,
+            txn_type=str(original["txn_type"]),
+            quantity=float(original["quantity"]),
+            amount=float(original["amount"]),
+            currency=str(original.get("currency") or "USD"),
+            price=price,
+            notes="İşlem geri alma kaydı",
+            reversal_of_id=str(original_txn_id),
+        )

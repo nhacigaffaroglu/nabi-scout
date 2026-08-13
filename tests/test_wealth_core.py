@@ -383,6 +383,144 @@ class WealthCoreServiceTests(unittest.TestCase):
         with self.assertRaises(WealthValidationError):
             normalize_trade_amount("sell", quantity=5, price=0, amount=0)
 
+    def test_is_transaction_reversal_eligible(self) -> None:
+        reversed_ids = {"orig-1"}
+        self.assertTrue(
+            WealthCoreService.is_transaction_reversal_eligible(
+                {"id": "orig-2", "txn_type": "buy"},
+                reversed_ids,
+            )
+        )
+        self.assertFalse(
+            WealthCoreService.is_transaction_reversal_eligible(
+                {"id": "orig-1", "txn_type": "buy"},
+                reversed_ids,
+            )
+        )
+        self.assertFalse(
+            WealthCoreService.is_transaction_reversal_eligible(
+                {"id": "rev-1", "txn_type": "buy", "reversal_of_id": "orig-1"},
+                reversed_ids,
+            )
+        )
+
+    def test_reverse_transaction_uses_original_values(self) -> None:
+        original = {
+            "id": "orig-1",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "sell",
+            "quantity": 11.0,
+            "amount": 1100.0,
+            "currency": "USD",
+            "price": 100.0,
+        }
+        self.service.transactions.get_by_id = MagicMock(return_value=original)
+        self.service.transactions.list_for_user = MagicMock(return_value=[original])
+        self.service.transactions.has_reversal_for = MagicMock(return_value=False)
+        self.service.post_transaction = MagicMock(return_value={"id": "rev-1"})
+
+        self.service.reverse_transaction("orig-1")
+
+        self.service.post_transaction.assert_called_once_with(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="sell",
+            quantity=11.0,
+            amount=1100.0,
+            currency="USD",
+            price=100.0,
+            notes="İşlem geri alma kaydı",
+            reversal_of_id="orig-1",
+        )
+
+    def test_reverse_transaction_rejects_reversal_row(self) -> None:
+        self.service.transactions.get_by_id = MagicMock(
+            return_value={
+                "id": "rev-1",
+                "reversal_of_id": "orig-1",
+                "account_id": "acc-1",
+                "asset_id": "asset-1",
+                "txn_type": "sell",
+                "quantity": 11.0,
+                "amount": 1100.0,
+            }
+        )
+        self.service.post_transaction = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.reverse_transaction("rev-1")
+
+        self.service.post_transaction.assert_not_called()
+
+    def test_reverse_transaction_rejects_already_reversed(self) -> None:
+        original = {
+            "id": "orig-1",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "sell",
+            "quantity": 11.0,
+            "amount": 1100.0,
+            "currency": "USD",
+            "price": 100.0,
+        }
+        reversal = {
+            "id": "rev-1",
+            "reversal_of_id": "orig-1",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "sell",
+            "quantity": 11.0,
+            "amount": 1100.0,
+        }
+        self.service.transactions.get_by_id = MagicMock(return_value=original)
+        self.service.transactions.list_for_user = MagicMock(
+            return_value=[original, reversal]
+        )
+        self.service.post_transaction = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.reverse_transaction("orig-1")
+
+        self.service.post_transaction.assert_not_called()
+
+    def test_reverse_transaction_never_mutates_original(self) -> None:
+        original = {
+            "id": "orig-1",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "buy",
+            "quantity": 10.0,
+            "amount": 1000.0,
+            "currency": "USD",
+            "price": 100.0,
+        }
+        self.service.transactions.get_by_id = MagicMock(return_value=original)
+        self.service.transactions.list_for_user = MagicMock(return_value=[original])
+        self.service.post_transaction = MagicMock(return_value={"id": "rev-1"})
+
+        self.service.reverse_transaction("orig-1")
+
+        self.assertFalse(hasattr(self.service.transactions, "update"))
+        self.service.post_transaction.assert_called_once()
+
+
+class WealthReversalUiTests(unittest.TestCase):
+    WEALTH_PAGE = Path("pages/10_Wealth.py")
+
+    def test_page_exposes_reverse_action_without_freeform_id(self) -> None:
+        source = self.WEALTH_PAGE.read_text(encoding="utf-8")
+        self.assertIn("Geri Al", source)
+        self.assertIn("reverse_transaction", source)
+        self.assertIn("is_transaction_reversal_eligible", source)
+        self.assertNotIn('text_input("reversal_of_id"', source)
+        self.assertNotIn("reversal_of_id = st.", source)
+
+    def test_page_reverse_uses_service_path(self) -> None:
+        source = self.WEALTH_PAGE.read_text(encoding="utf-8")
+        self.assertIn("wealth.reverse_transaction(txn_id)", source)
+        self.assertIn("WealthMaterializationError", source)
+
 
 class NabiIntelligenceFacadeTests(unittest.TestCase):
     def test_facade_reads_existing_candidate_without_writes(self) -> None:

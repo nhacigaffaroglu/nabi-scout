@@ -279,14 +279,32 @@ with tab_txn:
     if not transactions:
         st.info("Henüz işlem yok.")
     else:
+        reversed_original_ids = wealth.collect_reversed_original_ids(transactions)
         for row in transactions:
             asset = asset_by_id.get(row.get("asset_id"), {})
             account = account_by_id.get(row.get("account_id"), {})
-            st.write(
-                f"- {row.get('executed_at')} · {row.get('txn_type')} · "
+            txn_id = str(row.get("id") or "")
+            label = (
+                f"{row.get('executed_at')} · {row.get('txn_type')} · "
                 f"{asset.get('symbol', '?')} @ {account.get('name', '?')} · "
                 f"qty={row.get('quantity')} amount={row.get('amount')}"
             )
+            if row.get("reversal_of_id"):
+                label += " · ters kayıt"
+            cols = st.columns([5, 1])
+            cols[0].write(f"- {label}")
+            if wealth.is_transaction_reversal_eligible(row, reversed_original_ids):
+                if cols[1].button("Geri Al", key=f"wealth_reverse_{txn_id}"):
+                    try:
+                        wealth.reverse_transaction(txn_id)
+                        st.success("İşlem geri alındı; pozisyon güncellendi.")
+                        st.rerun()
+                    except WealthValidationError as exc:
+                        st.error(str(exc))
+                    except WealthMaterializationError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(str(exc))
 
 with tab_positions:
     st.subheader("Güncel pozisyonlar")
