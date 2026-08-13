@@ -90,17 +90,54 @@ def _severity_badge(severity: DiagnosticSeverity) -> str:
     return "🔵 Bilgi"
 
 
+def _top3_position_count(diagnostic) -> int:
+    symbols = list(diagnostic.affected_symbols or diagnostic.evidence.get("symbols") or [])
+    return len(symbols)
+
+
+def _display_diagnostic_title(diagnostic) -> str:
+    if diagnostic.code in {"CONCENTRATION_TOP3_HIGH", "CONCENTRATION_TOP3_WATCH"}:
+        count = _top3_position_count(diagnostic)
+        if count <= 1:
+            return "En büyük pozisyon yoğunlaşması"
+        if count == 2:
+            return "En büyük 2 pozisyon yoğunlaşması"
+    return diagnostic.title
+
+
+def _display_diagnostic_summary(diagnostic) -> str:
+    if diagnostic.code in {"CONCENTRATION_TOP3_HIGH", "CONCENTRATION_TOP3_WATCH"}:
+        count = _top3_position_count(diagnostic)
+        pct = diagnostic.metric_value
+        if pct is not None:
+            if count <= 1:
+                return f"En büyük fiyatlı pozisyon toplam ağırlığı %{pct:.1f}."
+            if count == 2:
+                return f"En büyük iki fiyatlı pozisyon toplam ağırlığı %{pct:.1f}."
+    return diagnostic.summary
+
+
 def _render_diagnostic_card(diagnostic) -> None:
-    with st.expander(f"{_severity_badge(diagnostic.severity)} · {diagnostic.title}"):
-        st.write(diagnostic.summary)
-        st.caption(
-            f"Kod: `{diagnostic.code}` · Güven: {diagnostic.confidence.value} · "
-            f"Kaynak: {diagnostic.source}"
-        )
-        if diagnostic.affected_symbols:
-            st.caption(f"Semboller: {', '.join(diagnostic.affected_symbols)}")
-        if diagnostic.evidence:
-            st.json(diagnostic.evidence)
+    title = _display_diagnostic_title(diagnostic)
+    with st.expander(f"{_severity_badge(diagnostic.severity)} · {title}"):
+        st.write(_display_diagnostic_summary(diagnostic))
+        symbols = [symbol for symbol in (diagnostic.affected_symbols or []) if symbol]
+        if symbols:
+            st.caption(f"Semboller: {', '.join(symbols)}")
+        with st.expander("Teknik ayrıntılar"):
+            st.caption(f"Kod: `{diagnostic.code}`")
+            st.caption(f"Kategori: {diagnostic.category.value}")
+            st.caption(f"Önem seviyesi: {diagnostic.severity.value}")
+            st.caption(f"Güven: {diagnostic.confidence.value}")
+            st.caption(f"Kaynak: {diagnostic.source}")
+            if symbols:
+                st.caption(f"Etkilenen semboller: {', '.join(symbols)}")
+            if diagnostic.metric_value is not None:
+                st.caption(f"Metrik değeri: {diagnostic.metric_value}")
+            if diagnostic.threshold is not None:
+                st.caption(f"Eşik: {diagnostic.threshold}")
+            if diagnostic.evidence:
+                st.json(diagnostic.evidence)
 
 st.title("💰 Wealth Core")
 st.caption(

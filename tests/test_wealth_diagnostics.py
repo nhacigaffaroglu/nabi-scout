@@ -1044,15 +1044,28 @@ class WealthDiagnosticsFirewallTests(unittest.TestCase):
 
 
 class WealthDiagnosticsUiTests(unittest.TestCase):
+    @staticmethod
+    def _wealth_page_source() -> str:
+        return Path("pages/10_Wealth.py").read_text(encoding="utf-8")
+
+    @staticmethod
+    def _render_card_source() -> str:
+        source = WealthDiagnosticsUiTests._wealth_page_source()
+        start = source.index("def _render_diagnostic_card")
+        end = source.index("\nst.title", start)
+        return source[start:end]
+
+    @staticmethod
+    def _analysis_block() -> str:
+        return WealthDiagnosticsUiTests._wealth_page_source().split("with tab_analysis:")[1]
+
     def test_analiz_tab_present(self) -> None:
-        source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
+        source = self._wealth_page_source()
         self.assertIn('"Analiz"', source)
         self.assertIn("tab_analysis", source)
 
     def test_no_adviser_language_in_phase5_sections(self) -> None:
-        source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
-        analysis_block = source.split("with tab_analysis:")[1]
-        lowered = analysis_block.lower()
+        lowered = self._analysis_block().lower()
         banned = [
             "öneriyorum",
             "tavsiye",
@@ -1063,6 +1076,145 @@ class WealthDiagnosticsUiTests(unittest.TestCase):
         ]
         for phrase in banned:
             self.assertNotIn(phrase, lowered)
+
+    def test_default_card_hides_machine_readable_internals(self) -> None:
+        render_source = self._render_card_source()
+        default_body = render_source.split('with st.expander("Teknik ayrıntılar")')[0]
+        self.assertNotIn("st.json(diagnostic.evidence)", default_body)
+        self.assertNotIn("Kaynak:", default_body)
+        self.assertNotIn("Güven:", default_body)
+        self.assertNotIn("Kod:", default_body)
+
+    def test_technical_expander_exposes_contract_fields(self) -> None:
+        render_source = self._render_card_source()
+        technical_block = render_source.split('with st.expander("Teknik ayrıntılar")')[1]
+        for marker in [
+            "diagnostic.code",
+            "diagnostic.category.value",
+            "diagnostic.severity.value",
+            "diagnostic.confidence.value",
+            "diagnostic.source",
+            "diagnostic.metric_value",
+            "diagnostic.threshold",
+            "st.json(diagnostic.evidence)",
+        ]:
+            self.assertIn(marker, technical_block, marker)
+
+    def test_nabi_firewall_caption_visible(self) -> None:
+        analysis = self._analysis_block()
+        self.assertIn(
+            "NABI verileri portföy değerleme veya getiri hesaplarını değiştirmez.",
+            analysis,
+        )
+
+    def test_analiz_does_not_load_benchmark_for_diagnostics(self) -> None:
+        analysis = self._analysis_block()
+        self.assertIn("benchmark_view=None", analysis)
+        self.assertNotIn("WealthBenchmarkService", analysis)
+
+    def test_top3_presentation_adapts_without_changing_contract(self) -> None:
+        source = self._wealth_page_source()
+        self.assertIn("_display_diagnostic_title", source)
+        self.assertIn("CONCENTRATION_TOP3_HIGH", source)
+        self.assertIn("diagnostic.title", source)
+
+    def test_portfolio_diagnostic_contract_unchanged(self) -> None:
+        import services.wealth_diagnostics_contract as contract_module
+
+        source = inspect.getsource(contract_module.PortfolioDiagnostic)
+        for field in [
+            "code:",
+            "category:",
+            "severity:",
+            "title:",
+            "summary:",
+            "evidence:",
+            "metric_value:",
+            "threshold:",
+            "affected_symbols:",
+            "confidence:",
+            "source:",
+            "def to_dict",
+        ]:
+            self.assertIn(field, source, field)
+
+    def test_to_dict_output_unchanged(self) -> None:
+        view = _view(
+            positions=[_position(symbol="AAPL", weight_pct=100.0, market_value=1000)],
+            health=PortfolioHealthMetrics(
+                largest_position_weight_pct=100.0,
+                top3_concentration_pct=100.0,
+                largest_asset_class_concentration_pct=100.0,
+                cash_pct=0.0,
+                invested_pct=100.0,
+                priced_position_coverage_pct=100.0,
+            ),
+        )
+        payload = json.dumps(
+            build_portfolio_diagnostics(
+                portfolio_id="pf-1",
+                generated_at="2026-08-13T00:00:00+00:00",
+                portfolio_view=view,
+            ).to_dict(),
+            sort_keys=True,
+        )
+        parsed = json.loads(payload)
+        self.assertEqual(parsed["portfolio_id"], "pf-1")
+        self.assertTrue(parsed["diagnostics"])
+        first = parsed["diagnostics"][0]
+        self.assertIn("code", first)
+        self.assertIn("evidence", first)
+        self.assertIn("confidence", first)
+
+    def test_evidence_payload_unchanged_by_ui_layer(self) -> None:
+        view = _view(
+            positions=[_position(symbol="AAPL", weight_pct=45.0, market_value=4500)],
+            health=PortfolioHealthMetrics(
+                largest_position_weight_pct=45.0,
+                top3_concentration_pct=45.0,
+                largest_asset_class_concentration_pct=45.0,
+                cash_pct=0.0,
+                invested_pct=100.0,
+                priced_position_coverage_pct=100.0,
+            ),
+        )
+        diagnostic = build_concentration_diagnostics(view)[0]
+        self.assertEqual(diagnostic.code, "CONCENTRATION_SINGLE_HIGH")
+        self.assertIn("largest_position_pct", diagnostic.evidence)
+        self.assertIn("symbol", diagnostic.evidence)
+
+    def test_diagnostic_ordering_unchanged(self) -> None:
+        view = _view(
+            positions=[
+                _position(symbol="CASH", weight_pct=85.0, market_value=8500, is_cash=True, asset_class="cash"),
+                _position(symbol="AAPL", weight_pct=15.0, market_value=1500),
+            ],
+            health=PortfolioHealthMetrics(
+                largest_position_weight_pct=85.0,
+                top3_concentration_pct=100.0,
+                largest_asset_class_concentration_pct=85.0,
+                cash_pct=85.0,
+                invested_pct=15.0,
+                priced_position_coverage_pct=100.0,
+            ),
+        )
+        kwargs = dict(
+            portfolio_id="pf-1",
+            generated_at="2026-08-13T00:00:00+00:00",
+            portfolio_view=view,
+        )
+        codes = [item.code for item in build_portfolio_diagnostics(**kwargs).diagnostics]
+        self.assertEqual(codes, [item.code for item in build_portfolio_diagnostics(**kwargs).diagnostics])
+
+    def test_diagnostics_engine_source_unchanged_for_ui_cleanup(self) -> None:
+        engine_path = Path("services/wealth_diagnostics_engine.py")
+        service_path = Path("services/wealth_diagnostics_service.py")
+        contract_path = Path("services/wealth_diagnostics_contract.py")
+        for path in (engine_path, service_path, contract_path):
+            lowered = path.read_text(encoding="utf-8").lower()
+            self.assertNotIn("import streamlit", lowered, path.name)
+            self.assertNotIn("st.expander", lowered, path.name)
+            self.assertNotIn("st.json", lowered, path.name)
 
 
 if __name__ == "__main__":
