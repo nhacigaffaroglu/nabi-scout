@@ -146,3 +146,25 @@ def validate_txn_type(txn_type: str) -> str:
     if normalized not in TXN_TYPES:
         raise WealthValidationError(f"Geçersiz işlem türü: {txn_type}")
     return normalized
+
+
+def normalize_trade_amount(
+    txn_type: str,
+    *,
+    quantity: float,
+    price: Optional[float],
+    amount: float,
+) -> float:
+    """Derive and validate monetary amount for buy/sell rows."""
+    if txn_type not in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
+        return amount
+
+    if quantity <= 0:
+        raise WealthValidationError("Alış/satış için miktar sıfırdan büyük olmalı.")
+    if price is None or price <= 0:
+        raise WealthValidationError("Alış/satış için birim fiyat gerekli.")
+
+    computed = quantity * price
+    if amount > 0 and abs(amount - computed) > 1e-6:
+        raise WealthValidationError("Tutar miktar × birim fiyat ile uyuşmalı.")
+    return computed

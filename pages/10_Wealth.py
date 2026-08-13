@@ -14,6 +14,8 @@ from services.wealth_contract import (
     ASSET_CLASS_FUND,
     ASSET_CLASS_OTHER,
     TXN_TYPES,
+    TXN_TYPE_BUY,
+    TXN_TYPE_SELL,
     WealthMaterializationError,
     WealthValidationError,
 )
@@ -208,35 +210,69 @@ with tab_txn:
             )
             txn_type = st.selectbox("İşlem türü", list(TXN_TYPES))
             quantity = st.number_input("Miktar", min_value=0.0, value=0.0, step=1.0)
-            price = st.number_input("Birim fiyat (opsiyonel)", min_value=0.0, value=0.0)
-            amount = st.number_input("Tutar", min_value=0.0, value=0.0, step=1.0)
+            price = st.number_input("Birim fiyat", min_value=0.0, value=0.0, step=0.01)
+            is_trade = txn_type in {TXN_TYPE_BUY, TXN_TYPE_SELL}
+            if is_trade:
+                st.caption("Alış/satış tutarı otomatik hesaplanır: miktar × birim fiyat.")
+                computed_preview = quantity * price if quantity > 0 and price > 0 else 0.0
+                st.write(f"Hesaplanan tutar: **{computed_preview:.2f}**")
+                amount = 0.0
+            else:
+                amount = st.number_input("Tutar", min_value=0.0, value=0.0, step=1.0)
             txn_currency = st.text_input("İşlem para birimi", value="USD")
             notes = st.text_input("Not (opsiyonel)")
             submitted_txn = st.form_submit_button("İşlem kaydet", type="primary")
 
         if submitted_txn:
-            computed_amount = amount
-            if computed_amount <= 0 and quantity > 0 and price > 0:
-                computed_amount = quantity * price
-            try:
-                wealth.post_transaction(
-                    account_id=account_id,
-                    asset_id=asset_id,
-                    txn_type=txn_type,
-                    quantity=quantity,
-                    price=price if price > 0 else None,
-                    amount=computed_amount,
-                    currency=txn_currency,
-                    notes=notes or None,
-                )
-                st.success("İşlem kaydedildi; pozisyon güncellendi.")
-                st.rerun()
-            except WealthValidationError as exc:
-                st.error(str(exc))
-            except WealthMaterializationError as exc:
-                st.error(str(exc))
-            except Exception as exc:
-                st.error(str(exc))
+            if is_trade:
+                if quantity <= 0:
+                    st.error("Alış/satış için miktar gerekli.")
+                elif price <= 0:
+                    st.error("Alış/satış için birim fiyat gerekli.")
+                else:
+                    computed_amount = quantity * price
+                    try:
+                        wealth.post_transaction(
+                            account_id=account_id,
+                            asset_id=asset_id,
+                            txn_type=txn_type,
+                            quantity=quantity,
+                            price=price,
+                            amount=computed_amount,
+                            currency=txn_currency,
+                            notes=notes or None,
+                        )
+                        st.success("İşlem kaydedildi; pozisyon güncellendi.")
+                        st.rerun()
+                    except WealthValidationError as exc:
+                        st.error(str(exc))
+                    except WealthMaterializationError as exc:
+                        st.error(str(exc))
+                    except Exception as exc:
+                        st.error(str(exc))
+            else:
+                computed_amount = amount
+                if computed_amount <= 0 and quantity > 0:
+                    computed_amount = quantity
+                try:
+                    wealth.post_transaction(
+                        account_id=account_id,
+                        asset_id=asset_id,
+                        txn_type=txn_type,
+                        quantity=quantity,
+                        price=price if price > 0 else None,
+                        amount=computed_amount,
+                        currency=txn_currency,
+                        notes=notes or None,
+                    )
+                    st.success("İşlem kaydedildi; pozisyon güncellendi.")
+                    st.rerun()
+                except WealthValidationError as exc:
+                    st.error(str(exc))
+                except WealthMaterializationError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(str(exc))
 
     st.divider()
     st.markdown("**Son işlemler**")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Set, Tuple
+
+PROPOSED_TXN_SORT_TAIL = "zzzz-proposed"
 
 from services.wealth_contract import (
     TXN_TYPE_BUY,
@@ -18,6 +20,35 @@ def _txn_sort_key(row: Dict[str, Any]) -> Tuple[str, str]:
         str(row.get("executed_at") or ""),
         str(row.get("created_at") or row.get("id") or ""),
     )
+
+
+def _collect_reversed_original_ids(transactions: Iterable[Dict[str, Any]]) -> Set[str]:
+    rows = list(transactions)
+    ids_present = {str(row["id"]) for row in rows if row.get("id")}
+    return {
+        str(row["reversal_of_id"])
+        for row in rows
+        if row.get("reversal_of_id") and str(row["reversal_of_id"]) in ids_present
+    }
+
+
+def _rows_for_replay(transactions: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Exclude reversed originals and their reversal rows from replay.
+
+    A reversed transaction and its reversal cancel as an auditable pair without
+    passing through the original row's impossible intermediate state.
+    """
+    rows = list(transactions)
+    reversed_originals = _collect_reversed_original_ids(rows)
+    replay_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        row_id = str(row["id"]) if row.get("id") else ""
+        if row_id and row_id in reversed_originals:
+            continue
+        if row.get("reversal_of_id"):
+            continue
+        replay_rows.append(row)
+    return replay_rows
 
 
 def _effective_txn_type(row: Dict[str, Any]) -> str:
@@ -39,16 +70,12 @@ def materialize_position_from_transactions(
 ) -> Tuple[float, float]:
     """Replay append-only ledger rows into current quantity and average cost.
 
-    Average-cost method:
-    - buy/deposit/dividend increase quantity
-    - sell/withdraw/fee decrease quantity
-    - sell does not change average cost per share/unit
-    - buy recomputes weighted average cost using transaction amount
+    Reversed originals and their reversal rows are excluded as cancelling pairs.
     """
     quantity = 0.0
     average_cost = 0.0
 
-    for row in sorted(transactions, key=_txn_sort_key):
+    for row in sorted(_rows_for_replay(transactions), key=_txn_sort_key):
         txn_type = _effective_txn_type(row)
         qty = float(row.get("quantity") or 0.0)
         amount = float(row.get("amount") or 0.0)
@@ -101,3 +128,15 @@ def materialize_position_from_transactions(
         raise WealthValidationError(f"Desteklenmeyen işlem türü: {txn_type}")
 
     return quantity, average_cost
+
+
+def validate_proposed_transaction(
+    existing_transactions: Iterable[Dict[str, Any]],
+    proposed: Dict[str, Any],
+) -> Tuple[float, float]:
+    """Replay the ledger including a proposed row that has not been persisted yet."""
+    proposed_row = dict(proposed)
+    proposed_row.setdefault("created_at", PROPOSED_TXN_SORT_TAIL)
+    return materialize_position_from_transactions(
+        list(existing_transactions) + [proposed_row],
+    )

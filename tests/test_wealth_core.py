@@ -47,6 +47,7 @@ class WealthCoreServiceTests(unittest.TestCase):
             asset_id="asset-1",
             txn_type="buy",
             quantity=10,
+            price=100,
             amount=1000,
         )
 
@@ -63,23 +64,26 @@ class WealthCoreServiceTests(unittest.TestCase):
         self.service.accounts.get_by_id = MagicMock(return_value=account)
         self.service.assets.get_by_id = MagicMock(return_value=asset)
         self.service.transactions.insert = MagicMock(return_value={"id": "txn-2"})
+        ledger_buy_only = [
+            {
+                "txn_type": "buy",
+                "quantity": 5,
+                "amount": 500,
+                "executed_at": "2026-01-01",
+                "created_at": "2026-01-01",
+            },
+        ]
+        ledger_after_sell = ledger_buy_only + [
+            {
+                "txn_type": "sell",
+                "quantity": 5,
+                "amount": 550,
+                "executed_at": "2026-01-02",
+                "created_at": "2026-01-02",
+            },
+        ]
         self.service.transactions.list_for_position = MagicMock(
-            return_value=[
-                {
-                    "txn_type": "buy",
-                    "quantity": 5,
-                    "amount": 500,
-                    "executed_at": "2026-01-01",
-                    "created_at": "2026-01-01",
-                },
-                {
-                    "txn_type": "sell",
-                    "quantity": 5,
-                    "amount": 550,
-                    "executed_at": "2026-01-02",
-                    "created_at": "2026-01-02",
-                },
-            ]
+            side_effect=[ledger_buy_only, ledger_after_sell]
         )
         self.service.positions.delete_for_account_asset = MagicMock()
 
@@ -88,6 +92,7 @@ class WealthCoreServiceTests(unittest.TestCase):
             asset_id="asset-1",
             txn_type="sell",
             quantity=5,
+            price=110,
             amount=550,
         )
 
@@ -130,6 +135,7 @@ class WealthCoreServiceTests(unittest.TestCase):
                 asset_id="asset-1",
                 txn_type="buy",
                 quantity=1,
+                price=100,
                 amount=100,
                 reversal_of_id="orig",
             )
@@ -154,6 +160,7 @@ class WealthCoreServiceTests(unittest.TestCase):
                 asset_id="asset-1",
                 txn_type="buy",
                 quantity=1,
+                price=100,
                 amount=100,
                 reversal_of_id="orig",
             )
@@ -166,6 +173,7 @@ class WealthCoreServiceTests(unittest.TestCase):
         self.service.accounts.get_by_id = MagicMock(return_value=account)
         self.service.assets.get_by_id = MagicMock(return_value=asset)
         self.service.transactions.insert = MagicMock(return_value={"id": "txn-1"})
+        self.service.transactions.list_for_position = MagicMock(return_value=[])
         self.service._rebuild_position = MagicMock(side_effect=RuntimeError("db down"))
 
         with self.assertRaises(WealthMaterializationError):
@@ -174,6 +182,7 @@ class WealthCoreServiceTests(unittest.TestCase):
                 asset_id="asset-1",
                 txn_type="buy",
                 quantity=1,
+                price=100,
                 amount=100,
             )
 
@@ -185,8 +194,194 @@ class WealthCoreServiceTests(unittest.TestCase):
                 asset_id="asset-1",
                 txn_type="buy",
                 quantity=1,
+                price=10,
                 amount=10,
             )
+
+    def test_oversell_rejected_before_insert(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        existing_ledger = [
+            {
+                "txn_type": "buy",
+                "quantity": 10,
+                "amount": 1000,
+                "executed_at": "2026-01-01",
+                "created_at": "2026-01-01",
+            }
+        ]
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.list_for_position = MagicMock(return_value=existing_ledger)
+        self.service.transactions.insert = MagicMock()
+        self.service.positions.upsert = MagicMock()
+        self.service.positions.delete_for_account_asset = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.post_transaction(
+                account_id="acc-1",
+                asset_id="asset-1",
+                txn_type="sell",
+                quantity=11,
+                price=100,
+                amount=1100,
+            )
+
+        self.service.transactions.insert.assert_not_called()
+        self.service.positions.upsert.assert_not_called()
+        self.service.positions.delete_for_account_asset.assert_not_called()
+
+    def test_overdraw_rejected_before_insert(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        existing_ledger = [
+            {
+                "txn_type": "deposit",
+                "quantity": 0,
+                "amount": 100,
+                "executed_at": "2026-01-01",
+                "created_at": "2026-01-01",
+            }
+        ]
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.list_for_position = MagicMock(return_value=existing_ledger)
+        self.service.transactions.insert = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.post_transaction(
+                account_id="acc-1",
+                asset_id="asset-1",
+                txn_type="withdraw",
+                quantity=0,
+                amount=150,
+            )
+
+        self.service.transactions.insert.assert_not_called()
+
+    def test_invalid_reversal_rejected_before_insert(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.get_by_id = MagicMock(
+            return_value={
+                "id": "orig",
+                "account_id": "acc-1",
+                "asset_id": "asset-1",
+                "txn_type": "sell",
+                "quantity": 11,
+                "amount": 1100,
+            }
+        )
+        self.service.transactions.has_reversal_for = MagicMock(return_value=False)
+        self.service.transactions.insert = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.post_transaction(
+                account_id="acc-1",
+                asset_id="asset-1",
+                txn_type="sell",
+                quantity=10,
+                price=100,
+                amount=1000,
+                reversal_of_id="orig",
+            )
+
+        self.service.transactions.insert.assert_not_called()
+
+    def test_valid_transaction_inserts_once(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.list_for_position = MagicMock(return_value=[])
+        self.service.transactions.insert = MagicMock(return_value={"id": "txn-new"})
+        self.service.positions.upsert = MagicMock(return_value={"quantity": 2})
+
+        result = self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="buy",
+            quantity=2,
+            price=50,
+            amount=100,
+        )
+
+        self.assertEqual(result["id"], "txn-new")
+        self.service.transactions.insert.assert_called_once()
+        insert_payload = self.service.transactions.insert.call_args.args[0]
+        self.assertEqual(insert_payload["amount"], 100)
+
+    def test_corrupted_ledger_reversal_recovery_via_service(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        corrupted_ledger = [
+            {
+                "id": "buy-1",
+                "txn_type": "buy",
+                "quantity": 10,
+                "amount": 1000,
+                "executed_at": "2026-01-01",
+                "created_at": "2026-01-01",
+            },
+            {
+                "id": "sell-bad",
+                "txn_type": "sell",
+                "quantity": 11,
+                "amount": 1100,
+                "account_id": "acc-1",
+                "asset_id": "asset-1",
+                "executed_at": "2026-01-02",
+                "created_at": "2026-01-02",
+            },
+        ]
+        recovered_ledger = corrupted_ledger + [
+            {
+                "id": "rev-1",
+                "txn_type": "sell",
+                "quantity": 11,
+                "amount": 1100,
+                "executed_at": "2026-01-03",
+                "created_at": "2026-01-03",
+                "reversal_of_id": "sell-bad",
+            }
+        ]
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.get_by_id = MagicMock(
+            return_value=corrupted_ledger[1],
+        )
+        self.service.transactions.has_reversal_for = MagicMock(return_value=False)
+        self.service.transactions.list_for_position = MagicMock(
+            side_effect=[corrupted_ledger, recovered_ledger]
+        )
+        self.service.transactions.insert = MagicMock(return_value={"id": "rev-1"})
+        self.service.positions.upsert = MagicMock()
+
+        self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="sell",
+            quantity=11,
+            price=100,
+            amount=1100,
+            reversal_of_id="sell-bad",
+        )
+
+        upsert_kwargs = self.service.positions.upsert.call_args.kwargs
+        self.assertAlmostEqual(upsert_kwargs["quantity"], 10)
+        self.assertAlmostEqual(upsert_kwargs["average_cost"], 100.0)
+
+    def test_buy_sell_amount_derived_from_quantity_and_price(self) -> None:
+        from services.wealth_contract import normalize_trade_amount
+
+        self.assertEqual(
+            normalize_trade_amount("buy", quantity=10, price=100, amount=0),
+            1000,
+        )
+        with self.assertRaises(WealthValidationError):
+            normalize_trade_amount("sell", quantity=5, price=0, amount=0)
 
 
 class NabiIntelligenceFacadeTests(unittest.TestCase):

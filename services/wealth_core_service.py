@@ -21,9 +21,13 @@ from services.wealth_contract import (
     TXN_TYPE_WITHDRAW,
     WealthMaterializationError,
     WealthValidationError,
+    normalize_trade_amount,
     validate_txn_type,
 )
-from services.wealth_position_engine import materialize_position_from_transactions
+from services.wealth_position_engine import (
+    materialize_position_from_transactions,
+    validate_proposed_transaction,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class WealthCoreService:
     """Manual Wealth Core orchestration.
 
     Atomicity assumptions (Phase 1):
+    - Business-rule validation replays the ledger with the proposed row before INSERT.
     - Transaction insert and position materialization run sequentially in app code.
     - There is no DB-level transaction wrapper; concurrent posts for the same
       account/asset may race. Position rebuild replays the full ledger on each
@@ -190,6 +195,7 @@ class WealthCoreService:
         txn_type: str,
         quantity: float,
         amount: float,
+        price: Optional[float],
     ) -> str:
         normalized_type = validate_txn_type(txn_type)
         account = self.accounts.get_by_id(self.user_id, account_id)
@@ -216,14 +222,58 @@ class WealthCoreService:
         if amount < 0:
             raise WealthValidationError("Tutar negatif olamaz.")
 
-        if normalized_type in {TXN_TYPE_BUY, TXN_TYPE_SELL} and quantity <= 0:
-            raise WealthValidationError("Alış/satış için miktar sıfırdan büyük olmalı.")
+        if normalized_type in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
+            if quantity <= 0:
+                raise WealthValidationError("Alış/satış için miktar sıfırdan büyük olmalı.")
+            if price is None or price <= 0:
+                raise WealthValidationError("Alış/satış için birim fiyat gerekli.")
 
         if normalized_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW, TXN_TYPE_FEE}:
             if quantity <= 0 and amount <= 0:
                 raise WealthValidationError("Nakit işlemlerde miktar veya tutar gerekli.")
 
         return normalized_type
+
+    def _validate_reversal_before_insert(
+        self,
+        *,
+        account_id: str,
+        asset_id: Optional[str],
+        reversal_of_id: str,
+        txn_type: str,
+        quantity: float,
+        amount: float,
+    ) -> Dict[str, Any]:
+        original = self.transactions.get_by_id(self.user_id, reversal_of_id)
+        if original is None:
+            raise WealthValidationError("Ters kayıt için kaynak işlem bulunamadı.")
+        if original.get("account_id") != account_id:
+            raise WealthValidationError("Ters kayıt hesabı kaynak işlemle eşleşmiyor.")
+        if original.get("asset_id") != asset_id:
+            raise WealthValidationError("Ters kayıt varlığı kaynak işlemle eşleşmiyor.")
+        if self.transactions.has_reversal_for(self.user_id, reversal_of_id):
+            raise WealthValidationError("Bu işlem zaten ters kayıt ile düzeltilmiş.")
+        if str(original.get("txn_type") or "").strip().lower() != txn_type:
+            raise WealthValidationError("Ters kayıt türü kaynak işlemle eşleşmeli.")
+        if float(original.get("quantity") or 0) != quantity:
+            raise WealthValidationError("Ters kayıt miktarı kaynak işlemle eşleşmeli.")
+        if abs(float(original.get("amount") or 0) - amount) > 1e-6:
+            raise WealthValidationError("Ters kayıt tutarı kaynak işlemle eşleşmeli.")
+        return original
+
+    def _validate_ledger_acceptance(
+        self,
+        *,
+        account_id: str,
+        asset_id: str,
+        proposed_row: Dict[str, Any],
+    ) -> None:
+        ledger_rows = self.transactions.list_for_position(
+            self.user_id,
+            account_id,
+            asset_id,
+        )
+        validate_proposed_transaction(ledger_rows, proposed_row)
 
     def _rebuild_position(self, account_id: str, asset_id: str, cost_currency: str) -> None:
         ledger_rows = self.transactions.list_for_position(
@@ -264,18 +314,25 @@ class WealthCoreService:
             txn_type=txn_type,
             quantity=quantity,
             amount=amount,
+            price=price,
+        )
+
+        normalized_amount = normalize_trade_amount(
+            normalized_type,
+            quantity=quantity,
+            price=price,
+            amount=amount,
         )
 
         if reversal_of_id:
-            original = self.transactions.get_by_id(self.user_id, reversal_of_id)
-            if original is None:
-                raise WealthValidationError("Ters kayıt için kaynak işlem bulunamadı.")
-            if original.get("account_id") != account_id:
-                raise WealthValidationError("Ters kayıt hesabı kaynak işlemle eşleşmiyor.")
-            if original.get("asset_id") != asset_id:
-                raise WealthValidationError("Ters kayıt varlığı kaynak işlemle eşleşmiyor.")
-            if self.transactions.has_reversal_for(self.user_id, reversal_of_id):
-                raise WealthValidationError("Bu işlem zaten ters kayıt ile düzeltilmiş.")
+            self._validate_reversal_before_insert(
+                account_id=account_id,
+                asset_id=asset_id,
+                reversal_of_id=reversal_of_id,
+                txn_type=normalized_type,
+                quantity=quantity,
+                amount=normalized_amount,
+            )
 
         account = self.accounts.get_by_id(self.user_id, account_id)
         if account is None:
@@ -283,6 +340,23 @@ class WealthCoreService:
 
         asset = self.assets.get_by_id(self.user_id, str(asset_id)) if asset_id else None
         cost_currency = str((asset or {}).get("currency") or account.get("currency") or currency)
+        executed_value = executed_at or self._now_iso()
+
+        proposed_row = {
+            "txn_type": normalized_type,
+            "quantity": quantity,
+            "price": price,
+            "amount": normalized_amount,
+            "executed_at": executed_value,
+            "reversal_of_id": reversal_of_id,
+        }
+
+        if asset_id:
+            self._validate_ledger_acceptance(
+                account_id=account_id,
+                asset_id=asset_id,
+                proposed_row=proposed_row,
+            )
 
         payload = {
             "user_id": self.user_id,
@@ -291,9 +365,9 @@ class WealthCoreService:
             "txn_type": normalized_type,
             "quantity": quantity,
             "price": price,
-            "amount": amount,
+            "amount": normalized_amount,
             "currency": currency.strip().upper(),
-            "executed_at": executed_at or self._now_iso(),
+            "executed_at": executed_value,
             "notes": notes.strip() if notes else None,
             "reversal_of_id": reversal_of_id,
         }

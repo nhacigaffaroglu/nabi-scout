@@ -78,21 +78,116 @@ class WealthPositionEngineTests(unittest.TestCase):
         )
         self.assertEqual(qty, 490)
 
-    def test_reversal_inverts_buy(self) -> None:
+    def test_reversal_pair_cancels_original_buy(self) -> None:
         qty, avg = materialize_position_from_transactions(
             [
-                _txn("buy", quantity=10, amount=1000),
-                _txn(
-                    "buy",
-                    quantity=10,
-                    amount=1000,
-                    executed_at="2026-01-02T00:00:00+00:00",
-                    reversal_of_id="orig",
-                ),
+                {
+                    "id": "orig",
+                    "txn_type": "buy",
+                    "quantity": 10,
+                    "amount": 1000,
+                    "executed_at": "2026-01-01T00:00:00+00:00",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "txn_type": "buy",
+                    "quantity": 10,
+                    "amount": 1000,
+                    "executed_at": "2026-01-02T00:00:00+00:00",
+                    "created_at": "2026-01-02T00:00:00+00:00",
+                    "reversal_of_id": "orig",
+                },
             ]
         )
         self.assertEqual(qty, 0)
         self.assertEqual(avg, 0.0)
+
+    def test_buy10_unreversed_sell11_fails(self) -> None:
+        with self.assertRaises(WealthValidationError):
+            materialize_position_from_transactions(
+                [
+                    {
+                        "id": "buy-1",
+                        "txn_type": "buy",
+                        "quantity": 10,
+                        "amount": 1000,
+                        "executed_at": "2026-01-01T00:00:00+00:00",
+                        "created_at": "2026-01-01T00:00:00+00:00",
+                    },
+                    {
+                        "id": "sell-bad",
+                        "txn_type": "sell",
+                        "quantity": 11,
+                        "amount": 1100,
+                        "executed_at": "2026-01-02T00:00:00+00:00",
+                        "created_at": "2026-01-02T00:00:00+00:00",
+                    },
+                ]
+            )
+
+    def test_buy10_sell11_with_reversal_recovers_to_qty10(self) -> None:
+        qty, avg = materialize_position_from_transactions(
+            [
+                {
+                    "id": "buy-1",
+                    "txn_type": "buy",
+                    "quantity": 10,
+                    "amount": 1000,
+                    "executed_at": "2026-01-01T00:00:00+00:00",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "id": "sell-bad",
+                    "txn_type": "sell",
+                    "quantity": 11,
+                    "amount": 1100,
+                    "executed_at": "2026-01-02T00:00:00+00:00",
+                    "created_at": "2026-01-02T00:00:00+00:00",
+                },
+                {
+                    "txn_type": "sell",
+                    "quantity": 11,
+                    "amount": 1100,
+                    "executed_at": "2026-01-03T00:00:00+00:00",
+                    "created_at": "2026-01-03T00:00:00+00:00",
+                    "reversal_of_id": "sell-bad",
+                },
+            ]
+        )
+        self.assertEqual(qty, 10)
+        self.assertAlmostEqual(avg, 100.0)
+
+    def test_valid_sell_with_reversal_restores_prior_state(self) -> None:
+        qty, avg = materialize_position_from_transactions(
+            [
+                {
+                    "id": "buy-1",
+                    "txn_type": "buy",
+                    "quantity": 10,
+                    "amount": 1000,
+                    "executed_at": "2026-01-01T00:00:00+00:00",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                },
+                {
+                    "id": "sell-1",
+                    "txn_type": "sell",
+                    "quantity": 4,
+                    "amount": 400,
+                    "executed_at": "2026-01-02T00:00:00+00:00",
+                    "created_at": "2026-01-02T00:00:00+00:00",
+                },
+                {
+                    "txn_type": "sell",
+                    "quantity": 4,
+                    "amount": 400,
+                    "executed_at": "2026-01-03T00:00:00+00:00",
+                    "created_at": "2026-01-03T00:00:00+00:00",
+                    "reversal_of_id": "sell-1",
+                },
+            ]
+        )
+        self.assertEqual(qty, 10)
+        self.assertAlmostEqual(avg, 100.0)
 
     def test_zero_position_after_full_sell(self) -> None:
         qty, avg = materialize_position_from_transactions(
@@ -100,6 +195,28 @@ class WealthPositionEngineTests(unittest.TestCase):
         )
         self.assertEqual(qty, 0)
         self.assertEqual(avg, 0.0)
+
+    def test_validate_proposed_transaction_rejects_oversell(self) -> None:
+        from services.wealth_position_engine import validate_proposed_transaction
+
+        with self.assertRaises(WealthValidationError):
+            validate_proposed_transaction(
+                [
+                    {
+                        "txn_type": "buy",
+                        "quantity": 10,
+                        "amount": 1000,
+                        "executed_at": "2026-01-01",
+                        "created_at": "2026-01-01",
+                    }
+                ],
+                {
+                    "txn_type": "sell",
+                    "quantity": 11,
+                    "amount": 1100,
+                    "executed_at": "2026-01-02",
+                },
+            )
 
     def test_equal_executed_at_uses_created_at_tiebreaker(self) -> None:
         qty, avg = materialize_position_from_transactions(
