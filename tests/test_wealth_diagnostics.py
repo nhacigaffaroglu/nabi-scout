@@ -1057,7 +1057,9 @@ class WealthDiagnosticsUiTests(unittest.TestCase):
 
     @staticmethod
     def _analysis_block() -> str:
-        return WealthDiagnosticsUiTests._wealth_page_source().split("with tab_analysis:")[1]
+        return WealthDiagnosticsUiTests._wealth_page_source().split("with tab_analysis:")[1].split(
+            "with tab_adviser:"
+        )[0]
 
     def test_analiz_tab_present(self) -> None:
         source = self._wealth_page_source()

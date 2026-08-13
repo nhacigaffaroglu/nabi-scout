@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 ADVISER_SCHEMA_VERSION = "wealth-adviser-v1"
+ADVISER_LLM_INPUT_SCHEMA_VERSION = "wealth-adviser-llm-input-v1"
+ADVISER_RESPONSE_SCHEMA_VERSION = "wealth-adviser-response-v1"
 
 PROHIBITED_CLAIMS: Tuple[str, ...] = (
     "Do not claim fiduciary status.",
@@ -164,4 +166,88 @@ class AdviserBrief:
             "questions_for_user": list(self.questions_for_user),
             "prohibited_claims": list(self.prohibited_claims),
             "context": self.context.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class AdviserLlmInputPayload:
+    schema_version: str
+    brief: Dict[str, Any]
+    user_question: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "brief": dict(self.brief),
+            "user_question": self.user_question,
+        }
+
+
+@dataclass(frozen=True)
+class AdviserResponse:
+    answer: str
+    key_points: Tuple[str, ...]
+    referenced_finding_ids: Tuple[str, ...]
+    limitations: Tuple[str, ...]
+    follow_up_questions: Tuple[str, ...]
+    safety_flags: Tuple[str, ...]
+    model_name: str
+    generated_at: str
+    grounded: bool
+    schema_version: str = ADVISER_RESPONSE_SCHEMA_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "answer": self.answer,
+            "key_points": list(self.key_points),
+            "referenced_finding_ids": list(self.referenced_finding_ids),
+            "limitations": list(self.limitations),
+            "follow_up_questions": list(self.follow_up_questions),
+            "safety_flags": list(self.safety_flags),
+            "model_name": self.model_name,
+            "generated_at": self.generated_at,
+            "grounded": self.grounded,
+        }
+
+
+@dataclass(frozen=True)
+class AdviserLlmInputPayload:
+    schema_version: str
+    brief: Dict[str, Any]
+    user_question: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "brief": dict(self.brief),
+            "user_question": self.user_question,
+        }
+
+
+@dataclass(frozen=True)
+class AdviserResponse:
+    answer: str
+    key_points: Tuple[str, ...]
+    referenced_finding_ids: Tuple[str, ...]
+    limitations: Tuple[str, ...]
+    follow_up_questions: Tuple[str, ...]
+    safety_flags: Tuple[str, ...]
+    model_name: str
+    generated_at: str
+    grounded: bool
+    schema_version: str = ADVISER_RESPONSE_SCHEMA_VERSION
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "answer": self.answer,
+            "key_points": list(self.key_points),
+            "referenced_finding_ids": list(self.referenced_finding_ids),
+            "limitations": list(self.limitations),
+            "follow_up_questions": list(self.follow_up_questions),
+            "safety_flags": list(self.safety_flags),
+            "model_name": self.model_name,
+            "generated_at": self.generated_at,
+            "grounded": self.grounded,
         }

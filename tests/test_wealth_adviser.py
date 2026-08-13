@@ -650,11 +650,13 @@ class WealthAdviserUiTests(unittest.TestCase):
 
     def test_deterministic_only_caption_visible(self) -> None:
         block = self._adviser_block()
-        self.assertIn("henüz bir dil modeli tarafından yorumlanmamaktadır", block.lower())
+        self.assertIn("deterministik wealth verileri kaynak gerçektir", block.lower())
 
     def test_no_ai_active_claim(self) -> None:
         block = self._adviser_block().lower()
-        self.assertIn("ai danışman henüz etkin değil", block)
+        self.assertTrue(
+            "ai yorumu etkin değil" in block or "yorum katmanıdır" in block
+        )
 
     def test_no_buy_sell_wording(self) -> None:
         block = self._adviser_block().lower()
@@ -1150,7 +1152,7 @@ class WealthAdviserValidationGateTests(unittest.TestCase):
     def test_adviser_ui_no_free_form_fact_inputs(self) -> None:
         source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
         adviser = source.split("with tab_adviser:")[1].lower()
-        self.assertNotIn("text_input", adviser)
+        self.assertIn('st.form("adviser_ai_form"', adviser)
         self.assertNotIn("number_input", adviser)
         self.assertNotIn("service_role", source.lower())
 

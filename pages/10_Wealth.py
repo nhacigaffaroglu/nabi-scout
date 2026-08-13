@@ -28,6 +28,8 @@ from services.wealth_contract import (
     WealthValidationError,
 )
 from services.wealth_core_service import WealthCoreService
+from services.wealth_adviser_config import load_adviser_llm_config
+from services.wealth_adviser_interpretation_service import WealthAdviserInterpretationService
 from services.wealth_adviser_service import WealthAdviserService
 from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
 from services.wealth_diagnostics_engine import effective_position_count
@@ -82,6 +84,8 @@ intelligence = PortfolioIntelligenceService(
 timeline = WealthTimelineService(wealth)
 diagnostics_service = WealthDiagnosticsService(wealth)
 adviser_service = WealthAdviserService()
+adviser_llm_config = load_adviser_llm_config()
+adviser_interpretation_service = WealthAdviserInterpretationService(config=adviser_llm_config)
 
 
 def _severity_badge(severity: DiagnosticSeverity) -> str:
@@ -149,6 +153,40 @@ def _render_adviser_finding(finding) -> None:
         if finding.limitations:
             for note in finding.limitations:
                 st.caption(f"Not: {note}")
+
+
+def _render_adviser_response(response) -> None:
+    if response.grounded:
+        st.success("AI yorumu deterministik verilerle doğrulandı.")
+    else:
+        st.info(
+            "Deterministik yedek yanıt gösteriliyor; AI yorumu doğrulanamadı "
+            "veya kullanılamıyor."
+        )
+    st.markdown(response.answer)
+    if response.key_points:
+        st.markdown("**Ana noktalar**")
+        for point in response.key_points:
+            st.write(f"- {point}")
+    if response.referenced_finding_ids:
+        st.caption(
+            "Referans verilen bulgular: "
+            + ", ".join(response.referenced_finding_ids)
+        )
+    if response.limitations:
+        st.markdown("**Sınırlamalar**")
+        for note in response.limitations:
+            st.write(f"- {note}")
+    if response.follow_up_questions:
+        st.markdown("**Takip soruları**")
+        for question in response.follow_up_questions:
+            st.write(f"- {question}")
+    if response.safety_flags:
+        st.caption(f"Güvenlik bayrakları: {', '.join(response.safety_flags)}")
+    st.caption(
+        f"Kaynak: {'AI yorumu (doğrulandı)' if response.grounded else 'Deterministik yedek'} · "
+        f"Model: {response.model_name}"
+    )
 
 
 st.title("💰 Wealth Core")
@@ -932,10 +970,11 @@ with tab_analysis:
 
 with tab_adviser:
     st.subheader("Danışman")
-    st.info("AI danışman henüz etkin değil.")
+    st.warning(
+        "Bu özellik yatırım tavsiyesi değildir ve otomatik işlem gerçekleştirmez."
+    )
     st.caption(
-        "Bu görünüm deterministik Wealth verilerinden üretilir; "
-        "henüz bir dil modeli tarafından yorumlanmamaktadır."
+        "Deterministik Wealth verileri kaynak gerçektir; AI bölümü yalnızca yorum katmanıdır."
     )
 
     adviser_performance_view = timeline.build_performance_view(portfolio)
@@ -953,6 +992,7 @@ with tab_adviser:
         generated_from_snapshot_count=len(adviser_performance_view.history_points),
     )
 
+    st.markdown("**Deterministik bulgular**")
     st.markdown(f"**{adviser_brief.headline}**")
     st.write(adviser_brief.portfolio_summary)
 
@@ -972,6 +1012,40 @@ with tab_adviser:
         st.markdown("**Sorulabilecek sorular**")
         for question in adviser_brief.questions_for_user:
             st.write(f"- {question}")
+
+    st.divider()
+    st.markdown("**AI yorumu**")
+    if not adviser_llm_config.is_usable:
+        st.info(
+            "AI yorumu etkin değil. WEALTH_ADVISER_LLM_API_KEY ve "
+            "WEALTH_ADVISER_LLM_ENABLED yapılandırması gerekir."
+        )
+    else:
+        adviser_cache_key = f"adviser_response_{user_id}_{portfolio.get('id', portfolio_view.portfolio_id)}"
+        with st.form("adviser_ai_form", clear_on_submit=False):
+            adviser_question = st.text_input(
+                "Sorunuz (isteğe bağlı)",
+                placeholder="Örn: Portföy yoğunlaşması hakkında ne düşünüyorsun?",
+            )
+            action_col1, action_col2 = st.columns(2)
+            submit_interpret = action_col1.form_submit_button("Yorumla")
+            submit_ask = action_col2.form_submit_button("Sor")
+
+        if submit_interpret or submit_ask:
+            question = adviser_question.strip() if submit_ask else None
+            if submit_interpret and not question:
+                question = (
+                    "Portföydeki deterministik bulguları özetle ve "
+                    "dikkat edilmesi gereken sınırlamaları açıkla."
+                )
+            st.session_state[adviser_cache_key] = adviser_interpretation_service.interpret(
+                adviser_brief,
+                user_question=question,
+            )
+
+        cached_response = st.session_state.get(adviser_cache_key)
+        if cached_response is not None:
+            _render_adviser_response(cached_response)
 
     with st.expander("Teknik bağlam"):
         st.json(adviser_brief.to_dict())
