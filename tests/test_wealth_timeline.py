@@ -779,6 +779,12 @@ class WealthTimelineMigrationTests(unittest.TestCase):
 class WealthTimelineUiTests(unittest.TestCase):
     PAGE = Path("pages/10_Wealth.py")
 
+    def test_wealth_page_imports_price_and_timeline_services(self) -> None:
+        source = self.PAGE.read_text(encoding="utf-8")
+        self.assertIn("from services.wealth_price_service import WealthPriceService", source)
+        self.assertIn("from services.wealth_timeline_service import WealthTimelineService", source)
+        compile(source, str(self.PAGE), "exec")
+
     def test_explicit_snapshot_button_only(self) -> None:
         source = self.PAGE.read_text(encoding="utf-8")
         self.assertIn("Anlık görüntü kaydet", source)

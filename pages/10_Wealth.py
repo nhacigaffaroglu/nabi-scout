@@ -22,6 +22,7 @@ from services.wealth_contract import (
     WealthValidationError,
 )
 from services.wealth_core_service import WealthCoreService
+from services.wealth_price_service import WealthPriceService
 from services.wealth_timeline_service import WealthTimelineService
 
 
