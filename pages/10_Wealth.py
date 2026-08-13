@@ -28,6 +28,9 @@ from services.wealth_contract import (
     WealthValidationError,
 )
 from services.wealth_core_service import WealthCoreService
+from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
+from services.wealth_diagnostics_engine import effective_position_count
+from services.wealth_diagnostics_service import WealthDiagnosticsService
 from services.wealth_price_service import WealthPriceService
 from services.wealth_timeline_service import WealthTimelineService
 
@@ -76,6 +79,28 @@ intelligence = PortfolioIntelligenceService(
     nabi_client=client,
 )
 timeline = WealthTimelineService(wealth)
+diagnostics_service = WealthDiagnosticsService(wealth)
+
+
+def _severity_badge(severity: DiagnosticSeverity) -> str:
+    if severity == DiagnosticSeverity.HIGH:
+        return "🔴 Yüksek"
+    if severity == DiagnosticSeverity.WATCH:
+        return "🟡 İzle"
+    return "🔵 Bilgi"
+
+
+def _render_diagnostic_card(diagnostic) -> None:
+    with st.expander(f"{_severity_badge(diagnostic.severity)} · {diagnostic.title}"):
+        st.write(diagnostic.summary)
+        st.caption(
+            f"Kod: `{diagnostic.code}` · Güven: {diagnostic.confidence.value} · "
+            f"Kaynak: {diagnostic.source}"
+        )
+        if diagnostic.affected_symbols:
+            st.caption(f"Semboller: {', '.join(diagnostic.affected_symbols)}")
+        if diagnostic.evidence:
+            st.json(diagnostic.evidence)
 
 st.title("💰 Wealth Core")
 st.caption(
@@ -98,7 +123,7 @@ col6.metric("İşlem", summary.transaction_count)
 
 st.divider()
 
-tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history = st.tabs(
+tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis = st.tabs(
     [
         "Özet",
         "Hesaplar",
@@ -107,6 +132,7 @@ tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, 
         "Pozisyonlar",
         "Borçlar",
         "Geçmiş",
+        "Analiz",
     ]
 )
 
@@ -728,3 +754,128 @@ with tab_history:
                 st.write(f"- {warning}")
 
         st.caption(f"Benchmark sağlayıcı çağrısı (bu görünüm): {provider_calls}")
+
+with tab_analysis:
+    st.subheader("Portföy analizi")
+    st.caption(
+        "Deterministik yapısal tanılar; kişiselleştirilmiş yatırım kararı veya "
+        "alım/satım yönlendirmesi içermez."
+    )
+
+    analysis_performance_view = timeline.build_performance_view(portfolio)
+    diagnostics_view = diagnostics_service.build_diagnostics_view(
+        portfolio,
+        portfolio_view,
+        performance_view=analysis_performance_view,
+        benchmark_view=None,
+    )
+
+    view = portfolio_view
+    if diagnostics_view.data_quality_ok:
+        st.success(
+            f"Analiz kapsamı: {view.priced_position_count}/{view.total_position_count} "
+            f"fiyatlı pozisyon · {view.base_currency} baz · tam kapsam"
+        )
+    else:
+        st.warning(
+            f"Analiz kısmi: {view.unpriced_position_count} pozisyon fiyatlanamadı · "
+            f"kapsam %{view.health.priced_position_coverage_pct:.0f}"
+        )
+
+    st.markdown("**Öne çıkanlar**")
+    if not diagnostics_view.diagnostics:
+        st.info("Üretilen tanı yok.")
+    else:
+        for diagnostic in diagnostics_view.diagnostics:
+            if diagnostic.severity in {DiagnosticSeverity.HIGH, DiagnosticSeverity.WATCH}:
+                _render_diagnostic_card(diagnostic)
+        info_items = [
+            item
+            for item in diagnostics_view.diagnostics
+            if item.severity == DiagnosticSeverity.INFO
+        ]
+        if info_items:
+            with st.expander(f"Bilgi düzeyi tanılar ({len(info_items)})"):
+                for diagnostic in info_items:
+                    _render_diagnostic_card(diagnostic)
+
+    st.divider()
+    st.markdown("**Yoğunlaşma**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "En büyük pozisyon",
+        f"{view.health.largest_position_weight_pct:.1f}%",
+    )
+    c2.metric(
+        "İlk 3 yoğunlaşma",
+        f"{view.health.top3_concentration_pct:.1f}%",
+    )
+    effective = effective_position_count(view)
+    c3.metric(
+        "Etkin pozisyon sayısı",
+        f"{effective:.2f}" if effective is not None else "—",
+    )
+    c4.metric(
+        "Varlık sınıfı yoğunlaşması",
+        f"{view.health.largest_asset_class_concentration_pct:.1f}%",
+    )
+
+    st.divider()
+    st.markdown("**Performans yapısı**")
+    invested_rows = [
+        row
+        for row in view.priced_positions
+        if row.included_in_base_totals and not row.is_cash and row.unrealized_pl is not None
+    ]
+    profitable = sum(1 for row in invested_rows if row.unrealized_pl > 0)
+    losing = sum(1 for row in invested_rows if row.unrealized_pl < 0)
+    p1, p2 = st.columns(2)
+    p1.metric("Kârlı pozisyon", profitable)
+    p2.metric("Zararda pozisyon", losing)
+
+    drawdown_diag = next(
+        (
+            item
+            for item in diagnostics_view.diagnostics
+            if item.code == "DRAWDOWN_PERFORMANCE"
+        ),
+        None,
+    )
+    if drawdown_diag is not None:
+        st.caption(
+            "Performans endeksi drawdown: "
+            f"güncel {drawdown_diag.evidence.get('current_drawdown_pct', 0):.2f}%, "
+            f"maksimum {drawdown_diag.evidence.get('max_observed_drawdown_pct', 0):.2f}%"
+        )
+    else:
+        st.caption(
+            "Performans endeksi drawdown yalnızca karşılaştırılabilir zincirlenmiş "
+            "getiri geçmişi olduğunda gösterilir."
+        )
+
+    st.divider()
+    st.markdown("**Benchmark**")
+    if diagnostics_view.benchmark_available:
+        st.caption("Benchmark tanıları mevcut görünümden türetildi.")
+    else:
+        st.info(
+            "SPY tarihsel karşılaştırması bu sekmede yüklenmedi. "
+            "Geçmiş sekmesindeki karşılaştırma görünümü sağlandığında "
+            "benchmark tanıları türetilebilir."
+        )
+
+    st.divider()
+    st.markdown("**NABI bağlamı**")
+    st.caption(
+        "NABI verileri portföy değerleme veya getiri hesaplarını değiştirmez."
+    )
+    nabi_items = [
+        item
+        for item in diagnostics_view.diagnostics
+        if item.category == DiagnosticCategory.NABI_CONTEXT
+    ]
+    if not nabi_items:
+        st.info("NABI bağlam tanısı üretilmedi.")
+    else:
+        for diagnostic in nabi_items:
+            _render_diagnostic_card(diagnostic)
