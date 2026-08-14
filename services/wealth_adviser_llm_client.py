@@ -25,9 +25,90 @@ class WealthAdviserLlmClient:
     """Minimal OpenAI-compatible chat completion client for adviser interpretation."""
 
     OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+    _COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
     def __init__(self, config: AdviserLlmConfig) -> None:
         self.config = config
+
+    @classmethod
+    def _normalized_model_name(cls, model: str) -> str:
+        return model.strip().lower().removeprefix("openai/")
+
+    @classmethod
+    def uses_max_completion_tokens(cls, model: str) -> bool:
+        name = cls._normalized_model_name(model)
+        return any(name.startswith(prefix) for prefix in cls._COMPLETION_TOKEN_MODEL_PREFIXES)
+
+    @classmethod
+    def supports_temperature(cls, model: str) -> bool:
+        return not cls.uses_max_completion_tokens(model)
+
+    def build_chat_completion_body(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        if self.uses_max_completion_tokens(self.config.model):
+            # GPT-5 family can spend the entire completion budget on reasoning
+            # tokens and return empty message.content unless effort is reduced.
+            body["reasoning_effort"] = "minimal"
+        if self.supports_temperature(self.config.model):
+            body["temperature"] = self.config.temperature
+        token_param = (
+            "max_completion_tokens"
+            if self.uses_max_completion_tokens(self.config.model)
+            else "max_tokens"
+        )
+        body[token_param] = self.config.max_output_tokens
+        return body
+
+    @staticmethod
+    def extract_completion_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {
+            "finish_reason": None,
+            "content_length": 0,
+            "reasoning_tokens": None,
+            "completion_tokens": None,
+            "message_keys": (),
+        }
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return metadata
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        metadata["finish_reason"] = choice.get("finish_reason")
+        message = choice.get("message")
+        if isinstance(message, dict):
+            metadata["message_keys"] = tuple(sorted(message.keys()))
+            content = message.get("content")
+            if isinstance(content, str):
+                metadata["content_length"] = len(content.strip())
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            metadata["completion_tokens"] = usage.get("completion_tokens")
+            details = usage.get("completion_tokens_details")
+            if isinstance(details, dict):
+                metadata["reasoning_tokens"] = details.get("reasoning_tokens")
+        return metadata
+
+    @staticmethod
+    def parse_provider_error_metadata(response: requests.Response) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {
+            "http_status": response.status_code,
+            "provider_error_code": None,
+            "provider_error_type": None,
+        }
+        try:
+            payload = response.json()
+        except ValueError:
+            return metadata
+        if not isinstance(payload, dict):
+            return metadata
+        error = payload.get("error")
+        if isinstance(error, dict):
+            metadata["provider_error_code"] = error.get("code")
+            metadata["provider_error_type"] = error.get("type")
+        return metadata
 
     def complete(self, messages: List[Dict[str, str]]) -> str:
         if not self.config.is_usable:
@@ -45,13 +126,7 @@ class WealthAdviserLlmClient:
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
         }
-        body: Dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_output_tokens,
-            "response_format": {"type": "json_object"},
-        }
+        body = self.build_chat_completion_body(messages)
         try:
             response = requests.post(
                 self.OPENAI_CHAT_URL,

@@ -1,10 +1,11 @@
 import inspect
 import json
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from services.wealth_adviser_config import AdviserLlmConfig
+from services.wealth_adviser_config import AdviserLlmConfig, load_adviser_llm_config, _load_api_key_from_secrets
 from services.wealth_adviser_contract import PROHIBITED_CLAIMS, AdviserResponse
 from services.wealth_adviser_interpretation_service import WealthAdviserInterpretationService
 from services.wealth_adviser_llm_client import WealthAdviserLlmClient, WealthAdviserLlmError
@@ -559,6 +560,138 @@ class WealthAdviserSecurityValidationGateTests(unittest.TestCase):
     def test_input_payload_shape(self) -> None:
         payload = build_llm_input_payload(self.brief, user_question="Q").to_dict()
         self.assertTrue(validate_llm_input_payload_shape(payload))
+
+
+class WealthAdviserConfigLoaderTests(unittest.TestCase):
+    def test_load_api_key_from_streamlit_attrdict_section(self) -> None:
+        from streamlit.runtime.secrets import AttrDict
+
+        fake_section = AttrDict({"api_key": "secret-from-secrets"})
+        with patch("streamlit.secrets", create=True) as secrets_mock:
+            secrets_mock.get.return_value = fake_section
+            self.assertEqual(_load_api_key_from_secrets(), "secret-from-secrets")
+
+    def test_load_adviser_llm_config_enables_when_env_and_secrets_key_present(self) -> None:
+        from streamlit.runtime.secrets import AttrDict
+
+        fake_section = AttrDict({"api_key": "secret-from-secrets"})
+        with patch.dict(
+            os.environ,
+            {"WEALTH_ADVISER_LLM_ENABLED": "true"},
+            clear=False,
+        ), patch("streamlit.secrets", create=True) as secrets_mock:
+            secrets_mock.get.return_value = fake_section
+            config = load_adviser_llm_config()
+        self.assertTrue(config.enabled)
+        self.assertTrue(config.api_key)
+        self.assertTrue(config.is_usable)
+
+    def test_load_adviser_llm_config_reads_model_from_secrets(self) -> None:
+        from streamlit.runtime.secrets import AttrDict
+
+        fake_section = AttrDict({"api_key": "secret-from-secrets", "model": "gpt-5-mini"})
+        with patch.dict(os.environ, {"WEALTH_ADVISER_LLM_ENABLED": "true"}, clear=False), patch(
+            "streamlit.secrets",
+            create=True,
+        ) as secrets_mock:
+            secrets_mock.get.return_value = fake_section
+            config = load_adviser_llm_config()
+        self.assertEqual(config.model, "gpt-5-mini")
+
+
+class WealthAdviserLlmClientRequestTests(unittest.TestCase):
+    def test_gpt4_request_uses_max_tokens_and_temperature(self) -> None:
+        client = WealthAdviserLlmClient(
+            AdviserLlmConfig(
+                enabled=True,
+                provider="openai",
+                model="gpt-4o-mini",
+                timeout_seconds=30,
+                max_output_tokens=1200,
+                temperature=0.2,
+                api_key="test-key",
+            )
+        )
+        body = client.build_chat_completion_body([{"role": "user", "content": "hi"}])
+        self.assertIn("max_tokens", body)
+        self.assertNotIn("max_completion_tokens", body)
+        self.assertEqual(body["temperature"], 0.2)
+        self.assertEqual(body["response_format"], {"type": "json_object"})
+
+    def test_gpt5_request_uses_max_completion_tokens_without_temperature(self) -> None:
+        client = WealthAdviserLlmClient(
+            AdviserLlmConfig(
+                enabled=True,
+                provider="openai",
+                model="gpt-5-mini",
+                timeout_seconds=30,
+                max_output_tokens=1200,
+                temperature=0.2,
+                api_key="test-key",
+            )
+        )
+        body = client.build_chat_completion_body([{"role": "user", "content": "hi"}])
+        self.assertIn("max_completion_tokens", body)
+        self.assertNotIn("max_tokens", body)
+        self.assertNotIn("temperature", body)
+        self.assertEqual(body["reasoning_effort"], "minimal")
+
+    def test_extract_completion_metadata_reports_empty_content_and_reasoning_tokens(self) -> None:
+        payload = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": "", "refusal": None},
+                }
+            ],
+            "usage": {
+                "completion_tokens": 1200,
+                "completion_tokens_details": {"reasoning_tokens": 1200},
+            },
+        }
+        metadata = WealthAdviserLlmClient.extract_completion_metadata(payload)
+        self.assertEqual(metadata["finish_reason"], "length")
+        self.assertEqual(metadata["content_length"], 0)
+        self.assertEqual(metadata["reasoning_tokens"], 1200)
+        self.assertEqual(metadata["completion_tokens"], 1200)
+
+    def test_complete_rejects_empty_assistant_content(self) -> None:
+        client = WealthAdviserLlmClient(
+            AdviserLlmConfig(
+                enabled=True,
+                provider="openai",
+                model="gpt-5-mini",
+                timeout_seconds=30,
+                max_output_tokens=1200,
+                temperature=0.2,
+                api_key="test-key",
+            )
+        )
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 1200, "completion_tokens_details": {"reasoning_tokens": 1200}},
+        }
+        with patch("services.wealth_adviser_llm_client.requests.post", return_value=response):
+            with self.assertRaises(WealthAdviserLlmError) as ctx:
+                client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(ctx.exception.error_class, "parse")
+
+    def test_parse_provider_error_metadata_redacts_body(self) -> None:
+        response = MagicMock()
+        response.status_code = 429
+        response.json.return_value = {
+            "error": {
+                "code": "insufficient_quota",
+                "type": "insufficient_quota",
+                "message": "You exceeded your current quota",
+            }
+        }
+        metadata = WealthAdviserLlmClient.parse_provider_error_metadata(response)
+        self.assertEqual(metadata["http_status"], 429)
+        self.assertEqual(metadata["provider_error_code"], "insufficient_quota")
+        self.assertEqual(metadata["provider_error_type"], "insufficient_quota")
 
 
 if __name__ == "__main__":

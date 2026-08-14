@@ -51,17 +51,21 @@ def _clamp_float(value: str, *, default: float, minimum: float, maximum: float) 
     return max(minimum, min(maximum, parsed))
 
 
-def _load_api_key_from_secrets() -> Optional[str]:
+def _load_secret_string(field_name: str) -> Optional[str]:
     try:
         import streamlit as st
 
-        section = st.secrets.get("wealth_adviser", {})
-        if isinstance(section, dict):
-            key = str(section.get("api_key") or section.get("llm_api_key") or "").strip()
-            return key or None
+        section = st.secrets.get("wealth_adviser")
+        if not section:
+            return None
+        value = str(section.get(field_name) or "").strip()
+        return value or None
     except Exception:
         return None
-    return None
+
+
+def _load_api_key_from_secrets() -> Optional[str]:
+    return _load_secret_string("api_key") or _load_secret_string("llm_api_key")
 
 
 def load_adviser_llm_config() -> AdviserLlmConfig:
@@ -73,7 +77,7 @@ def load_adviser_llm_config() -> AdviserLlmConfig:
     return AdviserLlmConfig(
         enabled=enabled,
         provider=provider,
-        model=(os.environ.get("WEALTH_ADVISER_LLM_MODEL") or "gpt-4o-mini").strip(),
+        model=(os.environ.get("WEALTH_ADVISER_LLM_MODEL") or _load_secret_string("model") or "gpt-4o-mini").strip(),
         timeout_seconds=_clamp_int(
             os.environ.get("WEALTH_ADVISER_LLM_TIMEOUT_SECONDS") or "30",
             default=30,
