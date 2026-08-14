@@ -6,14 +6,19 @@ import streamlit as st
 
 from services.company_report_participation_service import CompanyReportParticipationView
 from services.participation_assessment_change_service import annotate_history_with_changes
+from services.participation_financial_diagnostics import serialize_financial_diagnostics
+from services.participation_completeness import translate_missing_capability
 from services.participation_intelligence_contract import (
     PARTICIPATION_DISCLAIMER_SHORT,
+    PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.ui_formatters import format_datetime_tr
 
 
 def _status_container(status: str):
+    if status == PARTICIPATION_STATUS_UYGUN:
+        return st.success
     if status == PARTICIPATION_STATUS_UYGUN_DEGIL:
         return st.error
     return st.warning
@@ -77,9 +82,53 @@ def render_company_report_participation_section(
     st.caption(view.business_screen_summary)
 
     if view.missing_capabilities:
-        st.markdown("**Eksik yetenekler / kanıt**")
+        st.markdown("**Eksik kanıt alanları**")
         for item in view.missing_capabilities:
-            st.caption(f"• {item}")
+            st.caption(f"• {translate_missing_capability(item)}")
+
+    result = view.result
+    if result is not None and result.assessment_completeness is not None:
+        completeness = result.assessment_completeness
+        st.caption(
+            "Değerlendirme kapsamı: "
+            f"finansal {completeness.financial_rules_evaluated}/"
+            f"{completeness.financial_rules_total} · "
+            f"faaliyet {completeness.business_rules_evaluated}/"
+            f"{completeness.business_rules_total}"
+        )
+        diagnostics = serialize_financial_diagnostics(
+            result.financial_screen_result,
+            as_of_date=assessment.as_of_date,
+        )
+        if diagnostics or result.participation_provider_calls or view.missing_capabilities:
+            with st.expander("Teknik katılım kanıt ayrıntıları"):
+                if result.participation_provider_calls:
+                    st.caption(
+                        "Sağlayıcı çağrıları (katılım): "
+                        + ", ".join(
+                            f"{key}={value}"
+                            for key, value in sorted(result.participation_provider_calls.items())
+                        )
+                    )
+                if diagnostics:
+                    st.markdown("**Finansal kural kanıtları**")
+                    for row in diagnostics:
+                        st.markdown(f"**{row['rule_name']}** · {row['status']}")
+                        if row["status"] == "Değerlendirilemedi":
+                            st.caption(row["limitations"] or "Yeterli kanıt yok.")
+                        else:
+                            st.caption(f"Pay ({row['numerator_name']}): {row['numerator_value']}")
+                            st.caption(
+                                f"Payda ({row['denominator_name']}): {row['denominator_value']}"
+                            )
+                            st.caption(f"Hesaplanan oran: {row['calculated_ratio']}")
+                            st.caption(f"Eşik: {row['threshold']}")
+                        st.caption(f"Dönem: {row['fiscal_period']}")
+                        st.caption(f"Kaynak: {row['source']}")
+                        if row.get("source_fields"):
+                            st.caption(f"Kaynak alanları: {row['source_fields']}")
+                for item in view.missing_capabilities:
+                    st.caption(f"{item}: {translate_missing_capability(item)}")
 
     combined_warnings = tuple(dict.fromkeys((*view.warnings, *assessment.warnings)))
     if combined_warnings:

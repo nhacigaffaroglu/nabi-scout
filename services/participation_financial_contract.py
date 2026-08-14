@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Dict, Optional, Tuple
 
+from services.participation_financial_provenance import FinancialFieldProvenance
+
 from services.participation_intelligence_contract import (
     RULE_OUTCOME_FAIL,
     RULE_OUTCOME_INSUFFICIENT_DATA,
@@ -41,10 +43,21 @@ class ParticipationFinancialInputs:
     non_compliant_activities_income: Optional[float] = None
     prohibited_component_income: Optional[float] = None
     source_evidence: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
+    field_provenance: Tuple[Tuple[str, FinancialFieldProvenance], ...] = field(
+        default_factory=tuple
+    )
 
     def to_dict(self) -> Dict[str, Any]:
         payload = asdict(self)
         payload["source_evidence"] = dict(self.source_evidence)
+        payload["field_provenance"] = {
+            field_name: {
+                "source": provenance.source,
+                "source_fields": list(provenance.source_fields),
+                "period": provenance.period,
+            }
+            for field_name, provenance in self.field_provenance
+        }
         if self.as_of_date is not None:
             payload["as_of_date"] = self.as_of_date.isoformat()
         return payload

@@ -208,6 +208,149 @@ class AnnualSeriesTests(unittest.TestCase):
         self.assertEqual(result["revenue"], 215_938_000_000)
         self.assertLess(result["free_cash_flow_margin"], 100)
 
+    def test_interest_bearing_securities_uses_aligned_marketable_tags(self) -> None:
+        payload = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "start": "2024-09-28",
+                                    "end": "2025-09-27",
+                                    "val": 416_161_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "Assets": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2025-09-27",
+                                    "val": 359_241_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "CashAndCashEquivalentsAtCarryingValue": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2025-09-27",
+                                    "val": 35_934_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "MarketableSecuritiesCurrent": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2025-09-27",
+                                    "val": 18_763_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "MarketableSecuritiesNoncurrent": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2025-09-27",
+                                    "val": 77_723_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "AvailableForSaleSecuritiesDebtSecurities": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2020-09-26",
+                                    "val": 191_830_000_000,
+                                    "filed": "2020-10-30",
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        }
+
+        result = self.client.extract_financials(payload)
+
+        self.assertEqual(result["balance_sheet_period_end"], "2025-09-27")
+        self.assertEqual(
+            result["interest_bearing_securities"],
+            96_486_000_000,
+        )
+        self.assertEqual(
+            result["interest_bearing_securities_tags"],
+            "MarketableSecuritiesCurrent+MarketableSecuritiesNoncurrent",
+        )
+
+    def test_stale_legacy_tags_not_used_without_aligned_period(self) -> None:
+        payload = {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "start": "2024-09-28",
+                                    "end": "2025-09-27",
+                                    "val": 100_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "Assets": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2025-09-27",
+                                    "val": 100_000_000,
+                                    "filed": "2025-10-31",
+                                },
+                            ],
+                        },
+                    },
+                    "AvailableForSaleSecuritiesDebtSecurities": {
+                        "units": {
+                            "USD": [
+                                {
+                                    "form": "10-K",
+                                    "end": "2020-09-26",
+                                    "val": 50_000_000,
+                                    "filed": "2020-10-30",
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+        }
+
+        result = self.client.extract_financials(payload)
+
+        self.assertIsNone(result["interest_bearing_securities"])
+        self.assertIsNone(result["interest_bearing_securities_tags"])
+
 
 if __name__ == "__main__":
     unittest.main()

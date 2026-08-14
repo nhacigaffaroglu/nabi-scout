@@ -15,15 +15,24 @@ from services.company_intelligence_contract import (
     IntelligenceProvenance,
 )
 from services.company_intelligence_data import CompanyProviderBundle
-from services.company_intelligence_utils import pct_change, safe_float
-from services.company_financial_trend_engine import _find_yoy_pair, _margin, _period_label
+from services.company_intelligence_utils import (
+    find_matching_statement_row,
+    find_yoy_pair,
+    fiscal_period_key,
+    pct_change,
+    safe_float,
+)
+from services.company_financial_trend_engine import _margin, _period_label
 
 
 def _build_expectations(bundle: CompanyProviderBundle) -> EarningsExpectations:
     if not bundle.earnings_surprises:
+        limitation = "Beklenti/sürpriz verisi sağlayıcıdan alınamadı."
+        if any(failure.startswith("earnings_surprises:plan_restricted") for failure in bundle.failures):
+            limitation = "Beklenti/sürpriz verisi mevcut abonelik planında kullanılamıyor."
         return EarningsExpectations(
             expectations_available=False,
-            limitations=("Beklenti/sürpriz verisi sağlayıcıdan alınamadı.",),
+            limitations=(limitation,),
         )
     latest = bundle.earnings_surprises[0]
     revenue_actual = safe_float(latest.get("actualRevenue") or latest.get("revenue"))
@@ -44,10 +53,22 @@ def _build_expectations(bundle: CompanyProviderBundle) -> EarningsExpectations:
     )
 
 
+def _prior_yoy_revenue_change(rows: List[dict]) -> Optional[float]:
+    if len(rows) < 3:
+        return None
+    current, previous = find_yoy_pair(rows[1:])
+    if current is None or previous is None:
+        return None
+    return pct_change(
+        safe_float(current.get("revenue")),
+        safe_float(previous.get("revenue")),
+    )
+
+
 def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSection:
-    income_latest, income_prev = _find_yoy_pair(bundle.income_quarterly)
-    cash_latest = bundle.cashflow_quarterly[0] if bundle.cashflow_quarterly else {}
-    cash_prev = bundle.cashflow_quarterly[1] if len(bundle.cashflow_quarterly) > 1 else {}
+    income_latest, income_prev = find_yoy_pair(bundle.income_quarterly)
+    cash_latest = find_matching_statement_row(bundle.cashflow_quarterly, income_latest)
+    cash_prev = find_matching_statement_row(bundle.cashflow_quarterly, income_prev)
     period = _period_label(income_latest or {})
 
     revenue_latest = safe_float((income_latest or {}).get("revenue"))
@@ -71,14 +92,6 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
         safe_float((income_prev or {}).get("operatingIncome")),
         revenue_prev,
     )
-    net_margin_latest = _margin(
-        safe_float((income_latest or {}).get("netIncome")),
-        revenue_latest,
-    )
-    net_margin_prev = _margin(
-        safe_float((income_prev or {}).get("netIncome")),
-        revenue_prev,
-    )
 
     fcf_latest = safe_float((cash_latest or {}).get("freeCashFlow"))
     fcf_prev = safe_float((cash_prev or {}).get("freeCashFlow"))
@@ -88,19 +101,21 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
         capex_latest = abs(capex_latest)
     if capex_prev is not None:
         capex_prev = abs(capex_prev)
+    if fcf_latest is None and cash_latest:
+        ocf = safe_float(cash_latest.get("operatingCashFlow"))
+        if ocf is not None and capex_latest is not None:
+            fcf_latest = ocf - capex_latest
+    if fcf_prev is None and cash_prev:
+        ocf = safe_float(cash_prev.get("operatingCashFlow"))
+        if ocf is not None and capex_prev is not None:
+            fcf_prev = ocf - capex_prev
 
     observations: List[IntelligenceObservation] = []
     revenue_yoy = pct_change(revenue_latest, revenue_prev)
     eps_yoy = pct_change(eps_latest, eps_prev)
 
     if revenue_yoy is not None and abs(revenue_yoy) >= MATERIAL_YOY_CHANGE_PCT:
-        prior_pair = bundle.income_quarterly[1:3]
-        prior_yoy = None
-        if len(prior_pair) == 2:
-            prior_yoy = pct_change(
-                safe_float(prior_pair[0].get("revenue")),
-                safe_float(prior_pair[1].get("revenue")),
-            )
+        prior_yoy = _prior_yoy_revenue_change(bundle.income_quarterly)
         code = "REVENUE_YOY_CHANGE"
         if prior_yoy is not None and revenue_yoy - prior_yoy >= ACCELERATION_DELTA_PP:
             code = "REVENUE_ACCELERATION"
@@ -122,10 +137,9 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
         )
 
     if eps_yoy is not None and abs(eps_yoy) >= MATERIAL_YOY_CHANGE_PCT:
-        code = "EPS_YOY_CHANGE"
         observations.append(
             IntelligenceObservation(
-                code=code,
+                code="EPS_YOY_CHANGE",
                 status="FACT",
                 statement="EPS yıldan yıla karşılaştırılabilir dönemde değişim gösteriyor.",
                 metric="eps",
@@ -153,7 +167,7 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
                     metric="gross_margin",
                     value=gross_latest,
                     comparison_value=gross_prev,
-                    evidence=(("delta_pp", delta),),
+                    evidence=(("delta_pp", delta), ("comparison_type", "YoY")),
                     source=PROVIDER_NAME,
                     confidence="HIGH",
                     period=period,
@@ -175,7 +189,7 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
                     metric="operating_margin",
                     value=op_margin_latest,
                     comparison_value=op_margin_prev,
-                    evidence=(("delta_pp", delta),),
+                    evidence=(("delta_pp", delta), ("comparison_type", "YoY")),
                     source=PROVIDER_NAME,
                     confidence="HIGH",
                     period=period,
@@ -191,6 +205,7 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
                 metric="free_cash_flow",
                 value=fcf_latest,
                 comparison_value=fcf_prev,
+                evidence=(("comparison_type", "YoY"),),
                 source=PROVIDER_NAME,
                 confidence="MEDIUM",
                 period=period,
@@ -202,10 +217,39 @@ def build_earnings_intelligence(bundle: CompanyProviderBundle) -> EarningsSectio
             IntelligenceObservation(
                 code="CAPEX_ACCELERATION",
                 status="FACT",
-                statement="Sermaye harcaması önceki döneme göre arttı.",
+                statement="Sermaye harcaması önceki yıl dönemine göre arttı.",
                 metric="capex",
                 value=capex_latest,
                 comparison_value=capex_prev,
+                evidence=(("comparison_type", "YoY"),),
+                source=PROVIDER_NAME,
+                confidence="MEDIUM",
+                period=period,
+            )
+        )
+
+    if (
+        income_latest is not None
+        and income_prev is not None
+        and fiscal_period_key(income_latest) is not None
+        and not observations
+    ):
+        observations.append(
+            IntelligenceObservation(
+                code="REPORTED_EARNINGS_SNAPSHOT",
+                status="FACT",
+                statement=(
+                    "Raporlanan gelir ve EPS karşılaştırılabilir önceki yıl dönemiyle "
+                    "eşleştirildi; materyal değişim eşiği aşılmadı."
+                ),
+                metric="revenue",
+                value=revenue_latest,
+                comparison_value=revenue_prev,
+                evidence=(
+                    ("revenue_yoy_pct", revenue_yoy),
+                    ("eps_yoy_pct", eps_yoy),
+                    ("comparison_type", "YoY"),
+                ),
                 source=PROVIDER_NAME,
                 confidence="MEDIUM",
                 period=period,

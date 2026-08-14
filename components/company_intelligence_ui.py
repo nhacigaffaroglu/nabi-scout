@@ -55,7 +55,11 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
 
     st.subheader("Son Finansallar / Earnings")
     earnings = view.earnings
-    if earnings is None or not earnings.observations:
+    if earnings is None:
+        st.info("Earnings verisi şu anda kullanılamıyor.")
+    elif not earnings.observations:
+        if earnings.period:
+            st.caption(f"Son raporlanan dönem: {earnings.period} ({earnings.comparison_type})")
         st.info("Karşılaştırılabilir earnings değişimi bulunamadı.")
     else:
         for item in earnings.observations[:6]:
@@ -66,7 +70,8 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
                 f"{_metric(earnings.expectations.eps_surprise_pct, '%')}"
             )
         else:
-            st.caption("Beklenti/sürpriz verisi sağlayıcıdan alınamadı.")
+            for limitation in earnings.expectations.limitations:
+                st.caption(limitation)
 
     st.subheader("Değerleme")
     valuation = view.valuation

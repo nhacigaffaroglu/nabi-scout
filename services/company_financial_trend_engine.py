@@ -14,24 +14,21 @@ from services.company_intelligence_contract import (
     MetricTrendPoint,
 )
 from services.company_intelligence_data import CompanyProviderBundle
-from services.company_intelligence_utils import direction_from_change, pct_change, safe_float
+from services.company_intelligence_utils import (
+    direction_from_change,
+    find_matching_statement_row,
+    find_yoy_pair,
+    fiscal_period_key,
+    pct_change,
+    safe_float,
+)
 
 
 def _period_label(row: Dict[str, Any]) -> Optional[str]:
+    key = fiscal_period_key(row)
+    if key is not None:
+        return f"{key[0]}-{key[1]}"
     return row.get("period") or row.get("date") or row.get("calendarYear")
-
-
-def _find_yoy_pair(rows: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
-    if len(rows) < 2:
-        return None, None
-    latest = rows[0]
-    latest_period = _period_label(latest)
-    if not latest_period:
-        return latest, rows[1] if len(rows) > 1 else None
-    for row in rows[1:]:
-        if _period_label(row) and _period_label(row) != latest_period:
-            return latest, row
-    return latest, rows[1] if len(rows) > 1 else None
 
 
 def _margin(numerator: Optional[float], denominator: Optional[float]) -> Optional[float]:
@@ -66,13 +63,17 @@ def _trend_point(
 
 
 def build_financial_trends(bundle: CompanyProviderBundle) -> FinancialTrendsSection:
-    income_latest, income_prev = _find_yoy_pair(bundle.income_quarterly)
-    balance_latest = bundle.balance_quarterly[0] if bundle.balance_quarterly else {}
-    balance_prev = bundle.balance_quarterly[1] if len(bundle.balance_quarterly) > 1 else {}
-    cash_latest = bundle.cashflow_quarterly[0] if bundle.cashflow_quarterly else {}
-    cash_prev = bundle.cashflow_quarterly[1] if len(bundle.cashflow_quarterly) > 1 else {}
+    income_latest, income_prev = find_yoy_pair(bundle.income_quarterly)
+    balance_latest = find_matching_statement_row(bundle.balance_quarterly, income_latest)
+    balance_prev = find_matching_statement_row(bundle.balance_quarterly, income_prev)
+    cash_latest = find_matching_statement_row(bundle.cashflow_quarterly, income_latest)
+    cash_prev = find_matching_statement_row(bundle.cashflow_quarterly, income_prev)
 
     period = _period_label(income_latest or {})
+    comparison_limitations: Tuple[str, ...] = ()
+    if income_latest is not None and income_prev is None:
+        comparison_limitations = ("Karşılaştırılabilir yıldan yıla dönem bulunamadı.",)
+
     revenue_latest = safe_float((income_latest or {}).get("revenue"))
     revenue_prev = safe_float((income_prev or {}).get("revenue"))
     eps_latest = safe_float((income_latest or {}).get("epsdiluted") or (income_latest or {}).get("eps"))
@@ -116,18 +117,18 @@ def build_financial_trends(bundle: CompanyProviderBundle) -> FinancialTrendsSect
     debt_prev = safe_float((balance_prev or {}).get("totalDebt"))
 
     trends = (
-        _trend_point("revenue", revenue_latest, revenue_prev, period=period),
-        _trend_point("eps", eps_latest, eps_prev, period=period),
-        _trend_point("operating_income", op_latest, op_prev, period=period),
-        _trend_point("net_income", ni_latest, ni_prev, period=period),
-        _trend_point("gross_margin", gross_latest, gross_prev, period=period),
-        _trend_point("operating_margin", op_margin_latest, op_margin_prev, period=period),
-        _trend_point("net_margin", net_margin_latest, net_margin_prev, period=period),
-        _trend_point("operating_cash_flow", ocf_latest, ocf_prev, period=period),
-        _trend_point("free_cash_flow", fcf_latest, fcf_prev, period=period),
-        _trend_point("capex", capex_latest, capex_prev, period=period, higher_is_better=False),
-        _trend_point("cash", cash_balance_latest, cash_balance_prev, period=period),
-        _trend_point("total_debt", debt_latest, debt_prev, period=period, higher_is_better=False),
+        _trend_point("revenue", revenue_latest, revenue_prev, period=period, limitations=comparison_limitations),
+        _trend_point("eps", eps_latest, eps_prev, period=period, limitations=comparison_limitations),
+        _trend_point("operating_income", op_latest, op_prev, period=period, limitations=comparison_limitations),
+        _trend_point("net_income", ni_latest, ni_prev, period=period, limitations=comparison_limitations),
+        _trend_point("gross_margin", gross_latest, gross_prev, period=period, limitations=comparison_limitations),
+        _trend_point("operating_margin", op_margin_latest, op_margin_prev, period=period, limitations=comparison_limitations),
+        _trend_point("net_margin", net_margin_latest, net_margin_prev, period=period, limitations=comparison_limitations),
+        _trend_point("operating_cash_flow", ocf_latest, ocf_prev, period=period, limitations=comparison_limitations),
+        _trend_point("free_cash_flow", fcf_latest, fcf_prev, period=period, limitations=comparison_limitations),
+        _trend_point("capex", capex_latest, capex_prev, period=period, higher_is_better=False, limitations=comparison_limitations),
+        _trend_point("cash", cash_balance_latest, cash_balance_prev, period=period, limitations=comparison_limitations),
+        _trend_point("total_debt", debt_latest, debt_prev, period=period, higher_is_better=False, limitations=comparison_limitations),
     )
 
     observations: List[IntelligenceObservation] = []
@@ -142,7 +143,7 @@ def build_financial_trends(bundle: CompanyProviderBundle) -> FinancialTrendsSect
                 value=revenue_latest,
                 comparison_value=revenue_prev,
                 direction=direction_from_change(revenue_change, higher_is_better=True),
-                evidence=(("revenue_yoy_pct", revenue_change),),
+                evidence=(("revenue_yoy_pct", revenue_change), ("comparison_type", "YoY")),
                 source=PROVIDER_NAME,
                 confidence="HIGH",
                 period=period,
@@ -166,7 +167,7 @@ def build_financial_trends(bundle: CompanyProviderBundle) -> FinancialTrendsSect
                     value=gross_latest,
                     comparison_value=gross_prev,
                     direction=direction_from_change(margin_delta, higher_is_better=True),
-                    evidence=(("margin_delta_pp", margin_delta),),
+                    evidence=(("margin_delta_pp", margin_delta), ("comparison_type", "YoY")),
                     source=PROVIDER_NAME,
                     confidence="HIGH",
                     period=period,
@@ -183,7 +184,7 @@ def build_financial_trends(bundle: CompanyProviderBundle) -> FinancialTrendsSect
                 value=debt_latest,
                 comparison_value=debt_prev,
                 direction="DETERIORATING",
-                evidence=(("debt_change", debt_latest - debt_prev),),
+                evidence=(("debt_change", debt_latest - debt_prev), ("comparison_type", "YoY")),
                 source=PROVIDER_NAME,
                 confidence="MEDIUM",
                 period=period,

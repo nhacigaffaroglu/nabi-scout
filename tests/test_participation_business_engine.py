@@ -27,6 +27,7 @@ from services.participation_intelligence_contract import (
     RULE_OUTCOME_REVIEW_REQUIRED,
 )
 from services.participation_intelligence_service import build_combined_methodology_assessment
+from services.participation_methodology_registry import clear_registry_cache_for_tests
 
 
 def evidence(**kwargs) -> BusinessActivityEvidence:
@@ -309,9 +310,9 @@ class CombinedAssessmentTests(unittest.TestCase):
         assessment = build_combined_methodology_assessment(financial, business)
         self.assertEqual(assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
 
-    def test_no_final_uygun_across_methodologies(self) -> None:
+    def test_no_final_uygun_for_incomplete_other_methodologies(self) -> None:
+        clear_registry_cache_for_tests()
         for methodology_id in (
-            "msci_islamic_index_series",
             "sp_shariah",
             "djim",
             "ftse_yasaar",

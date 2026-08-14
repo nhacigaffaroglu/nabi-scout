@@ -10,6 +10,10 @@ from services.participation_assessment_service import (
 from services.participation_business_evidence_resolver import (
     build_business_activity_evidence_from_candidate,
 )
+from services.participation_completeness import (
+    build_assessment_completeness,
+    translate_missing_capability,
+)
 from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_KONTROL_ET,
     PARTICIPATION_STATUS_UYGUN,
@@ -65,9 +69,14 @@ def _summarize_financial_screen(result: ParticipationAssessmentResult) -> str:
         for rule in screen.rule_results
         if rule.outcome in {RULE_OUTCOME_PASS, RULE_OUTCOME_FAIL}
     )
+    total = len(screen.rule_results)
+    completeness = result.assessment_completeness
+    suffix = ""
+    if completeness is not None:
+        suffix = f" · tamamlanma {completeness.financial_rules_evaluated}/{completeness.financial_rules_total}"
     return (
         f"Genel sonuç: {_outcome_label(screen.overall_outcome)} · "
-        f"{evaluated}/{len(screen.rule_results)} kural değerlendirildi"
+        f"{evaluated}/{total} kural değerlendirildi{suffix}"
     )
 
 
@@ -93,6 +102,8 @@ def build_company_report_participation(
     sec_client: Optional[SECFinancialClient] = None,
     methodology_id: Optional[str] = None,
     sec_financials: Optional[dict[str, Any]] = None,
+    fmp_client: Any = None,
+    persistence_available: bool = False,
 ) -> CompanyReportParticipationView:
     symbol = str(candidate.get("symbol") or "").strip().upper()
     if not symbol:
@@ -112,6 +123,8 @@ def build_company_report_participation(
             market_capitalization=candidate.get("market_cap"),
             business_evidence=business_evidence,
             sec_financials=sec_financials,
+            fmp_client=fmp_client,
+            persistence_available=persistence_available,
         )
     except (TypeError, ValueError) as exc:
         return CompanyReportParticipationView(

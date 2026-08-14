@@ -18,7 +18,9 @@ from services.company_intelligence_data import (
 from services.company_news_intelligence import build_catalysts, build_news_intelligence
 from services.company_peer_intelligence import build_peer_intelligence
 from services.company_valuation_intelligence import build_valuation_intelligence
-from services.fmp_client import FMPClient
+from services.fmp_client import FMPClient, normalize_fmp_error_class
+from services.research_eligibility_contract import ResearchEligibilityResult
+from services.research_eligibility_service import require_research_allowed
 
 
 def _build_factual_risks(
@@ -128,10 +130,29 @@ def _build_data_quality(bundle: CompanyProviderBundle, view_parts) -> DataQualit
             metric.historical_median is not None for metric in view_parts["valuation"].metrics
         )
 
+    yoy_available = False
+    if bundle.income_quarterly:
+        from services.company_intelligence_utils import find_yoy_pair
+
+        latest, previous = find_yoy_pair(bundle.income_quarterly)
+        yoy_available = latest is not None and previous is not None
+
+    normalized_failures = tuple(
+        (
+            f"{label}:{normalize_fmp_error_class(error_class)}"
+            if ":" in failure
+            else failure
+        )
+        for failure in bundle.failures
+        for label, error_class in [
+            failure.split(":", 1) if ":" in failure else (failure, failure)
+        ]
+    )
+
     return DataQualitySection(
         company_profile_available=bool(bundle.profile),
         financial_history_available=bool(bundle.income_quarterly),
-        quarterly_comparison_available=len(bundle.income_quarterly) >= 2,
+        quarterly_comparison_available=yoy_available,
         earnings_expectations_available=earnings_expectations,
         valuation_available=bool(bundle.ratios_ttm or bundle.key_metrics_ttm),
         historical_valuation_available=historical_valuation,
@@ -149,7 +170,7 @@ def _build_data_quality(bundle: CompanyProviderBundle, view_parts) -> DataQualit
             )
             if warning
         ),
-        provider_failures=tuple(bundle.failures),
+        provider_failures=normalized_failures,
         partial_sections=tuple(partial),
         as_of=bundle.retrieved_at,
     )
@@ -160,7 +181,14 @@ class CompanyIntelligenceCoreService:
         self.fmp = fmp_client
         self._bundle_cache: dict[str, CompanyProviderBundle] = {}
 
-    def load_bundle(self, symbol: str, *, refresh: bool = False) -> CompanyProviderBundle:
+    def load_bundle(
+        self,
+        symbol: str,
+        *,
+        research_eligibility: ResearchEligibilityResult,
+        refresh: bool = False,
+    ) -> CompanyProviderBundle:
+        require_research_allowed(research_eligibility, symbol=symbol)
         normalized = symbol.strip().upper()
         if not refresh and normalized in self._bundle_cache:
             return self._bundle_cache[normalized]
@@ -168,8 +196,15 @@ class CompanyIntelligenceCoreService:
         self._bundle_cache[normalized] = bundle
         return bundle
 
-    def build_view(self, symbol: str, *, refresh: bool = False) -> CompanyIntelligenceView:
-        bundle = self.load_bundle(symbol, refresh=refresh)
+    def build_view(
+        self,
+        symbol: str,
+        *,
+        research_eligibility: ResearchEligibilityResult,
+        refresh: bool = False,
+    ) -> CompanyIntelligenceView:
+        require_research_allowed(research_eligibility, symbol=symbol)
+        bundle = self.load_bundle(symbol, research_eligibility=research_eligibility, refresh=refresh)
         business = build_business_snapshot(bundle) if bundle.profile else None
         trends = build_financial_trends(bundle) if bundle.income_quarterly else None
         earnings = build_earnings_intelligence(bundle) if bundle.income_quarterly else None
@@ -208,6 +243,11 @@ class CompanyIntelligenceCoreService:
             provenance=(),
         )
 
-    def call_budget(self, symbol: str) -> dict:
-        bundle = self.load_bundle(symbol)
+    def call_budget(
+        self,
+        symbol: str,
+        *,
+        research_eligibility: ResearchEligibilityResult,
+    ) -> dict:
+        bundle = self.load_bundle(symbol, research_eligibility=research_eligibility)
         return bundle_call_summary(bundle)

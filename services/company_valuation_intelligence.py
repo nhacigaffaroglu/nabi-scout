@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 from services.company_intelligence_constants import (
+    MIN_HISTORICAL_VALUATION_SAMPLE,
     PROVIDER_NAME,
     VALUATION_ABOVE_RANGE_PERCENTILE,
     VALUATION_BELOW_RANGE_PERCENTILE,
@@ -40,6 +41,23 @@ def _valuation_position(
     return "ABOVE_HISTORICAL_MEDIAN"
 
 
+def _clean_history_values(
+    history_rows: List[dict],
+    history_key: str,
+    *,
+    positive_only: bool = False,
+) -> List[float]:
+    values: List[float] = []
+    for row in history_rows:
+        value = safe_float(row.get(history_key))
+        if value is None:
+            continue
+        if positive_only and value <= 0:
+            continue
+        values.append(value)
+    return values
+
+
 def _historical_metric(
     *,
     code: str,
@@ -48,13 +66,27 @@ def _historical_metric(
     history_rows: List[dict],
     history_key: str,
     meaningful: bool = True,
+    positive_only: bool = False,
 ) -> ValuationMetric:
-    history_values = [safe_float(row.get(history_key)) for row in history_rows]
-    median = median_value(history_values)
+    history_values = _clean_history_values(
+        history_rows,
+        history_key,
+        positive_only=positive_only,
+    )
+    median = median_value(history_values) if len(history_values) >= MIN_HISTORICAL_VALUATION_SAMPLE else None
     premium = pct_change(current, median) if current is not None and median is not None else None
     from services.company_intelligence_utils import percentile_rank
 
-    percentile = percentile_rank(current, history_values)
+    percentile = (
+        percentile_rank(current, history_values)
+        if len(history_values) >= MIN_HISTORICAL_VALUATION_SAMPLE
+        else None
+    )
+    limitations: Tuple[str, ...] = ()
+    if len(history_values) < MIN_HISTORICAL_VALUATION_SAMPLE:
+        limitations = (
+            f"Yeterli tarihsel gözlem yok (min {MIN_HISTORICAL_VALUATION_SAMPLE}).",
+        )
     return ValuationMetric(
         code=code,
         label=label,
@@ -63,7 +95,7 @@ def _historical_metric(
         premium_to_median_pct=premium,
         position=_valuation_position(current, median, percentile),
         meaningful=meaningful,
-        limitations=() if history_values else ("Yeterli tarihsel gözlem yok.",),
+        limitations=limitations,
     )
 
 
@@ -91,6 +123,7 @@ def build_valuation_intelligence(bundle: CompanyProviderBundle) -> ValuationSect
             history_rows=bundle.ratios_history,
             history_key="priceToEarningsRatio",
             meaningful=pe is not None,
+            positive_only=True,
         ),
         _historical_metric(
             code="price_to_sales",

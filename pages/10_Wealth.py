@@ -47,7 +47,12 @@ from services.wealth_adviser_profile_service import (
 )
 from repositories.candidate_repository import CandidateRepository
 from services.company_intelligence_core_service import CompanyIntelligenceCoreService
-from services.fmp_client import FMPClient, FMPError
+from services.company_report_participation_service import build_company_report_participation
+from services.sec_contact_config import get_sec_contact_email
+from services.sec_financial_client import SECFinancialClient
+from services.research_eligibility_service import (
+    evaluate_research_eligibility_from_participation_view,
+)
 from services.unified_adviser_service import UnifiedAdviserService
 from services.unified_research_service import UnifiedResearchService
 from services.wealth_adviser_prompt import extract_focus_symbol
@@ -1220,21 +1225,42 @@ with tab_adviser:
             )
             if symbol:
                 try:
-                    fmp_client = FMPClient.from_streamlit_secrets()
-                    intel_view = CompanyIntelligenceCoreService(fmp_client).build_view(symbol)
-                    candidate = candidate_repo.get_by_symbol(symbol)
-                    unified_research = unified_research_service.build_context(
-                        symbol=symbol,
-                        company_intelligence_view=intel_view,
-                        candidate=candidate,
-                        portfolio_view=portfolio_view,
-                        user_context=user_context,
-                        diagnostics_items=tuple(adviser_diagnostics_view.diagnostics[:3]),
+                    candidate = candidate_repo.get_by_symbol(symbol) or {"symbol": symbol}
+                    participation_fmp_client = None
+                    try:
+                        participation_fmp_client = FMPClient.from_streamlit_secrets()
+                    except FMPError:
+                        pass
+                    participation_view = build_company_report_participation(
+                        candidate,
+                        sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
+                        fmp_client=participation_fmp_client,
                     )
-                    adviser_brief = unified_adviser_service.enrich_brief(
-                        adviser_brief,
-                        unified_research,
+                    research_eligibility = evaluate_research_eligibility_from_participation_view(
+                        participation_view
                     )
+                    if not research_eligibility.research_allowed:
+                        st.warning(research_eligibility.block_message)
+                    else:
+                        fmp_client = participation_fmp_client or FMPClient.from_streamlit_secrets()
+                        intel_view = CompanyIntelligenceCoreService(fmp_client).build_view(
+                            symbol,
+                            research_eligibility=research_eligibility,
+                        )
+                        unified_research = unified_research_service.build_context(
+                            symbol=symbol,
+                            research_eligibility=research_eligibility,
+                            company_intelligence_view=intel_view,
+                            candidate=candidate,
+                            participation_view=participation_view,
+                            portfolio_view=portfolio_view,
+                            user_context=user_context,
+                            diagnostics_items=tuple(adviser_diagnostics_view.diagnostics[:3]),
+                        )
+                        adviser_brief = unified_adviser_service.enrich_brief(
+                            adviser_brief,
+                            unified_research,
+                        )
                 except FMPError:
                     st.warning(
                         f"{symbol} için şirket verisi yüklenemedi; yanıt yalnızca portföy bağlamında üretilecek."

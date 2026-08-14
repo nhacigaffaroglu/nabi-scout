@@ -277,16 +277,16 @@ def _combined_assessment_status(
     financial_screen: ParticipationFinancialScreenResult,
     business_screen: BusinessActivityScreenResult | None,
 ) -> str:
+    from services.participation_pass_logic import can_emit_uygun
+
     if financial_screen.overall_outcome == RULE_OUTCOME_FAIL:
         return PARTICIPATION_STATUS_UYGUN_DEGIL
     if business_screen is not None and business_screen.overall_outcome == RULE_OUTCOME_FAIL:
         return PARTICIPATION_STATUS_UYGUN_DEGIL
-    if (
-        financial_screen.overall_outcome == RULE_OUTCOME_PASS
-        and financial_screen.methodology_complete
-        and business_screen is not None
-        and business_screen.overall_outcome == RULE_OUTCOME_PASS
-        and business_screen.methodology_complete
+    if can_emit_uygun(
+        methodology_id=financial_screen.methodology_id,
+        financial_screen=financial_screen,
+        business_screen=business_screen,
     ):
         return PARTICIPATION_STATUS_UYGUN
     return PARTICIPATION_STATUS_KONTROL_ET

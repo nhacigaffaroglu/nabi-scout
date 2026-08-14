@@ -43,7 +43,27 @@ from services.participation_intelligence_contract import (
     RULE_OUTCOME_REVIEW_REQUIRED,
 )
 
+from services.participation_pass_logic import RULE_TIER_REQUIRED, rule_tier_for
+
 SUPPORTED_COMPARATORS = frozenset({"<", "<=", ">", ">="})
+
+_TRUSTED_SOURCE_MARKERS = ("sec", "fmp", "candidate_record")
+
+
+def _sic_from_trusted_source(evidence: BusinessActivityEvidence) -> bool:
+    if evidence.sic_code is None:
+        return False
+    source = str(evidence.source or "").lower()
+    return any(marker in source for marker in _TRUSTED_SOURCE_MARKERS)
+
+
+def _structured_classification_from_trusted_source(evidence: BusinessActivityEvidence) -> bool:
+    if not (evidence.sector or evidence.industry):
+        return False
+    source = str(evidence.source or "").lower()
+    if any(marker in source for marker in _TRUSTED_SOURCE_MARKERS):
+        return True
+    return bool(evidence.evidence_refs)
 
 
 def _normalize_label(value: Optional[str]) -> Optional[str]:
@@ -116,6 +136,22 @@ def _evaluate_sic_rule(
 
     mapped = resolve_sic_mapping(sic_code)
     if mapped is None:
+        if _sic_from_trusted_source(evidence):
+            return BusinessActivityRuleResult(
+                rule_id=rules.sic_rule_id,
+                category="sic_exclusion",
+                outcome=RULE_OUTCOME_PASS,
+                evidence_type=EVIDENCE_TYPE_SIC,
+                matched_values=(str(sic_code),),
+                source_refs=(
+                    ("sic_code", str(sic_code)),
+                    ("classification", "not_in_prohibited_mapping"),
+                ),
+                confidence=CONFIDENCE_MEDIUM,
+                warnings=(
+                    "SIC prohibited mapping kontrol edildi; yasaklı eşleşme bulunmadı.",
+                ),
+            )
         return BusinessActivityRuleResult(
             rule_id=rules.sic_rule_id,
             category="sic_exclusion",
@@ -124,7 +160,7 @@ def _evaluate_sic_rule(
             matched_values=(str(sic_code),),
             source_refs=(("sic_code", str(sic_code)),),
             confidence=CONFIDENCE_LOW,
-            warnings=("SIC code is not mapped to a prohibited category.",),
+            warnings=("SIC kodu doğrulanmadı veya yasaklı harita kapsamında değil.",),
         )
 
     mapped_category, match_strength = mapped
@@ -250,6 +286,31 @@ def _evaluate_structured_sector_rule(
             evidence_type=EVIDENCE_TYPE_STRUCTURED_SECTOR,
             confidence=CONFIDENCE_LOW,
             warnings=("Structured sector/industry evidence not provided.",),
+        )
+
+    if _structured_classification_from_trusted_source(evidence):
+        return BusinessActivityRuleResult(
+            rule_id=rules.sector_rule_id,
+            category="structured_classification",
+            outcome=RULE_OUTCOME_PASS,
+            evidence_type=EVIDENCE_TYPE_STRUCTURED_SECTOR,
+            matched_values=tuple(
+                value
+                for value in (_normalize_label(evidence.sector), _normalize_label(evidence.industry))
+                if value
+            ),
+            source_refs=tuple(
+                ref
+                for ref in (
+                    ("sector", str(evidence.sector)) if evidence.sector else None,
+                    ("industry", str(evidence.industry)) if evidence.industry else None,
+                )
+                if ref is not None
+            ),
+            confidence=CONFIDENCE_MEDIUM,
+            warnings=(
+                "Yapılandırılmış sektör/endüstri yasaklı etiket listesinde eşleşmedi.",
+            ),
         )
 
     return BusinessActivityRuleResult(
@@ -459,17 +520,80 @@ def _evaluate_revenue_rule(
             ratio_pct=float(ratio_pct),
         )
 
+    segment_total = Decimal("0")
+    for segment in evidence.revenue_segments:
+        value = normalize_financial_value(segment.revenue_value)
+        if value is not None:
+            segment_total += value
+    denominator_total = normalize_financial_value(evidence.reported_total_revenue)
+    if denominator_total is None or denominator_total <= 0:
+        if segment_total > 0:
+            denominator_total = segment_total
+        else:
+            return BusinessActivityRuleResult(
+                rule_id=rule.rule_id,
+                category=rule.category,
+                outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+                evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+                threshold_pct=rule.threshold_pct,
+                comparator=rule.comparator,
+                confidence=CONFIDENCE_LOW,
+                warnings=("Toplam gelir kanıtı olmadan segment tutarları oranlanamadı.",),
+            )
+
+    if segment_total > 0 and evidence.reported_total_revenue:
+        coverage = float(segment_total / denominator_total * Decimal("100"))
+        if coverage < 80.0:
+            return BusinessActivityRuleResult(
+                rule_id=rule.rule_id,
+                category=rule.category,
+                outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+                evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+                threshold_pct=rule.threshold_pct,
+                comparator=rule.comparator,
+                confidence=CONFIDENCE_MEDIUM,
+                warnings=("Segment kapsamı toplam gelirin %80'inden az.",),
+            )
+
+    ratio_pct = (numerator_total / denominator_total) * Decimal("100")
+    unknown_segments = [
+        segment.segment_name
+        for segment in evidence.revenue_segments
+        if str(segment.category or "").lower() == "unknown"
+    ]
+    if unknown_segments and ratio_pct >= Decimal(str(rule.threshold_pct)) * Decimal("0.8"):
+        return BusinessActivityRuleResult(
+            rule_id=rule.rule_id,
+            category=rule.category,
+            outcome=RULE_OUTCOME_REVIEW_REQUIRED,
+            evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+            threshold_pct=rule.threshold_pct,
+            comparator=rule.comparator,
+            ratio_pct=float(ratio_pct),
+            confidence=CONFIDENCE_MEDIUM,
+            warnings=("Bilinmeyen segmentler eşik civarında; manuel inceleme gerekli.",),
+        )
+
+    outcome = _compare_ratio(
+        ratio_pct,
+        Decimal(str(rule.threshold_pct)),
+        rule.comparator,
+    )
     return BusinessActivityRuleResult(
         rule_id=rule.rule_id,
         category=rule.category,
-        outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+        outcome=outcome,
         evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+        matched_values=tuple(
+            segment.segment_name
+            for segment in evidence.revenue_segments
+            if _segment_matches_categories(segment, rule.numerator_categories)
+        ),
+        source_refs=(("denominator_field", rule.denominator_field),),
+        confidence=CONFIDENCE_HIGH,
         threshold_pct=rule.threshold_pct,
         comparator=rule.comparator,
-        confidence=CONFIDENCE_MEDIUM,
-        warnings=(
-            "Revenue values without explicit percentages cannot be threshold-tested in 6B.2d.",
-        ),
+        ratio_pct=float(ratio_pct),
     )
 
 
@@ -482,18 +606,25 @@ def aggregate_business_outcomes(
     outcomes = {rule.outcome for rule in rule_results}
     if RULE_OUTCOME_FAIL in outcomes:
         return BUSINESS_SCREEN_OUTCOME_FAIL
-    if RULE_OUTCOME_REVIEW_REQUIRED in outcomes:
+    if any(
+        rule.outcome == RULE_OUTCOME_REVIEW_REQUIRED
+        and rule_tier_for(rule.rule_id) == RULE_TIER_REQUIRED
+        for rule in rule_results
+    ):
         return BUSINESS_SCREEN_OUTCOME_REVIEW_REQUIRED
-    if RULE_OUTCOME_INSUFFICIENT_DATA in outcomes:
+
+    required_rules = [
+        rule for rule in rule_results if rule_tier_for(rule.rule_id) == RULE_TIER_REQUIRED
+    ]
+    if not required_rules:
         return BUSINESS_SCREEN_OUTCOME_INSUFFICIENT_DATA
 
-    evaluated = [
-        rule
-        for rule in rule_results
-        if rule.outcome in {RULE_OUTCOME_PASS, RULE_OUTCOME_FAIL}
-    ]
-    if evaluated and all(rule.outcome == RULE_OUTCOME_PASS for rule in evaluated):
+    if any(rule.outcome == RULE_OUTCOME_INSUFFICIENT_DATA for rule in required_rules):
+        return BUSINESS_SCREEN_OUTCOME_INSUFFICIENT_DATA
+
+    if all(rule.outcome == RULE_OUTCOME_PASS for rule in required_rules):
         return BUSINESS_SCREEN_OUTCOME_PASS
+
     return BUSINESS_SCREEN_OUTCOME_REVIEW_REQUIRED
 
 
@@ -560,6 +691,16 @@ def evaluate_business_activity(
         overall_outcome=overall_outcome,
         rule_results=rule_results,
     )
+
+    required_rules = [
+        rule for rule in rule_results if rule_tier_for(rule.rule_id) == RULE_TIER_REQUIRED
+    ]
+    if rules.business_screen_complete_methodology and required_rules:
+        methodology_complete = (
+            business_rules_evaluated
+            and overall_outcome == BUSINESS_SCREEN_OUTCOME_PASS
+            and all(rule.outcome == RULE_OUTCOME_PASS for rule in required_rules)
+        )
 
     warnings: list[str] = list(evidence.warnings)
     if business_rules_evaluated and not methodology_complete:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -130,6 +130,32 @@ _IFRS_DEBT_TAGS = [
     "LongtermBorrowings",
 ]
 
+_US_GAAP_INTEREST_BEARING_SECURITIES_TAG_TIERS: Sequence[Sequence[str]] = (
+    (
+        "MarketableSecuritiesCurrent",
+        "MarketableSecuritiesNoncurrent",
+    ),
+    ("MarketableSecurities",),
+    (
+        "AvailableForSaleSecuritiesDebtSecurities",
+        "ShortTermInvestments",
+        "DebtSecuritiesAvailableForSaleAmortizedCost",
+        "AvailableForSaleSecurities",
+    ),
+)
+
+_US_GAAP_INTEREST_BEARING_SECURITIES_TAGS = [
+    tag
+    for tier in _US_GAAP_INTEREST_BEARING_SECURITIES_TAG_TIERS
+    for tag in tier
+]
+
+_IFRS_INTEREST_BEARING_SECURITIES_TAGS = [
+    "CurrentFinancialAssetsAtFairValueThroughProfitOrLoss",
+    "FinancialAssetsAtFairValueThroughProfitOrLoss",
+    "OtherCurrentFinancialAssets",
+]
+
 
 class SECFinancialClient:
     BASE_URL = "https://data.sec.gov/api/xbrl/companyfacts"
@@ -177,6 +203,18 @@ class SECFinancialClient:
             raise SECFinancialError(
                 "SEC Company Facts geçerli JSON döndürmedi."
             ) from exc
+
+    @staticmethod
+    def extract_entity_metadata(payload: Dict[str, Any]) -> Dict[str, Optional[str]]:
+        sic = payload.get("sic")
+        sic_description = payload.get("sicDescription") or payload.get("sic_description")
+        return {
+            "sic_code": str(sic).strip() if sic not in (None, "") else None,
+            "sic_description": str(sic_description).strip()
+            if sic_description not in (None, "")
+            else None,
+            "entity_name": str(payload.get("entityName") or "").strip() or None,
+        }
 
     def extract_financials(
         self,
@@ -296,6 +334,7 @@ class SECFinancialClient:
         )
 
         latest = lambda series: self._value(series, 0)
+        balance_sheet_end = assets[0]["end"] if assets else None
 
         revenue_latest = latest(revenue)
         net_income_latest = latest(net_income)
@@ -310,13 +349,31 @@ class SECFinancialClient:
         tax_latest = latest(tax_expense)
         dividends_latest = latest(dividends)
 
-        assets_latest = latest(assets)
-        equity_latest = latest(equity)
-        cash_latest = latest(cash)
-        current_assets_latest = latest(current_assets)
-        current_liabilities_latest = latest(current_liabilities)
-        accounts_receivable_latest = latest(accounts_receivable)
-        debt_latest = latest(debt)
+        assets_latest = self._aligned_instant_value(assets, balance_sheet_end)
+        equity_latest = self._aligned_instant_value(equity, balance_sheet_end)
+        cash_latest = self._aligned_instant_value(cash, balance_sheet_end)
+        current_assets_latest = self._aligned_instant_value(
+            current_assets,
+            balance_sheet_end,
+        )
+        current_liabilities_latest = self._aligned_instant_value(
+            current_liabilities,
+            balance_sheet_end,
+        )
+        accounts_receivable_latest = self._aligned_instant_value(
+            accounts_receivable,
+            balance_sheet_end,
+        )
+        debt_latest = self._aligned_instant_value(debt, balance_sheet_end)
+        (
+            interest_bearing_securities_latest,
+            interest_bearing_securities_tags,
+        ) = self._interest_bearing_securities_at_end(
+            facts,
+            monetary_units,
+            taxonomy=taxonomy,
+            period_end=balance_sheet_end,
+        )
 
         free_cash_flow = (
             operating_cash_latest - abs(capex_latest or 0)
@@ -437,6 +494,9 @@ class SECFinancialClient:
             "equity": equity_latest,
             "cash": cash_latest,
             "accounts_receivable": accounts_receivable_latest,
+            "interest_bearing_securities": interest_bearing_securities_latest,
+            "interest_bearing_securities_tags": interest_bearing_securities_tags,
+            "balance_sheet_period_end": balance_sheet_end,
             "total_debt": debt_latest,
             "net_debt": net_debt,
             "current_ratio": current_ratio,
@@ -645,6 +705,80 @@ class SECFinancialClient:
             key=lambda row: row["end"],
             reverse=True,
         )
+
+    @staticmethod
+    def _aligned_instant_value(
+        series: List[Dict[str, Any]],
+        period_end: Optional[str],
+    ) -> Optional[float]:
+        if not series:
+            return None
+        if period_end:
+            for row in series:
+                if row.get("end") == period_end:
+                    return row.get("value")
+            return None
+        return series[0].get("value")
+
+    def _tag_value_at_period_end(
+        self,
+        facts: Dict[str, Any],
+        tag: str,
+        units: Sequence[str],
+        period_end: str,
+    ) -> Optional[float]:
+        selected: List[Dict[str, Any]] = []
+        for item in self._entries(facts, tag, units):
+            if item.get("form") not in _ANNUAL_FORMS:
+                continue
+            end = item.get("end")
+            value = self._number(item.get("val"))
+            if end != period_end or value is None:
+                continue
+            selected.append({
+                "value": value,
+                "end": end,
+                "filed": item.get("filed") or "",
+            })
+        deduped = self._dedupe(selected)
+        return deduped[0]["value"] if deduped else None
+
+    def _interest_bearing_securities_at_end(
+        self,
+        facts: Dict[str, Any],
+        units: Sequence[str],
+        *,
+        taxonomy: str,
+        period_end: Optional[str],
+    ) -> Tuple[Optional[float], Optional[str]]:
+        if not period_end:
+            return None, None
+
+        if taxonomy == "us-gaap":
+            tiers = _US_GAAP_INTEREST_BEARING_SECURITIES_TAG_TIERS
+        else:
+            tiers = (_IFRS_INTEREST_BEARING_SECURITIES_TAGS,)
+
+        for tier in tiers:
+            values: List[float] = []
+            used_tags: List[str] = []
+            for tag in tier:
+                value = self._tag_value_at_period_end(
+                    facts,
+                    tag,
+                    units,
+                    period_end,
+                )
+                if value is not None:
+                    values.append(value)
+                    used_tags.append(tag)
+            if not values:
+                continue
+            if len(tier) == 1:
+                return values[0], tier[0]
+            return sum(values), "+".join(used_tags)
+
+        return None, None
 
     def _derived_fcf_cagr(
         self,

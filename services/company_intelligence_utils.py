@@ -3,7 +3,68 @@ from __future__ import annotations
 import re
 import statistics
 from difflib import SequenceMatcher
-from typing import Any, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+
+def fiscal_period_key(row: Dict[str, Any]) -> Optional[Tuple[int, str]]:
+    period = row.get("period")
+    year = row.get("calendarYear")
+    if year is not None and period:
+        try:
+            return int(year), str(period).strip().upper()
+        except (TypeError, ValueError):
+            pass
+    period_text = str(period or "").strip().upper()
+    if "-" in period_text:
+        year_part, quarter_part = period_text.split("-", 1)
+        if year_part.isdigit() and quarter_part.startswith("Q"):
+            return int(year_part), quarter_part
+    date_text = str(row.get("date") or "").strip()
+    if len(date_text) >= 7:
+        try:
+            year_part = int(date_text[:4])
+            month = int(date_text[5:7])
+            quarter = f"Q{(month - 1) // 3 + 1}"
+            return year_part, quarter
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def find_yoy_pair(
+    rows: Sequence[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    if not rows:
+        return None, None
+    latest = rows[0]
+    latest_key = fiscal_period_key(latest)
+    if latest_key is not None:
+        target = (latest_key[0] - 1, latest_key[1])
+        for row in rows[1:]:
+            if fiscal_period_key(row) == target:
+                return latest, row
+    if len(rows) >= 5:
+        return latest, rows[4]
+    return latest, None
+
+
+def find_matching_statement_row(
+    rows: Sequence[Dict[str, Any]],
+    anchor: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not rows or anchor is None:
+        return None
+    anchor_key = fiscal_period_key(anchor)
+    anchor_date = str(anchor.get("date") or "").strip()
+    if anchor_key is not None:
+        for row in rows:
+            if fiscal_period_key(row) == anchor_key:
+                return row
+    if anchor_date:
+        for row in rows:
+            if str(row.get("date") or "").strip() == anchor_date:
+                return row
+    return rows[0] if rows else None
 
 
 def safe_float(value: Any) -> Optional[float]:

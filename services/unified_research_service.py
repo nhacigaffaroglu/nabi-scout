@@ -20,6 +20,8 @@ from services.unified_research_serializer import (
 )
 from services.wealth_exposure_bridge import build_wealth_exposure_context
 from services.wealth_adviser_contract import AdviserUserContext
+from services.research_eligibility_contract import ResearchEligibilityResult
+from services.research_eligibility_service import require_research_allowed
 
 
 def _nabi_context(candidate: Optional[Mapping[str, Any]]) -> Optional[NabiResearchContext]:
@@ -100,6 +102,7 @@ class UnifiedResearchService:
         self,
         *,
         symbol: str,
+        research_eligibility: ResearchEligibilityResult,
         company_intelligence_view=None,
         candidate: Optional[Mapping[str, Any]] = None,
         participation_view=None,
@@ -109,11 +112,13 @@ class UnifiedResearchService:
         diagnostics_items: Tuple[Any, ...] = (),
     ) -> UnifiedResearchContext:
         normalized = str(symbol or "").strip().upper()
+        require_research_allowed(research_eligibility, symbol=normalized)
         thesis_service = InvestmentThesisService()
         thesis_view = None
         if company_intelligence_view is not None:
             thesis_view = thesis_service.build_view(
                 company_intelligence_view,
+                research_eligibility=research_eligibility,
                 candidate=dict(candidate) if candidate else None,
                 participation_context=(
                     _participation_context(participation_view).status

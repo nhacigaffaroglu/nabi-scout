@@ -1,0 +1,33 @@
+{
+  "version": "2024-10",
+  "notes": "Deterministic segment label classification. UNKNOWN when ambiguous.",
+  "non_permissible_patterns": [
+    { "pattern": "interest income", "category": "conventional_banking" },
+    { "pattern": "interest revenue", "category": "conventional_banking" },
+    { "pattern": "conventional banking", "category": "conventional_banking" },
+    { "pattern": "alcohol", "category": "alcohol" },
+    { "pattern": "beer", "category": "alcohol" },
+    { "pattern": "wine", "category": "alcohol" },
+    { "pattern": "spirits", "category": "alcohol" },
+    { "pattern": "distilled", "category": "alcohol" },
+    { "pattern": "gambling", "category": "gambling" },
+    { "pattern": "casino", "category": "gambling" },
+    { "pattern": "gaming revenue", "category": "gambling" },
+    { "pattern": "tobacco", "category": "tobacco" },
+    { "pattern": "cigarette", "category": "tobacco" },
+    { "pattern": "pork", "category": "pork" },
+    { "pattern": "adult entertainment", "category": "adult_entertainment" },
+    { "pattern": "non-permissible", "category": "non_permissible" },
+    { "pattern": "non permissible", "category": "non_permissible" },
+    { "pattern": "non_permissible", "category": "non_permissible" }
+  ],
+  "permissible_patterns": [
+    { "pattern": "software", "category": "technology" },
+    { "pattern": "cloud", "category": "technology" },
+    { "pattern": "hardware", "category": "technology" },
+    { "pattern": "services", "category": "general_services" },
+    { "pattern": "product", "category": "general_product" },
+    { "pattern": "subscription", "category": "general_product" },
+    { "pattern": "licensing", "category": "general_product" }
+  ]
+}

@@ -32,6 +32,24 @@ class FMPError(RuntimeError):
         self.retry_after = retry_after
 
 
+def normalize_fmp_error_class(error_class: str) -> str:
+    mapping = {
+        "auth": "AUTH",
+        "plan_restricted": "PLAN_RESTRICTED",
+        "rate_limit": "RATE_LIMIT",
+        "not_found": "NOT_FOUND",
+        "http_error": "BAD_REQUEST",
+        "transient_http": "PROVIDER_ERROR",
+        "timeout": "NETWORK",
+        "network": "NETWORK",
+        "malformed": "PARSE",
+        "empty": "EMPTY_DATA",
+        "unknown": "PROVIDER_ERROR",
+    }
+    normalized = str(error_class or "").strip().lower()
+    return mapping.get(normalized, normalized.upper() or "PROVIDER_ERROR")
+
+
 class FMPClient:
     BASE_URL = "https://financialmodelingprep.com/stable"
     TRANSIENT_STATUS = {502, 503, 504}

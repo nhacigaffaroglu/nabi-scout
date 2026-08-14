@@ -9,11 +9,12 @@ from services.company_financial_trend_engine import build_financial_trends
 from services.company_intelligence_contract import CompanyIntelligenceView
 from services.company_intelligence_core_service import CompanyIntelligenceCoreService
 from services.company_intelligence_data import CompanyProviderBundle
-from services.company_intelligence_utils import pct_change
+from services.company_intelligence_utils import find_yoy_pair, pct_change
 from services.company_news_intelligence import build_catalysts, build_news_intelligence
 from services.company_peer_intelligence import build_peer_intelligence
 from services.company_valuation_intelligence import build_valuation_intelligence
 from services.fmp_client import FMPClient
+from services.research_eligibility_service import research_eligibility_pass_fixture
 
 
 def _income(period: str, revenue: float, **kwargs):
@@ -62,10 +63,13 @@ class FinancialTrendEngineTests(unittest.TestCase):
     def test_debt_increase_not_auto_deteriorated_company(self) -> None:
         bundle = CompanyProviderBundle(
             symbol="TEST",
-            income_quarterly=[_income("2024-Q1", 100), _income("2023-Q1", 95)],
+            income_quarterly=[
+                {"calendarYear": 2024, "period": "Q1", "revenue": 100},
+                {"calendarYear": 2023, "period": "Q1", "revenue": 95},
+            ],
             balance_quarterly=[
-                {"totalDebt": 200, "cashAndCashEquivalents": 50},
-                {"totalDebt": 150, "cashAndCashEquivalents": 40},
+                {"calendarYear": 2024, "period": "Q1", "totalDebt": 200, "cashAndCashEquivalents": 50},
+                {"calendarYear": 2023, "period": "Q1", "totalDebt": 150, "cashAndCashEquivalents": 40},
             ],
         )
         section = build_financial_trends(bundle)
@@ -79,13 +83,19 @@ class EarningsIntelligenceTests(unittest.TestCase):
         bundle = CompanyProviderBundle(
             symbol="TEST",
             income_quarterly=[
-                _income("2024-Q2", 110),
-                _income("2024-Q1", 100),
+                {"calendarYear": 2026, "period": "Q2", "revenue": 110},
+                {"calendarYear": 2026, "period": "Q1", "revenue": 100},
             ],
         )
+        latest, previous = find_yoy_pair(bundle.income_quarterly)
+        self.assertIsNotNone(latest)
+        self.assertIsNone(previous)
         section = build_earnings_intelligence(bundle)
         self.assertEqual(section.comparison_type, "YoY")
-        self.assertNotEqual(_income("2024-Q1", 100)["period"], _income("2024-Q2", 110)["period"])
+        self.assertTrue(
+            any(item.code == "REPORTED_EARNINGS_SNAPSHOT" for item in section.observations)
+            or not section.observations
+        )
 
     def test_expectations_unavailable(self) -> None:
         bundle = CompanyProviderBundle(
@@ -126,7 +136,7 @@ class ValuationIntelligenceTests(unittest.TestCase):
         bundle = CompanyProviderBundle(
             symbol="TEST",
             ratios_ttm={"priceToSalesRatioTTM": 5},
-            ratios_history=[],
+            ratios_history=[{"priceToSalesRatio": 4}, {"priceToSalesRatio": 4.5}],
         )
         section = build_valuation_intelligence(bundle)
         metric = next(item for item in section.metrics if item.code == "price_to_sales")
@@ -219,8 +229,9 @@ class CompanyIntelligenceCoreServiceTests(unittest.TestCase):
         fmp.earnings_calendar.return_value = []
 
         service = CompanyIntelligenceCoreService(fmp)
-        first = service.build_view("AAPL").to_dict()
-        second = service.build_view("AAPL").to_dict()
+        eligibility = research_eligibility_pass_fixture("AAPL")
+        first = service.build_view("AAPL", research_eligibility=eligibility).to_dict()
+        second = service.build_view("AAPL", research_eligibility=eligibility).to_dict()
         self.assertEqual(first, second)
 
     def test_partial_news_failure_keeps_financials(self) -> None:
@@ -244,7 +255,10 @@ class CompanyIntelligenceCoreServiceTests(unittest.TestCase):
         fmp.earnings_surprises.return_value = []
         fmp.earnings_calendar.return_value = []
 
-        view = CompanyIntelligenceCoreService(fmp).build_view("AAPL")
+        view = CompanyIntelligenceCoreService(fmp).build_view(
+            "AAPL",
+            research_eligibility=research_eligibility_pass_fixture("AAPL"),
+        )
         self.assertIsNotNone(view.financial_trends)
         self.assertIsNotNone(view.data_quality)
 

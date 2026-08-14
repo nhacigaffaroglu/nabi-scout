@@ -19,6 +19,10 @@ from services.participation_intelligence_contract import (
     RULE_OUTCOME_REVIEW_REQUIRED,
     ParticipationRuleResult,
 )
+from services.participation_financial_provenance import (
+    field_provenance_map,
+    resolve_rule_metric_provenance,
+)
 from services.participation_methodology_registry import (
     MethodologyDefinition,
     MethodologyRuleDefinition,
@@ -145,11 +149,21 @@ def evaluate_ratio_rule(
     if rule.notes:
         warnings.append(rule.notes)
 
-    numerator_resolver = NUMERATOR_RESOLVERS.get(rule.numerator)
-    if numerator_resolver is None:
+    provenance_by_field = field_provenance_map(inputs.field_provenance)
+
+    def _metric_provenance() -> tuple[str, Tuple[str, ...]]:
+        resolved = resolve_rule_metric_provenance(
+            numerator_key=rule.numerator,
+            denominator_key=rule.denominator,
+            provenance_by_field=provenance_by_field,
+        )
+        return resolved.source, resolved.source_fields
+
+    def _base_result(**kwargs) -> ParticipationRuleResult:
+        metric_source, metric_source_fields = _metric_provenance()
+        result_warnings = kwargs.pop("warnings", tuple(warnings))
         return ParticipationRuleResult(
             rule_id=rule.rule_id,
-            outcome=RULE_OUTCOME_REVIEW_REQUIRED,
             methodology_id=methodology.methodology_id,
             methodology_version=methodology.version,
             numerator_definition=rule.numerator,
@@ -157,6 +171,17 @@ def evaluate_ratio_rule(
             threshold_pct=rule.threshold_pct,
             comparator=rule.comparator,
             measurement_period=rule.measurement_period,
+            source_dates=inputs.source_evidence,
+            metric_source=metric_source,
+            metric_source_fields=metric_source_fields,
+            warnings=result_warnings,
+            **kwargs,
+        )
+
+    numerator_resolver = NUMERATOR_RESOLVERS.get(rule.numerator)
+    if numerator_resolver is None:
+        return _base_result(
+            outcome=RULE_OUTCOME_REVIEW_REQUIRED,
             warnings=tuple(
                 warnings
                 + [f"Numerator '{rule.numerator}' is not executable in 6B.2a."]
@@ -165,16 +190,9 @@ def evaluate_ratio_rule(
 
     comparator = rule.comparator
     if comparator not in SUPPORTED_COMPARATORS:
-        return ParticipationRuleResult(
-            rule_id=rule.rule_id,
+        return _base_result(
             outcome=RULE_OUTCOME_REVIEW_REQUIRED,
-            methodology_id=methodology.methodology_id,
-            methodology_version=methodology.version,
-            numerator_definition=rule.numerator,
-            denominator_definition=rule.denominator,
-            threshold_pct=rule.threshold_pct,
             comparator=comparator,
-            measurement_period=rule.measurement_period,
             warnings=tuple(
                 warnings
                 + [f"Comparator '{comparator}' is ambiguous or unsupported."]
@@ -182,62 +200,28 @@ def evaluate_ratio_rule(
         )
 
     if rule.threshold_pct is None:
-        return ParticipationRuleResult(
-            rule_id=rule.rule_id,
+        return _base_result(
             outcome=RULE_OUTCOME_REVIEW_REQUIRED,
-            methodology_id=methodology.methodology_id,
-            methodology_version=methodology.version,
-            numerator_definition=rule.numerator,
-            denominator_definition=rule.denominator,
             comparator=comparator,
-            measurement_period=rule.measurement_period,
             warnings=tuple(warnings + ["Threshold is not defined."]),
         )
 
     numerator = numerator_resolver(inputs)
     if numerator is None:
-        return ParticipationRuleResult(
-            rule_id=rule.rule_id,
-            outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
-            methodology_id=methodology.methodology_id,
-            methodology_version=methodology.version,
-            numerator_definition=rule.numerator,
-            denominator_definition=rule.denominator,
-            threshold_pct=rule.threshold_pct,
-            comparator=comparator,
-            measurement_period=rule.measurement_period,
-            warnings=tuple(warnings),
-        )
+        return _base_result(outcome=RULE_OUTCOME_INSUFFICIENT_DATA)
 
     denominator, denominator_field = resolve_denominator_value(rule.denominator, inputs)
     if denominator is None or denominator_field is None:
-        return ParticipationRuleResult(
-            rule_id=rule.rule_id,
+        return _base_result(
             outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
-            methodology_id=methodology.methodology_id,
-            methodology_version=methodology.version,
-            numerator_definition=rule.numerator,
             numerator_raw_value=float(numerator),
-            denominator_definition=rule.denominator,
-            threshold_pct=rule.threshold_pct,
-            comparator=comparator,
-            measurement_period=rule.measurement_period,
-            warnings=tuple(warnings),
         )
 
     if denominator == 0:
-        return ParticipationRuleResult(
-            rule_id=rule.rule_id,
+        return _base_result(
             outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
-            methodology_id=methodology.methodology_id,
-            methodology_version=methodology.version,
-            numerator_definition=rule.numerator,
             numerator_raw_value=float(numerator),
-            denominator_definition=rule.denominator,
             denominator_raw_value=0.0,
-            threshold_pct=rule.threshold_pct,
-            comparator=comparator,
-            measurement_period=rule.measurement_period,
             warnings=tuple(warnings + ["Denominator is zero."]),
         )
 
@@ -245,21 +229,11 @@ def evaluate_ratio_rule(
     threshold_pct = Decimal(str(rule.threshold_pct))
     outcome = compare_ratio_to_threshold(ratio_pct, threshold_pct, comparator)
 
-    return ParticipationRuleResult(
-        rule_id=rule.rule_id,
+    return _base_result(
         outcome=outcome,
-        methodology_id=methodology.methodology_id,
-        methodology_version=methodology.version,
-        numerator_definition=rule.numerator,
         numerator_raw_value=float(numerator),
-        denominator_definition=rule.denominator,
         denominator_raw_value=float(denominator),
         ratio_pct=float(ratio_pct),
-        threshold_pct=rule.threshold_pct,
-        comparator=comparator,
-        measurement_period=rule.measurement_period,
-        source_dates=inputs.source_evidence,
-        warnings=tuple(warnings),
     )
 
 

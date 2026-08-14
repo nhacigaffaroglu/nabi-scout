@@ -5,8 +5,25 @@ from datetime import date
 from typing import Any, Mapping, Optional, Tuple
 
 from services.participation_financial_contract import ParticipationFinancialInputs
+from services.participation_financial_provenance import (
+    FinancialFieldProvenance,
+    SOURCE_SEC,
+    combine_field_provenance,
+)
 
 PARTICIPATION_INPUT_SOURCE_SEC = "SEC"
+
+_SEC_XBRL_FIELD_TAGS: dict[str, tuple[str, ...]] = {
+    "total_debt": ("LongTermDebtCurrent", "LongTermDebtNoncurrent"),
+    "total_assets": ("Assets",),
+    "cash": ("CashAndCashEquivalentsAtCarryingValue",),
+    "accounts_receivable": ("AccountsReceivableNetCurrent",),
+    "total_revenue": (
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -95,9 +112,11 @@ def _build_source_evidence(
         evidence.append(("cik", str(cik)))
     for key in (
         "financial_period_end",
+        "balance_sheet_period_end",
         "financial_currency",
         "financial_taxonomy",
         "annual_periods_found",
+        "interest_bearing_securities_tags",
     ):
         value = sec_financials.get(key)
         if value is not None and value != "":
@@ -108,10 +127,81 @@ def _build_source_evidence(
         "total_assets",
         "revenue",
         "accounts_receivable",
+        "interest_bearing_securities",
     ):
         if sec_financials.get(field_name) is not None:
             evidence.append((f"sec_field:{field_name}", "extract_financials"))
     return tuple(evidence)
+
+
+def _interest_bearing_source_fields(sec_financials: Mapping[str, Any]) -> Tuple[str, ...]:
+    tags = sec_financials.get("interest_bearing_securities_tags")
+    if not tags:
+        return ("interest_bearing_securities",)
+    return tuple(
+        part.strip()
+        for part in str(tags).split("+")
+        if part.strip()
+    )
+
+
+def _build_field_provenance(
+    *,
+    sec_financials: Mapping[str, Any],
+    total_debt: Optional[float],
+    cash: Optional[float],
+    total_assets: Optional[float],
+    total_revenue: Optional[float],
+    accounts_receivable: Optional[float],
+    interest_bearing_securities: Optional[float],
+    cash_and_interest_bearing: Optional[float],
+) -> Tuple[Tuple[str, FinancialFieldProvenance], ...]:
+    period = (
+        sec_financials.get("balance_sheet_period_end")
+        or sec_financials.get("financial_period_end")
+    )
+    period_text = str(period) if period else None
+    provenance: dict[str, FinancialFieldProvenance] = {}
+
+    field_values = {
+        "total_debt": total_debt,
+        "total_assets": total_assets,
+        "cash": cash,
+        "accounts_receivable": accounts_receivable,
+        "total_revenue": total_revenue,
+    }
+    for field_name, value in field_values.items():
+        if value is not None and field_name in _SEC_XBRL_FIELD_TAGS:
+            provenance[field_name] = FinancialFieldProvenance(
+                source=SOURCE_SEC,
+                source_fields=_SEC_XBRL_FIELD_TAGS[field_name],
+                period=period_text,
+            )
+
+    if interest_bearing_securities is not None:
+        provenance["interest_bearing_securities"] = FinancialFieldProvenance(
+            source=SOURCE_SEC,
+            source_fields=_interest_bearing_source_fields(sec_financials),
+            period=period_text,
+        )
+
+    if cash_and_interest_bearing is not None:
+        components = [
+            provenance[name]
+            for name in ("cash", "interest_bearing_securities")
+            if name in provenance
+        ]
+        combined = combine_field_provenance(*components)
+        provenance["cash_and_interest_bearing_securities"] = combined
+        provenance["cash_plus_interest_bearing_securities"] = combined
+
+    if accounts_receivable is not None and cash is not None:
+        provenance["accounts_receivable_plus_cash"] = combine_field_provenance(
+            provenance["accounts_receivable"],
+            provenance["cash"],
+        )
+
+    return tuple(provenance.items())
 
 
 def build_participation_inputs_from_sec(
@@ -184,18 +274,52 @@ def build_participation_inputs_from_sec(
         if monetary_values_allowed
         else None
     )
+    interest_bearing_securities = (
+        _optional_float(sec_financials.get("interest_bearing_securities"))
+        if monetary_values_allowed
+        else None
+    )
     market_cap = _optional_float(market_capitalization)
+
+    cash_and_interest_bearing = None
+    cash_plus_interest_bearing = None
+    if cash is not None and interest_bearing_securities is not None:
+        combined = cash + interest_bearing_securities
+        cash_and_interest_bearing = combined
+        cash_plus_interest_bearing = combined
+
+    source_evidence = _build_source_evidence(sec_financials, cik=cik)
+    if interest_bearing_securities is not None:
+        source_evidence = source_evidence + (
+            ("sec_field:interest_bearing_securities", "extract_financials"),
+        )
+    if cash is not None and interest_bearing_securities is not None:
+        source_evidence = source_evidence + (
+            ("derived:cash_and_interest_bearing_securities", "cash_plus_interest_bearing_securities"),
+        )
 
     inputs = ParticipationFinancialInputs(
         symbol=normalized_symbol,
         as_of_date=parsed_as_of,
         total_debt=total_debt,
         cash=cash,
+        cash_and_interest_bearing_securities=cash_and_interest_bearing,
+        cash_plus_interest_bearing_securities=cash_plus_interest_bearing,
         total_assets=total_assets,
         total_revenue=total_revenue,
         accounts_receivable=accounts_receivable,
         market_capitalization=market_cap,
-        source_evidence=_build_source_evidence(sec_financials, cik=cik),
+        source_evidence=source_evidence,
+        field_provenance=_build_field_provenance(
+            sec_financials=sec_financials,
+            total_debt=total_debt,
+            cash=cash,
+            total_assets=total_assets,
+            total_revenue=total_revenue,
+            accounts_receivable=accounts_receivable,
+            interest_bearing_securities=interest_bearing_securities,
+            cash_and_interest_bearing=cash_and_interest_bearing,
+        ),
     )
 
     return ParticipationInputResolutionResult(

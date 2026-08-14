@@ -32,6 +32,7 @@ from services.investment_thesis_persistence_service import (
     save_investment_thesis_snapshot,
 )
 from services.investment_thesis_service import InvestmentThesisService, thesis_view_from_dict
+from services.research_eligibility_service import research_eligibility_pass_fixture
 
 
 def _obs(
@@ -598,8 +599,9 @@ class AdversarialGateTests(unittest.TestCase):
             financial_trends=_financials(_obs("GROSS_MARGIN_EXPANSION")),
             earnings=_earnings(_obs("REVENUE_ACCELERATION")),
         )
-        a = InvestmentThesisService().build_view(view).to_dict()
-        b = InvestmentThesisService().build_view(view).to_dict()
+        eligibility = research_eligibility_pass_fixture(view.symbol)
+        a = InvestmentThesisService().build_view(view, research_eligibility=eligibility).to_dict()
+        b = InvestmentThesisService().build_view(view, research_eligibility=eligibility).to_dict()
         self.assertEqual(a, b)
 
     def test_roundtrip_dict(self) -> None:

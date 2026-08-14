@@ -14,13 +14,25 @@ Confidence policy (deterministic, conservative):
 """
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from services.participation_business_contract import (
     BusinessActivityEvidence,
     BusinessActivityScreenResult,
 )
+from services.participation_business_evidence_enrichment import (
+    derive_non_permissible_revenue_amount,
+    enrich_business_activity_evidence,
+)
 from services.participation_business_engine import evaluate_business_activity
+from services.participation_methodology_capabilities import blocking_missing_capabilities
+from services.participation_business_rules_registry import get_methodology_business_rules
+from services.participation_sec_segment_resolver import merge_revenue_segment_sources
+from services.participation_completeness import build_assessment_completeness
+from services.participation_evidence_service import (
+    load_participation_evidence_bundle,
+    merge_participation_financial_inputs,
+)
 from services.participation_financial_contract import (
     ParticipationFinancialInputs,
     ParticipationFinancialScreenResult,
@@ -75,6 +87,8 @@ class ParticipationAssessmentResult:
     sec_available: bool = False
     used_market_capitalization: Optional[float] = None
     missing_capabilities: Tuple[str, ...] = DEFAULT_MISSING_CAPABILITIES
+    assessment_completeness: Any = None
+    participation_provider_calls: Dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -88,7 +102,10 @@ class ParticipationAssessmentResult:
             "sec_available": self.sec_available,
             "used_market_capitalization": self.used_market_capitalization,
             "missing_capabilities": list(self.missing_capabilities),
+            "participation_provider_calls": dict(self.participation_provider_calls),
         }
+        if self.assessment_completeness is not None:
+            payload["assessment_completeness"] = self.assessment_completeness.to_dict()
         if self.financial_screen_result is not None:
             payload["financial_screen_result"] = (
                 self.financial_screen_result.to_dict()
@@ -151,14 +168,26 @@ def _orchestration_confidence(
 
 def _missing_capabilities_for_result(
     *,
+    methodology_id: Optional[str],
     business_evidence_provided: bool,
     business_screen: Optional[BusinessActivityScreenResult],
+    financial_inputs: Optional[ParticipationFinancialInputs] = None,
+    evidence_bundle: Any = None,
+    persistence_available: bool = False,
 ) -> Tuple[str, ...]:
-    missing = list(DEFAULT_MISSING_CAPABILITIES)
-    if business_evidence_provided and business_screen is not None:
-        if "business_activity_screening" in missing:
-            missing.remove("business_activity_screening")
-    return tuple(missing)
+    if methodology_id is None:
+        return (
+            "business_activity_screening",
+            "prohibited_revenue_inference",
+            "historical_market_cap_24m",
+            "historical_market_value_equity_36m",
+        )
+    return blocking_missing_capabilities(
+        methodology_id,
+        financial_inputs=financial_inputs,
+        business_screen=business_screen,
+        business_evidence_provided=business_evidence_provided,
+    )
 
 
 def _append_business_unavailable_warning(
@@ -210,6 +239,8 @@ def assess_equity_participation(
     market_capitalization: Optional[float] = None,
     business_evidence: Optional[BusinessActivityEvidence] = None,
     sec_financials: Optional[dict[str, Any]] = None,
+    fmp_client: Any = None,
+    persistence_available: bool = False,
 ) -> ParticipationAssessmentResult:
     normalized_symbol = _normalize_symbol(symbol)
     normalized_cik = _normalize_cik(cik)
@@ -231,6 +262,7 @@ def assess_equity_participation(
     resolved_version = methodology.version if methodology else None
 
     sec_financials_payload: dict[str, Any] = {}
+    sec_company_facts_payload: Optional[dict[str, Any]] = None
     sec_warnings: list[str] = []
     sec_errors: list[str] = []
     sec_available = False
@@ -260,6 +292,7 @@ def assess_equity_participation(
         provider_status[0] = ("sec", "attempted")
         try:
             payload = sec_client.company_facts(normalized_cik)
+            sec_company_facts_payload = payload
             sec_financials_payload = sec_client.extract_financials(payload)
             sec_available = True
             provider_status[0] = ("sec", "ok")
@@ -279,6 +312,69 @@ def assess_equity_participation(
         cik=normalized_cik,
     )
     financial_inputs = input_resolution.inputs
+
+    business_rules = get_methodology_business_rules(resolved_methodology_id)
+    prohibited_categories = business_rules.prohibited_categories if business_rules else ()
+
+    evidence_bundle = load_participation_evidence_bundle(
+        normalized_symbol,
+        fmp_client=fmp_client,
+        sec_company_facts_payload=sec_company_facts_payload,
+        sec_financials=sec_financials_payload,
+        prohibited_categories=prohibited_categories,
+    )
+    provider_calls = dict(evidence_bundle.provider_calls)
+    evidence_warnings = list(evidence_bundle.warnings)
+
+    if business_evidence is None:
+        business_evidence = enrich_business_activity_evidence(
+            {"symbol": normalized_symbol},
+            sec_metadata=evidence_bundle.sec_metadata,
+            fmp_profile=evidence_bundle.fmp_profile,
+            revenue_segments=evidence_bundle.revenue_segments,
+            reported_total_revenue=financial_inputs.total_revenue,
+        )
+    else:
+        business_evidence = enrich_business_activity_evidence(
+            {
+                "symbol": normalized_symbol,
+                "company_name": business_evidence.company_name,
+                "sector_theme": business_evidence.sector,
+                "industry": business_evidence.industry,
+                "sic_code": business_evidence.sic_code,
+                "sic_description": business_evidence.sic_description,
+                "notes": business_evidence.business_description,
+            },
+            sec_metadata=evidence_bundle.sec_metadata,
+            fmp_profile=evidence_bundle.fmp_profile,
+            revenue_segments=merge_revenue_segment_sources(
+                evidence_bundle.revenue_segments,
+                business_evidence.revenue_segments,
+            ),
+            reported_total_revenue=financial_inputs.total_revenue,
+        )
+
+    non_permissible_revenue, revenue_warnings = derive_non_permissible_revenue_amount(
+        financial_inputs.total_revenue,
+        business_evidence.revenue_segments,
+    )
+    profile_market_cap = None
+    if evidence_bundle.fmp_profile:
+        try:
+            profile_market_cap = float(
+                evidence_bundle.fmp_profile.get("marketCap")
+                or evidence_bundle.fmp_profile.get("mktCap")
+                or 0
+            ) or None
+        except (TypeError, ValueError):
+            profile_market_cap = None
+
+    financial_inputs = merge_participation_financial_inputs(
+        financial_inputs,
+        evidence_bundle=evidence_bundle,
+        non_permissible_revenue=non_permissible_revenue,
+        market_capitalization=market_capitalization or profile_market_cap,
+    )
 
     financial_screen = evaluate_financial_rules(
         resolved_methodology_id,
@@ -318,10 +414,33 @@ def assess_equity_participation(
             (
                 *sec_warnings,
                 *input_resolution.warnings,
+                *evidence_warnings,
+                *revenue_warnings,
                 *financial_screen.warnings,
                 *(business_screen.warnings if business_screen is not None else ()),
                 *assessment.warnings,
             )
+        )
+    )
+
+    missing_capabilities = _missing_capabilities_for_result(
+        methodology_id=resolved_methodology_id,
+        business_evidence_provided=business_evidence is not None,
+        business_screen=business_screen,
+        financial_inputs=financial_inputs,
+        evidence_bundle=evidence_bundle,
+        persistence_available=persistence_available,
+    )
+    completeness = build_assessment_completeness(
+        ParticipationAssessmentResult(
+            symbol=normalized_symbol,
+            methodology_id=resolved_methodology_id,
+            resolved_methodology_version=resolved_version,
+            participation_assessment=assessment,
+            financial_screen_result=financial_screen,
+            financial_inputs=financial_inputs,
+            business_screen_result=business_screen,
+            missing_capabilities=missing_capabilities,
         )
     )
 
@@ -338,9 +457,8 @@ def assess_equity_participation(
         errors=tuple(sec_errors),
         provider_status=tuple(provider_status),
         sec_available=sec_available,
-        used_market_capitalization=market_capitalization,
-        missing_capabilities=_missing_capabilities_for_result(
-            business_evidence_provided=business_evidence is not None,
-            business_screen=business_screen,
-        ),
+        used_market_capitalization=market_capitalization or profile_market_cap,
+        missing_capabilities=missing_capabilities,
+        assessment_completeness=completeness,
+        participation_provider_calls=provider_calls,
     )

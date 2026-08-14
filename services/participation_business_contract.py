@@ -57,6 +57,7 @@ class BusinessActivityEvidence:
     sic_code: Optional[str] = None
     sic_description: Optional[str] = None
     business_description: Optional[str] = None
+    reported_total_revenue: Optional[float] = None
     revenue_segments: Tuple[BusinessRevenueEvidence, ...] = field(default_factory=tuple)
     source: str = ""
     source_date: Optional[date] = None
@@ -72,6 +73,7 @@ class BusinessActivityEvidence:
             "sic_code": self.sic_code,
             "sic_description": self.sic_description,
             "business_description": self.business_description,
+            "reported_total_revenue": self.reported_total_revenue,
             "revenue_segments": [segment.to_dict() for segment in self.revenue_segments],
             "source": self.source,
             "evidence_refs": dict(self.evidence_refs),

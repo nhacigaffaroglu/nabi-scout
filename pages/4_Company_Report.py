@@ -35,6 +35,10 @@ from services.investment_thesis_persistence_service import (
 from services.investment_thesis_service import InvestmentThesisService
 from services.company_intelligence_core_service import CompanyIntelligenceCoreService
 from services.fmp_client import FMPClient, FMPError
+from services.research_eligibility_service import (
+    evaluate_research_eligibility_from_participation_view,
+)
+from components.research_eligibility_ui import render_research_eligibility_block
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -149,17 +153,8 @@ if not candidate_id and candidate.get("symbol"):
 symbol = candidate.get("symbol") or "—"
 company = candidate.get("company_name") or symbol
 
-company_intel_error = None
-company_intel_view = None
-try:
-    fmp_client = FMPClient.from_streamlit_secrets()
-    company_intel_service = CompanyIntelligenceCoreService(fmp_client)
-    if symbol != "—":
-        company_intel_view = company_intel_service.build_view(str(symbol))
-except FMPError as exc:
-    company_intel_error = str(exc)
-except Exception as exc:
-    company_intel_error = f"Şirket istihbaratı yüklenemedi: {exc}"
+participation_repo = ParticipationAssessmentRepository(client)
+participation_symbol = str(candidate.get("symbol") or "").strip().upper()
 
 top_left, top_right = st.columns([4, 1])
 
@@ -389,17 +384,42 @@ st.info(
     )
 )
 
-participation_repo = ParticipationAssessmentRepository(client)
-participation_symbol = str(candidate.get("symbol") or "").strip().upper()
-participation_view = build_company_report_participation(
-    candidate,
-    sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
-)
 participation_history_result = fetch_participation_assessment_history(
     participation_repo,
     participation_symbol,
     limit=5,
 )
+participation_fmp_client = None
+try:
+    participation_fmp_client = FMPClient.from_streamlit_secrets()
+except FMPError:
+    pass
+
+participation_view = build_company_report_participation(
+    candidate,
+    sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
+    fmp_client=participation_fmp_client,
+    persistence_available=participation_history_result.available,
+)
+research_eligibility = evaluate_research_eligibility_from_participation_view(
+    participation_view
+)
+
+company_intel_error = None
+company_intel_view = None
+if research_eligibility.research_allowed and symbol != "—":
+    try:
+        fmp_client = FMPClient.from_streamlit_secrets()
+        company_intel_service = CompanyIntelligenceCoreService(fmp_client)
+        company_intel_view = company_intel_service.build_view(
+            str(symbol),
+            research_eligibility=research_eligibility,
+        )
+    except FMPError as exc:
+        company_intel_error = str(exc)
+    except Exception as exc:
+        company_intel_error = f"Şirket istihbaratı yüklenemedi: {exc}"
+
 save_message_key = f"participation_save_message_{participation_symbol}"
 save_skipped_key = f"participation_save_skipped_{participation_symbol}"
 save_failed_key = f"participation_save_failed_{participation_symbol}"
@@ -426,14 +446,16 @@ if save_clicked:
     if save_result.saved or save_result.skipped_duplicate:
         st.rerun()
 
-if company_intel_view is not None:
+if not research_eligibility.research_allowed:
+    render_research_eligibility_block(research_eligibility)
+elif company_intel_view is not None:
     render_company_intelligence_sections(company_intel_view)
 elif company_intel_error:
     st.info(f"Şirket istihbarat katmanı şu anda kullanılamıyor: {company_intel_error}")
 
 investment_thesis_view = None
 thesis_history_result = None
-if company_intel_view is not None:
+if research_eligibility.research_allowed and company_intel_view is not None:
     thesis_repo = InvestmentThesisRepository(client)
     thesis_history_result = fetch_investment_thesis_history(
         thesis_repo,
@@ -454,6 +476,7 @@ if company_intel_view is not None:
         )
     investment_thesis_view = InvestmentThesisService().build_view(
         company_intel_view,
+        research_eligibility=research_eligibility,
         candidate=candidate,
         participation_context=participation_context,
         previous_snapshot=previous_snapshot,

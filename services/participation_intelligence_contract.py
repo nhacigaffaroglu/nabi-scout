@@ -61,6 +61,8 @@ class ParticipationRuleResult:
     measurement_period: Optional[str] = None
     source_dates: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
     evidence_refs: Tuple[str, ...] = field(default_factory=tuple)
+    metric_source: Optional[str] = None
+    metric_source_fields: Tuple[str, ...] = field(default_factory=tuple)
     warnings: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:

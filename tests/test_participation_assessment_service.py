@@ -113,16 +113,20 @@ class SecFlowTests(unittest.TestCase):
         self.assertEqual(client.company_facts_calls, ["320193"])
         self.assertEqual(len(client.extract_calls), 1)
 
+    @patch("services.participation_assessment_service.load_participation_evidence_bundle")
     @patch("services.participation_assessment_service.build_participation_inputs_from_sec")
     @patch("services.participation_assessment_service.evaluate_financial_rules")
+    @patch("services.participation_assessment_service.evaluate_business_activity")
     @patch(
-        "services.participation_assessment_service.build_methodology_assessment_from_financial_screen"
+        "services.participation_assessment_service.build_combined_methodology_assessment"
     )
     def test_orchestration_uses_resolver_and_engine(
         self,
         mock_build_assessment,
+        mock_business_eval,
         mock_evaluate,
         mock_resolver,
+        mock_evidence,
     ) -> None:
         from services.participation_financial_contract import (
             ParticipationFinancialInputs,
@@ -130,6 +134,13 @@ class SecFlowTests(unittest.TestCase):
         )
         from services.participation_intelligence_contract import ParticipationAssessment
 
+        mock_evidence.return_value = MagicMock(
+            fmp_profile={},
+            sec_metadata={},
+            market_cap_evidence=None,
+            provider_calls={},
+            warnings=(),
+        )
         mock_resolver.return_value = MagicMock(
             inputs=ParticipationFinancialInputs(symbol="AAPL"),
             warnings=(),
@@ -142,6 +153,7 @@ class SecFlowTests(unittest.TestCase):
             rule_results=(),
             overall_outcome="INSUFFICIENT_DATA",
         )
+        mock_business_eval.return_value = MagicMock(rule_results=(), warnings=())
         mock_build_assessment.return_value = ParticipationAssessment(
             symbol="AAPL",
             asset_kind="equity",
@@ -211,7 +223,8 @@ class FinancialOutcomeTests(unittest.TestCase):
         result = self._assess()
         self.assertEqual(result.participation_assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
         self.assertFalse(result.financial_screen_result.methodology_complete)
-        self.assertIn(BUSINESS_ACTIVITY_UNAVAILABLE_WARNING, result.warnings)
+        self.assertIsNotNone(result.business_screen_result)
+        self.assertFalse(result.business_screen_result.business_rules_evaluated)
 
     def test_high_debt_fail_uygun_degil(self) -> None:
         result = self._assess(total_debt=50_000_000.0, total_assets=100_000_000.0)
@@ -394,6 +407,10 @@ class ConfidenceAndEvidenceTests(unittest.TestCase):
             "AAPL",
             sec_client=MockSECClient(),
             cik=1,
+            business_evidence=BusinessActivityEvidence(
+                symbol="AAPL",
+                business_description="serves casino industry customers",
+            ),
         )
         self.assertEqual(result.participation_assessment.confidence, CONFIDENCE_MEDIUM)
 
@@ -424,6 +441,10 @@ class ConfidenceAndEvidenceTests(unittest.TestCase):
             "AAPL",
             sec_client=MockSECClient(),
             cik=1,
+            business_evidence=BusinessActivityEvidence(
+                symbol="AAPL",
+                business_description="serves casino industry customers",
+            ),
         )
         assessment_dict = result.participation_assessment.to_dict()
         self.assertNotIn("participation_score", assessment_dict)
@@ -452,7 +473,7 @@ class IsolationTests(unittest.TestCase):
             "nabi_score_v4",
             "decision_engine",
             "alpha_vantage",
-            "fmp",
+            "from services.fmp_client",
             "repository",
             "streamlit",
         ):
@@ -539,14 +560,15 @@ class BusinessCompositionTests(unittest.TestCase):
         self.assertEqual(result.participation_assessment.status, PARTICIPATION_STATUS_UYGUN_DEGIL)
         self.assertEqual(len(client.company_facts_calls), 1)
 
-    def test_no_business_evidence_keeps_unavailable_warning(self) -> None:
+    def test_minimal_candidate_still_runs_business_screen(self) -> None:
         result = assess_equity_participation(
             "AAPL",
             sec_client=MockSECClient(),
             cik=1,
         )
-        self.assertIsNone(result.business_screen_result)
-        self.assertIn(BUSINESS_ACTIVITY_UNAVAILABLE_WARNING, result.warnings)
+        self.assertIsNotNone(result.business_screen_result)
+        self.assertFalse(result.business_screen_result.business_rules_evaluated)
+        self.assertNotIn(BUSINESS_ACTIVITY_UNAVAILABLE_WARNING, result.warnings)
 
 
 if __name__ == "__main__":

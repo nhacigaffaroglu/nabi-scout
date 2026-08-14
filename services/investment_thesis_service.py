@@ -12,12 +12,15 @@ from services.investment_thesis_contract import (
     InvalidationCondition,
     InvestmentThesisView,
     MonitoringItem,
+    THESIS_VERSION,
     ThesisAssumption,
     ThesisCatalyst,
     ThesisChangeItem,
     ThesisEvidence,
     ThesisRisk,
 )
+from services.research_eligibility_contract import ResearchEligibilityResult
+from services.research_eligibility_service import require_research_allowed
 
 
 def _tuple_from_dicts(items: Any, cls: Any) -> tuple:
@@ -97,13 +100,58 @@ class InvestmentThesisService:
         self,
         intelligence_view: CompanyIntelligenceView,
         *,
+        research_eligibility: ResearchEligibilityResult,
         candidate: Optional[Dict[str, Any]] = None,
         participation_context: Optional[str] = None,
         previous_snapshot: Optional[Mapping[str, Any]] = None,
     ) -> InvestmentThesisView:
+        require_research_allowed(research_eligibility, symbol=intelligence_view.symbol)
         view = build_investment_thesis_view(
             intelligence_view,
             candidate=candidate,
             participation_context=participation_context,
         )
         return apply_change_summary(view, previous_snapshot)
+
+    def blocked_view(
+        self,
+        *,
+        symbol: str,
+        research_eligibility: ResearchEligibilityResult,
+    ) -> InvestmentThesisView:
+        return InvestmentThesisView(
+            symbol=str(symbol or "").strip().upper(),
+            company_name=None,
+            as_of=None,
+            thesis_version=THESIS_VERSION,
+            thesis_status="INSUFFICIENT_DATA",
+            thesis_summary=research_eligibility.block_message,
+            key_question="Katılım uygunluğu doğrulanmadan tez üretilmez.",
+            supporting_evidence=(),
+            weakening_evidence=(),
+            risks=(),
+            catalysts=(),
+            invalidation_conditions=(),
+            assumptions=(),
+            valuation_context="",
+            earnings_context="",
+            peer_context=None,
+            news_context=None,
+            expectation_tensions=(),
+            participation_context=research_eligibility.participation_status,
+            nabi_context=None,
+            confidence="LOW",
+            evidence_coverage=EvidenceCoverage(
+                financials="unavailable",
+                earnings="unavailable",
+                valuation="unavailable",
+                peers="unavailable",
+                news="unavailable",
+                participation="unavailable",
+            ),
+            change_summary=(),
+            monitoring_plan=(),
+            decision_intelligence=None,
+            data_quality_notes=research_eligibility.limitations,
+            provenance=(("gate", "research_eligibility"),),
+        )

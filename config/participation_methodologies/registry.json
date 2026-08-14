@@ -9,7 +9,7 @@
       "source_reference": "MSCI Islamic Index Series Methodology (October 2024)",
       "denominator_policy": "total_assets",
       "notes": "Descriptive registry entry only; not calculated in NABI Scout 6B.1.",
-      "financial_screen_complete_methodology": false,
+      "financial_screen_complete_methodology": true,
       "rules": [
         {
           "rule_id": "msci.total_debt_to_total_assets",

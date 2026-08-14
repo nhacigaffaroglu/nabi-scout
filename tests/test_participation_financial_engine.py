@@ -21,6 +21,7 @@ from services.participation_financial_engine import (
     _methodology_complete_from_evaluation,
 )
 from services.participation_intelligence_contract import (
+    METHODOLOGY_COMPLETENESS_COMPLETE,
     METHODOLOGY_COMPLETENESS_PARTIAL,
     PARTICIPATION_SOURCE_CONFIGURED,
     PARTICIPATION_SOURCE_METHODOLOGY,
@@ -379,11 +380,11 @@ class MethodologyCompletenessTests(unittest.TestCase):
         "aaoifi_std21",
     )
 
-    def test_passing_financial_subset_does_not_claim_complete_methodology(self) -> None:
+    def test_passing_financial_subset_claims_complete_for_msci(self) -> None:
         inputs = passing_msci_inputs()
         result = evaluate_financial_rules("msci_islamic_index_series", inputs)
         self.assertTrue(result.financial_rules_evaluated)
-        self.assertFalse(result.methodology_complete)
+        self.assertTrue(result.methodology_complete)
         self.assertEqual(result.overall_outcome, FINANCIAL_SCREEN_OUTCOME_PASS)
 
     def test_all_five_methodologies_fail_closed_on_financial_pass(self) -> None:
@@ -393,8 +394,12 @@ class MethodologyCompletenessTests(unittest.TestCase):
                 result = evaluate_financial_rules(methodology_id, inputs)
                 assessment = build_methodology_assessment_from_financial_screen(result)
                 self.assertEqual(result.overall_outcome, FINANCIAL_SCREEN_OUTCOME_PASS)
-                self.assertFalse(result.methodology_complete)
-                self.assertEqual(assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
+                if methodology_id == "msci_islamic_index_series":
+                    self.assertTrue(result.methodology_complete)
+                    self.assertEqual(assessment.status, PARTICIPATION_STATUS_UYGUN)
+                else:
+                    self.assertFalse(result.methodology_complete)
+                    self.assertEqual(assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
 
     def test_registry_defaults_completeness_field_to_false(self) -> None:
         parsed = _parse_methodology(
@@ -435,11 +440,14 @@ class MethodologyCompletenessTests(unittest.TestCase):
             )
         )
 
-    def test_registry_all_entries_declare_incomplete_financial_screen(self) -> None:
+    def test_registry_msci_declares_complete_financial_screen(self) -> None:
         for methodology_id in self.METHODOLOGY_IDS:
             methodology = get_methodology(methodology_id)
             assert methodology is not None
-            self.assertFalse(methodology.financial_screen_complete_methodology)
+            if methodology_id == "msci_islamic_index_series":
+                self.assertTrue(methodology.financial_screen_complete_methodology)
+            else:
+                self.assertFalse(methodology.financial_screen_complete_methodology)
 
 
 class AssessmentIntegrationTests(unittest.TestCase):
@@ -451,12 +459,12 @@ class AssessmentIntegrationTests(unittest.TestCase):
         self.assertEqual(assessment.methodology_id, "msci_islamic_index_series")
         self.assertTrue(assessment.financial_screens)
 
-    def test_passing_incomplete_methodology_stays_kontrol_et(self) -> None:
+    def test_passing_complete_msci_financial_can_emit_uygun(self) -> None:
         inputs = passing_msci_inputs()
         screen = evaluate_financial_rules("msci_islamic_index_series", inputs)
         assessment = build_methodology_assessment_from_financial_screen(screen)
-        self.assertEqual(assessment.status, PARTICIPATION_STATUS_KONTROL_ET)
-        self.assertEqual(assessment.methodology_completeness, METHODOLOGY_COMPLETENESS_PARTIAL)
+        self.assertEqual(assessment.status, PARTICIPATION_STATUS_UYGUN)
+        self.assertEqual(assessment.methodology_completeness, METHODOLOGY_COMPLETENESS_COMPLETE)
 
     def test_financial_fail_maps_to_uygun_degil(self) -> None:
         inputs = sample_inputs(total_debt=50.0, total_assets=100.0)
