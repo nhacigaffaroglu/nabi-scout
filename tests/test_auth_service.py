@@ -6,14 +6,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from services.auth_dev_config import DevAuthConfig, load_dev_auth_config
 from services.auth_service import (
     AUTH_FAILURE_MESSAGE,
+    DEV_AUTH_CONFIG_MESSAGE,
     LOGIN_FAILURE_MESSAGE,
     SESSION_ACCESS_TOKEN_KEY,
     SESSION_REFRESH_TOKEN_KEY,
     SESSION_USER_EMAIL_KEY,
     apply_session_to_client,
     clear_auth_session,
+    get_current_user_id,
     is_authenticated,
     require_authentication,
     sign_in_with_password,
@@ -113,8 +116,9 @@ class AuthSessionTests(unittest.TestCase):
         self.assertFalse(is_authenticated())
 
     def test_require_authentication_stops_when_unauthenticated(self) -> None:
-        with self.assertRaises(RuntimeError):
-            require_authentication()
+        with patch("services.auth_service.load_dev_auth_config", return_value=DevAuthConfig(False, None, None)):
+            with self.assertRaises(RuntimeError):
+                require_authentication()
         self.mock_st.stop.assert_called()
 
     def test_require_authentication_returns_client_when_valid(self) -> None:
@@ -145,6 +149,142 @@ class AuthSessionTests(unittest.TestCase):
 
     def test_login_failure_message_is_generic(self) -> None:
         self.assertIn("Giriş başarısız", LOGIN_FAILURE_MESSAGE)
+
+    def test_get_current_user_id_reads_supabase_user(self) -> None:
+        mock_client = MagicMock()
+        mock_client.auth.get_user.return_value = MagicMock(user=MagicMock(id="user-123"))
+        self.assertEqual(get_current_user_id(mock_client), "user-123")
+
+
+class DevAutoLoginTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.session_state: dict = {}
+        self.mock_st = MagicMock()
+        self.mock_st.session_state = self.session_state
+        self.mock_st.stop.side_effect = RuntimeError("stop")
+        self.st_patch = patch("services.auth_service.st", self.mock_st)
+        self.st_patch.start()
+
+    def tearDown(self) -> None:
+        self.st_patch.stop()
+
+    def test_dev_auto_login_disabled_shows_login_gate(self) -> None:
+        with patch(
+            "services.auth_service.load_dev_auth_config",
+            return_value=DevAuthConfig(False, None, None),
+        ):
+            with self.assertRaises(RuntimeError):
+                require_authentication()
+        self.mock_st.title.assert_called()
+
+    def test_dev_auto_login_enabled_establishes_session(self) -> None:
+        mock_client = MagicMock()
+        mock_client.auth.get_user.return_value = MagicMock(user=MagicMock())
+        mock_session = MagicMock(access_token="access", refresh_token="refresh")
+        with patch(
+            "services.auth_service.load_dev_auth_config",
+            return_value=DevAuthConfig(True, "dev@example.com", "secret"),
+        ), patch(
+            "services.auth_service.get_supabase_client_for_auth",
+        ) as auth_client_factory, patch(
+            "services.auth_service.get_supabase_client",
+            return_value=mock_client,
+        ):
+            auth_client = MagicMock()
+            auth_client.auth.sign_in_with_password.return_value = MagicMock(session=mock_session)
+            auth_client_factory.return_value = auth_client
+            client = require_authentication()
+        self.assertIs(client, mock_client)
+        self.assertTrue(is_authenticated())
+        auth_client.auth.sign_in_with_password.assert_called_once_with(
+            {"email": "dev@example.com", "password": "secret"},
+        )
+
+    def test_dev_auto_login_missing_credentials_fail_closed(self) -> None:
+        with patch(
+            "services.auth_service.load_dev_auth_config",
+            return_value=DevAuthConfig(True, "", ""),
+        ):
+            with self.assertRaises(RuntimeError):
+                require_authentication()
+        self.mock_st.error.assert_called()
+        self.assertIn(DEV_AUTH_CONFIG_MESSAGE, self.mock_st.error.call_args.args[0])
+
+    def test_dev_auto_login_bad_credentials_fail_closed(self) -> None:
+        with patch(
+            "services.auth_service.load_dev_auth_config",
+            return_value=DevAuthConfig(True, "dev@example.com", "bad"),
+        ), patch(
+            "services.auth_service.get_supabase_client_for_auth",
+        ) as auth_client_factory:
+            auth_client = MagicMock()
+            auth_client.auth.sign_in_with_password.side_effect = RuntimeError("invalid")
+            auth_client_factory.return_value = auth_client
+            with self.assertRaises(RuntimeError):
+                require_authentication()
+        self.assertFalse(is_authenticated())
+        self.assertIn(DEV_AUTH_CONFIG_MESSAGE, self.mock_st.error.call_args.args[0])
+
+    def test_dev_config_error_messages_never_include_password(self) -> None:
+        with patch(
+            "services.auth_service.load_dev_auth_config",
+            return_value=DevAuthConfig(True, "dev@example.com", "super-secret-password"),
+        ), patch(
+            "services.auth_service.get_supabase_client_for_auth",
+        ) as auth_client_factory:
+            auth_client = MagicMock()
+            auth_client.auth.sign_in_with_password.side_effect = RuntimeError("invalid")
+            auth_client_factory.return_value = auth_client
+            with self.assertRaises(RuntimeError):
+                require_authentication()
+        error_message = self.mock_st.error.call_args.args[0]
+        self.assertNotIn("super-secret-password", error_message)
+
+    def test_load_dev_auth_config_prefers_environment(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "NABI_DEV_AUTO_LOGIN": "true",
+                "NABI_DEV_USER_EMAIL": "env@example.com",
+                "NABI_DEV_USER_PASSWORD": "env-secret",
+            },
+            clear=False,
+        ), patch("services.auth_dev_config._load_dev_auth_from_secrets", return_value=(False, None, None)):
+            config = load_dev_auth_config()
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.email, "env@example.com")
+        self.assertEqual(config.password, "env-secret")
+
+
+class AuthSecurityTests(unittest.TestCase):
+    def test_no_service_role_in_auth_layer(self) -> None:
+        for relative_path in (
+            "services/auth_service.py",
+            "services/auth_dev_config.py",
+            "services/supabase_client.py",
+        ):
+            source = Path(relative_path).read_text(encoding="utf-8").lower()
+            self.assertNotIn("service_role", source, relative_path)
+
+    def test_browser_cookie_persistence_removed(self) -> None:
+        self.assertFalse(Path("services/auth_browser_persistence.py").exists())
+        auth_source = Path("services/auth_service.py").read_text(encoding="utf-8")
+        self.assertNotIn("auth_browser_persistence", auth_source)
+        self.assertNotIn("nabi_auth_rt", auth_source)
+
+    def test_phase3_logout_cleanup_preserved(self) -> None:
+        source = Path("services/auth_service.py").read_text(encoding="utf-8")
+        self.assertIn("clear_adviser_session_state", source)
+
+    def test_adviser_prompt_has_no_dev_credentials(self) -> None:
+        source = Path("services/wealth_adviser_prompt.py").read_text(encoding="utf-8").lower()
+        self.assertNotIn("nabi_dev_user_password", source)
+        self.assertNotIn("dev_auth", source)
+
+    def test_logout_hidden_when_dev_auto_login_enabled(self) -> None:
+        source = Path("services/ui.py").read_text(encoding="utf-8")
+        self.assertIn("is_dev_auto_login_enabled", source)
+        self.assertIn("Geliştirme oturumu: otomatik giriş etkin.", source)
 
 
 class AuthUiIntegrationTests(unittest.TestCase):

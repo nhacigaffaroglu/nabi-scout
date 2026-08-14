@@ -3,6 +3,7 @@ from __future__ import annotations
 import streamlit as st
 from supabase import Client
 
+from services.auth_dev_config import is_dev_auto_login_enabled, load_dev_auth_config
 from services.supabase_client import (
     AuthenticationRequired,
     get_supabase_client,
@@ -17,6 +18,11 @@ AUTH_FAILURE_MESSAGE = (
     "Kimlik doğrulama başarısız. Oturumunuz sonlandırıldı; lütfen yeniden giriş yapın."
 )
 LOGIN_FAILURE_MESSAGE = "Giriş başarısız. E-posta veya parola hatalı."
+DEV_AUTH_CONFIG_MESSAGE = (
+    "Geliştirme oturumu yapılandırılamadı. "
+    "NABI_DEV_AUTO_LOGIN / NABI_DEV_USER_EMAIL / NABI_DEV_USER_PASSWORD "
+    "veya .streamlit/secrets.toml [dev_auth] ayarlarını kontrol edin."
+)
 
 
 def is_authenticated() -> bool:
@@ -81,6 +87,21 @@ def sign_in_with_password(email: str, password: str) -> None:
     _store_auth_session(session, email)
 
 
+def _try_dev_auto_login() -> None:
+    """Sign in using dev credentials when local auto-login is enabled."""
+    config = load_dev_auth_config()
+    if not config.enabled:
+        return
+    if not config.is_complete:
+        st.error(f"{DEV_AUTH_CONFIG_MESSAGE} E-posta ve parola gerekli.")
+        st.stop()
+    try:
+        sign_in_with_password(config.email or "", config.password or "")
+    except Exception:
+        st.error(f"{DEV_AUTH_CONFIG_MESSAGE} Supabase girişi başarısız.")
+        st.stop()
+
+
 def sign_out() -> None:
     if is_authenticated():
         try:
@@ -104,6 +125,8 @@ def get_current_user_id(client: Client) -> str:
 
 def require_authentication() -> Client:
     """Render login when needed; return authenticated Supabase client or stop."""
+    if not is_authenticated():
+        _try_dev_auto_login()
     if is_authenticated():
         client = get_supabase_client()
         if _validate_restored_session(client):

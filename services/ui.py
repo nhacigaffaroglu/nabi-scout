@@ -1,6 +1,7 @@
 import streamlit as st
 from supabase import Client
 
+from services.auth_dev_config import is_dev_auto_login_enabled
 from services.auth_service import is_authenticated, sign_out
 
 
@@ -24,7 +25,9 @@ def render_sidebar() -> None:
             email = st.session_state.get("nabi_auth_user_email")
             if email:
                 st.caption(f"Oturum: {email}")
-            if st.button("Çıkış yap", key="nabi_auth_logout"):
+            if is_dev_auto_login_enabled():
+                st.caption("Geliştirme oturumu: otomatik giriş etkin.")
+            elif st.button("Çıkış yap", key="nabi_auth_logout"):
                 sign_out()
                 st.rerun()
 
