@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-ADVISER_SCHEMA_VERSION = "wealth-adviser-v2"
-ADVISER_LLM_INPUT_SCHEMA_VERSION = "wealth-adviser-llm-input-v2"
-ADVISER_RESPONSE_SCHEMA_VERSION = "wealth-adviser-response-v2"
+ADVISER_SCHEMA_VERSION = "wealth-adviser-v3"
+ADVISER_LLM_INPUT_SCHEMA_VERSION = "wealth-adviser-llm-input-v3"
+ADVISER_RESPONSE_SCHEMA_VERSION = "wealth-adviser-response-v3"
 MAX_CONVERSATION_TURNS = 8
 
 PROHIBITED_CLAIMS: Tuple[str, ...] = (
@@ -249,21 +249,35 @@ class AdviserConversationTurn:
 class AdviserLlmInputPayload:
     schema_version: str
     authoritative_adviser_brief: Dict[str, Any]
+    authoritative_company_intelligence: Optional[Dict[str, Any]]
+    authoritative_investment_thesis: Optional[Dict[str, Any]]
+    authoritative_nabi_context: Optional[Dict[str, Any]]
+    authoritative_portfolio_exposure: Optional[Dict[str, Any]]
+    portfolio_company_fit: Tuple[Dict[str, Any], ...]
     investor_profile: Dict[str, Any]
     active_goals: Tuple[Dict[str, Any], ...]
     preference_assessments: Tuple[Dict[str, Any], ...]
     conversation_history: Tuple[Dict[str, Any], ...]
     current_user_question: str
+    thesis_change_summary: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
+    monitoring_plan: Tuple[Dict[str, Any], ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "authoritative_adviser_brief": dict(self.authoritative_adviser_brief),
+            "authoritative_company_intelligence": self.authoritative_company_intelligence,
+            "authoritative_investment_thesis": self.authoritative_investment_thesis,
+            "authoritative_nabi_context": self.authoritative_nabi_context,
+            "authoritative_portfolio_exposure": self.authoritative_portfolio_exposure,
+            "portfolio_company_fit": list(self.portfolio_company_fit),
             "investor_profile": dict(self.investor_profile),
             "active_goals": list(self.active_goals),
             "preference_assessments": list(self.preference_assessments),
             "conversation_history": list(self.conversation_history),
             "current_user_question": self.current_user_question,
+            "thesis_change_summary": list(self.thesis_change_summary),
+            "monitoring_plan": list(self.monitoring_plan),
         }
 
 

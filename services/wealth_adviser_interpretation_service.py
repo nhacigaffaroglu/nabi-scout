@@ -91,6 +91,7 @@ class WealthAdviserInterpretationService:
         *,
         user_question: Optional[str] = None,
         conversation_history: Sequence[AdviserConversationTurn] = (),
+        unified_research=None,
     ) -> AdviserResponse:
         if not self.config.is_usable:
             return self.build_deterministic_fallback(
@@ -114,6 +115,7 @@ class WealthAdviserInterpretationService:
                     brief,
                     user_question=question,
                     conversation_history=conversation_history,
+                    unified_research=unified_research,
                 )
             )
             parsed = parse_structured_response(
@@ -122,6 +124,9 @@ class WealthAdviserInterpretationService:
                 generated_at=self._now_iso(),
             )
         except WealthAdviserLlmError as exc:
+            from services.operational_logging import log_adviser_fallback
+
+            log_adviser_fallback(exc.error_class)
             return self.build_deterministic_fallback(
                 brief,
                 reasons=(exc.error_class,),
@@ -138,6 +143,9 @@ class WealthAdviserInterpretationService:
             validation_context=validation_context,
         )
         if not validation.valid:
+            from services.operational_logging import log_adviser_fallback
+
+            log_adviser_fallback("validation_failed")
             return self.build_deterministic_fallback(
                 brief,
                 reasons=validation.reasons,

@@ -145,7 +145,7 @@ def _diagnostics(
 
 class WealthAdviserContractTests(unittest.TestCase):
     def test_schema_version_stable(self) -> None:
-        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v2")
+        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v3")
 
     def test_prohibited_claims_present(self) -> None:
         self.assertGreaterEqual(len(PROHIBITED_CLAIMS), 8)

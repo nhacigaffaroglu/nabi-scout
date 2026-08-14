@@ -173,7 +173,7 @@ class CompanyIntelligenceCoreService:
         business = build_business_snapshot(bundle) if bundle.profile else None
         trends = build_financial_trends(bundle) if bundle.income_quarterly else None
         earnings = build_earnings_intelligence(bundle) if bundle.income_quarterly else None
-        valuation = build_valuation_intelligence(bundle) if (bundle.ratios_ttm or bundle.quote) else None
+        valuation = build_valuation_intelligence(bundle) if bundle.ratios_ttm else None
         peers = build_peer_intelligence(bundle) if bundle.peers or bundle.failures else None
         news = build_news_intelligence(bundle) if bundle.news or any(
             failure.startswith("stock_news") for failure in bundle.failures

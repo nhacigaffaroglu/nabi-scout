@@ -302,7 +302,7 @@ class Phase3InvariantTests(unittest.TestCase):
         self.assertEqual(enriched.findings, base_context.findings)
 
     def test_schema_version_bumped(self) -> None:
-        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v2")
+        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v3")
 
 
 class Phase3UiStaticTests(unittest.TestCase):
@@ -502,14 +502,18 @@ class Phase3ValidationGateTests(unittest.TestCase):
         self.assertNotIn("adviser_response_u1_p1", session)
         self.assertIn("other_key", session)
 
-    def test_llm_input_v2_section_labels(self) -> None:
+    def test_llm_input_v3_section_labels(self) -> None:
         messages = build_llm_messages(_brief(), user_question="Q")
         payload = json.loads(messages[1]["content"])
         for label in (
             "AUTHORITATIVE_FINANCIAL_CONTEXT",
+            "AUTHORITATIVE_COMPANY_INTELLIGENCE",
+            "AUTHORITATIVE_INVESTMENT_THESIS",
+            "AUTHORITATIVE_NABI_CONTEXT",
+            "AUTHORITATIVE_PORTFOLIO_CONTEXT",
             "EXPLICIT_USER_PROFILE",
             "ACTIVE_GOALS",
-            "DETERMINISTIC_ASSESSMENTS",
+            "DETERMINISTIC_CONFLICTS_AND_ASSESSMENTS",
             "UNTRUSTED_CONVERSATION_HISTORY",
             "CURRENT_USER_QUESTION",
         ):

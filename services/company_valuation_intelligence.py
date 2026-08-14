@@ -72,7 +72,7 @@ def build_valuation_intelligence(bundle: CompanyProviderBundle) -> ValuationSect
     ratios_ttm = bundle.ratios_ttm or {}
     key_metrics_ttm = bundle.key_metrics_ttm or {}
 
-    pe = safe_float(quote.get("pe") or ratios_ttm.get("priceToEarningsRatioTTM"))
+    pe = safe_float(ratios_ttm.get("priceToEarningsRatioTTM"))
     if pe is not None and pe < 0:
         pe = None
     forward_pe = safe_float(ratios_ttm.get("priceToEarningsRatioTTM"))

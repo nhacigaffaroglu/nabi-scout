@@ -45,7 +45,12 @@ from services.wealth_adviser_profile_service import (
     WealthAdviserGoalService,
     WealthAdviserProfileService,
 )
-from services.wealth_adviser_service import WealthAdviserService
+from repositories.candidate_repository import CandidateRepository
+from services.company_intelligence_core_service import CompanyIntelligenceCoreService
+from services.fmp_client import FMPClient, FMPError
+from services.unified_adviser_service import UnifiedAdviserService
+from services.unified_research_service import UnifiedResearchService
+from services.wealth_adviser_prompt import extract_focus_symbol
 from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
 from services.wealth_diagnostics_engine import effective_position_count
 from services.wealth_diagnostics_service import WealthDiagnosticsService
@@ -99,6 +104,9 @@ intelligence = PortfolioIntelligenceService(
 timeline = WealthTimelineService(wealth)
 diagnostics_service = WealthDiagnosticsService(wealth)
 adviser_service = WealthAdviserService()
+unified_adviser_service = UnifiedAdviserService()
+unified_research_service = UnifiedResearchService()
+candidate_repo = CandidateRepository(client)
 adviser_profile_service = WealthAdviserProfileService(client, user_id)
 adviser_goal_service = WealthAdviserGoalService(client, user_id)
 adviser_llm_config = load_adviser_llm_config()
@@ -1168,6 +1176,10 @@ with tab_adviser:
 
     st.divider()
     st.markdown("**AI sohbet yorumu**")
+    st.caption(
+        "Şirket sorularında sembol belirtin veya odak sembol girin. "
+        "Her gönderimde en fazla bir AI çağrısı yapılır."
+    )
     if not adviser_llm_config.is_usable:
         st.info(
             "AI yorumu etkin değil. WEALTH_ADVISER_LLM_API_KEY ve "
@@ -1191,15 +1203,51 @@ with tab_adviser:
         with st.form("adviser_chat_form", clear_on_submit=True):
             adviser_question = st.text_input(
                 "Sorunuz",
-                placeholder="Örn: Bu portföy hedefim açısından ne ifade ediyor?",
+                placeholder="Örn: AAPL yatırımımı bugün yeniden değerlendir.",
+            )
+            focus_symbol = st.text_input(
+                "Odak sembol (isteğe bağlı)",
+                placeholder="AAPL",
+                max_chars=8,
             )
             send_message = st.form_submit_button("Gönder")
 
         if send_message and adviser_question.strip():
+            unified_research = None
+            symbol = extract_focus_symbol(
+                adviser_question.strip(),
+                explicit_symbol=focus_symbol.strip() or None,
+            )
+            if symbol:
+                try:
+                    fmp_client = FMPClient.from_streamlit_secrets()
+                    intel_view = CompanyIntelligenceCoreService(fmp_client).build_view(symbol)
+                    candidate = candidate_repo.get_by_symbol(symbol)
+                    unified_research = unified_research_service.build_context(
+                        symbol=symbol,
+                        company_intelligence_view=intel_view,
+                        candidate=candidate,
+                        portfolio_view=portfolio_view,
+                        user_context=user_context,
+                        diagnostics_items=tuple(adviser_diagnostics_view.diagnostics[:3]),
+                    )
+                    adviser_brief = unified_adviser_service.enrich_brief(
+                        adviser_brief,
+                        unified_research,
+                    )
+                except FMPError:
+                    st.warning(
+                        f"{symbol} için şirket verisi yüklenemedi; yanıt yalnızca portföy bağlamında üretilecek."
+                    )
+                except Exception:
+                    st.warning(
+                        "Birleşik araştırma bağlamı oluşturulamadı; portföy bağlamı kullanılacak."
+                    )
             response = adviser_interpretation_service.interpret(
                 adviser_brief,
                 user_question=adviser_question.strip(),
                 conversation_history=conversation_history,
+                unified_research=unified_research,
             )
             record_chat_exchange(
                 st.session_state,

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.company_intelligence_constants import MAX_PEER_COUNT
 from services.fmp_client import FMPClient, FMPError
 
 
@@ -54,10 +55,6 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
     if isinstance(profile, dict):
         bundle.profile = profile
 
-    quote = _safe_fetch("quote", lambda: fmp.quote(normalized), bundle)
-    if isinstance(quote, dict):
-        bundle.quote = quote
-
     income_q = _safe_fetch(
         "income_quarterly",
         lambda: fmp.income_statement_quarterly(normalized, limit=8),
@@ -81,10 +78,6 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
     )
     if isinstance(cash_q, list):
         bundle.cashflow_quarterly = cash_q
-
-    income_a = _safe_fetch("income_annual", lambda: fmp.income_statement(normalized), bundle)
-    if isinstance(income_a, list):
-        bundle.income_annual = income_a
 
     ratios_ttm = _safe_fetch("ratios_ttm", lambda: fmp.ratios_ttm(normalized), bundle)
     if isinstance(ratios_ttm, dict):
@@ -112,19 +105,11 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
 
     peers = _safe_fetch("stock_peers", lambda: fmp.stock_peers(normalized), bundle)
     if isinstance(peers, list):
-        bundle.peers = [item for item in peers if item and item != normalized][:8]
+        bundle.peers = [item for item in peers if item and item != normalized][:MAX_PEER_COUNT]
 
     news = _safe_fetch("stock_news", lambda: fmp.stock_news(normalized, limit=30), bundle)
     if isinstance(news, list):
         bundle.news = news
-
-    estimates = _safe_fetch(
-        "analyst_estimates",
-        lambda: fmp.analyst_estimates(normalized, limit=4),
-        bundle,
-    )
-    if isinstance(estimates, list):
-        bundle.analyst_estimates = estimates
 
     surprises = _safe_fetch(
         "earnings_surprises",
@@ -143,13 +128,6 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
         bundle.earnings_calendar = calendar
 
     for peer_symbol in bundle.peers:
-        peer_profile = _safe_fetch(
-            f"peer_profile:{peer_symbol}",
-            lambda peer=peer_symbol: fmp.profile(peer),
-            bundle,
-        )
-        if isinstance(peer_profile, dict):
-            bundle.peer_profiles[peer_symbol] = peer_profile
         peer_ratios = _safe_fetch(
             f"peer_ratios_ttm:{peer_symbol}",
             lambda peer=peer_symbol: fmp.ratios_ttm(peer),
@@ -159,6 +137,12 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
             bundle.peer_ratios_ttm[peer_symbol] = peer_ratios
 
     return bundle
+
+
+def max_expected_provider_calls(*, peer_count: int = MAX_PEER_COUNT) -> int:
+    """Upper bound for cold company intelligence load."""
+    base_calls = 12
+    return base_calls + min(peer_count, MAX_PEER_COUNT)
 
 
 def bundle_call_summary(bundle: CompanyProviderBundle) -> Dict[str, int]:
