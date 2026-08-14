@@ -21,7 +21,10 @@ from services.participation_assessment_persistence_service import (
 )
 from services.sec_contact_config import get_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
+from components.company_intelligence_ui import render_company_intelligence_sections
 from components.company_report_ui import render_company_report_participation_section
+from services.company_intelligence_core_service import CompanyIntelligenceCoreService
+from services.fmp_client import FMPClient, FMPError
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -135,6 +138,18 @@ if not candidate_id and candidate.get("symbol"):
 
 symbol = candidate.get("symbol") or "—"
 company = candidate.get("company_name") or symbol
+
+company_intel_error = None
+company_intel_view = None
+try:
+    fmp_client = FMPClient.from_streamlit_secrets()
+    company_intel_service = CompanyIntelligenceCoreService(fmp_client)
+    if symbol != "—":
+        company_intel_view = company_intel_service.build_view(str(symbol))
+except FMPError as exc:
+    company_intel_error = str(exc)
+except Exception as exc:
+    company_intel_error = f"Şirket istihbaratı yüklenemedi: {exc}"
 
 top_left, top_right = st.columns([4, 1])
 
@@ -400,6 +415,11 @@ if save_clicked:
     st.session_state[save_failed_key] = save_result.persistence_failed
     if save_result.saved or save_result.skipped_duplicate:
         st.rerun()
+
+if company_intel_view is not None:
+    render_company_intelligence_sections(company_intel_view)
+elif company_intel_error:
+    st.info(f"Şirket istihbarat katmanı şu anda kullanılamıyor: {company_intel_error}")
 
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []

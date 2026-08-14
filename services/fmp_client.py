@@ -396,5 +396,55 @@ class FMPClient:
         )
         return rows[0] if rows else {}
 
+    def income_statement_quarterly(self, symbol: str, *, limit: int = 8):
+        return self._get(
+            "income-statement",
+            {"symbol": symbol, "period": "quarter", "limit": limit},
+        )
+
+    def balance_sheet_quarterly(self, symbol: str, *, limit: int = 8):
+        return self._get(
+            "balance-sheet-statement",
+            {"symbol": symbol, "period": "quarter", "limit": limit},
+        )
+
+    def cash_flow_quarterly(self, symbol: str, *, limit: int = 8):
+        return self._get(
+            "cash-flow-statement",
+            {"symbol": symbol, "period": "quarter", "limit": limit},
+        )
+
+    def ratios(self, symbol: str, *, limit: int = 20):
+        return self._get("ratios", {"symbol": symbol, "limit": limit})
+
+    def key_metrics(self, symbol: str, *, limit: int = 20):
+        return self._get("key-metrics", {"symbol": symbol, "limit": limit})
+
+    def stock_peers(self, symbol: str):
+        rows = self._get("stock-peers", {"symbol": symbol})
+        if not rows:
+            return []
+        payload = rows[0] if isinstance(rows[0], dict) else {}
+        peers = payload.get("peersList") or payload.get("peers") or []
+        if isinstance(peers, str):
+            return [item.strip() for item in peers.split(",") if item.strip()]
+        return [str(item).strip().upper() for item in peers if str(item).strip()]
+
+    def stock_news(self, symbol: str, *, limit: int = 30):
+        return self._get("news/stock", {"symbols": symbol, "limit": limit})
+
+    def analyst_estimates(self, symbol: str, *, limit: int = 4):
+        return self._get(
+            "analyst-estimates",
+            {"symbol": symbol, "period": "quarter", "limit": limit},
+        )
+
+    def earnings_surprises(self, symbol: str):
+        return self._get("earnings-surprises", {"symbol": symbol, "limit": 8})
+
+    def earnings_calendar(self, symbol: str):
+        rows = self._get("earnings-calendar", {"symbol": symbol})
+        return rows if isinstance(rows, list) else []
+
     def pause(self, seconds: float = 0.15):
         time.sleep(seconds)

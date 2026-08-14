@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+# Trend / earnings change thresholds (percentage points unless noted)
+MATERIAL_YOY_CHANGE_PCT = 5.0
+MARGIN_CHANGE_PP = 1.0
+ACCELERATION_DELTA_PP = 3.0
+STABLE_BAND_PCT = 2.0
+
+# Valuation historical positioning
+VALUATION_BELOW_RANGE_PERCENTILE = 20.0
+VALUATION_ABOVE_RANGE_PERCENTILE = 80.0
+VALUATION_NEAR_MEDIAN_BAND_PCT = 10.0
+
+# Peer comparison
+MIN_PEER_SAMPLE_SIZE = 3
+MAX_PEER_COUNT = 8
+
+# News materiality
+NEWS_MATERIALITY_RECENT_DAYS = 14
+NEWS_HEADLINE_SIMILARITY_THRESHOLD = 0.92
+
+# Provider
+PROVIDER_NAME = "fmp"
+NEWS_PROVIDER_TTL_HINT_SECONDS = 900
