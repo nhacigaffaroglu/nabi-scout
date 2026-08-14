@@ -145,7 +145,7 @@ def _diagnostics(
 
 class WealthAdviserContractTests(unittest.TestCase):
     def test_schema_version_stable(self) -> None:
-        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v1")
+        self.assertEqual(ADVISER_SCHEMA_VERSION, "wealth-adviser-v2")
 
     def test_prohibited_claims_present(self) -> None:
         self.assertGreaterEqual(len(PROHIBITED_CLAIMS), 8)
@@ -1031,7 +1031,7 @@ class WealthAdviserValidationGateTests(unittest.TestCase):
             "Do not claim certainty about future returns.",
             "Do not fabricate benchmark comparisons.",
             "Do not present NABI metadata as portfolio valuation evidence.",
-            "Do not issue transaction instructions unless a later explicitly designed adviser policy allows them.",
+            "Do not issue exact transaction instructions or specific security buy/sell recommendations.",
         ]
         for claim in required:
             self.assertIn(claim, brief.prohibited_claims)
@@ -1152,7 +1152,8 @@ class WealthAdviserValidationGateTests(unittest.TestCase):
     def test_adviser_ui_no_free_form_fact_inputs(self) -> None:
         source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
         adviser = source.split("with tab_adviser:")[1].lower()
-        self.assertIn('st.form("adviser_ai_form"', adviser)
+        self.assertIn('st.form("adviser_chat_form"', adviser)
+        self.assertIn('st.form("adviser_profile_form"', adviser)
         self.assertNotIn("number_input", adviser)
         self.assertNotIn("service_role", source.lower())
 

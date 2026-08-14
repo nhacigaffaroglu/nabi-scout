@@ -46,6 +46,8 @@ class AuthSessionTests(unittest.TestCase):
         self.session_state[SESSION_ACCESS_TOKEN_KEY] = "access"
         self.session_state[SESSION_REFRESH_TOKEN_KEY] = "refresh"
         self.session_state[SESSION_USER_EMAIL_KEY] = "user@example.com"
+        self.session_state["adviser_chat_user-1_portfolio-1"] = [{"role": "user", "content": "hi"}]
+        self.session_state["adviser_response_user-1_portfolio-1"] = {"answer": "x"}
         clear_auth_session()
         self.assertEqual(self.session_state, {})
 

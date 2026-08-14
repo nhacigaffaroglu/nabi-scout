@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
-
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.wealth_adviser_contract import (
     ADVISER_SCHEMA_VERSION,
@@ -11,6 +10,7 @@ from services.wealth_adviser_contract import (
     AdviserDataQuality,
     AdviserFinding,
     AdviserPortfolioFacts,
+    AdviserUserContext,
 )
 from services.wealth_diagnostics_contract import (
     DiagnosticCategory,
@@ -299,7 +299,24 @@ def _portfolio_summary(facts: AdviserPortfolioFacts) -> str:
     )
 
 
-def build_adviser_brief(context: AdviserContext) -> AdviserBrief:
+def build_adviser_brief(
+    context: AdviserContext,
+    *,
+    user_context: Optional[AdviserUserContext] = None,
+) -> AdviserBrief:
+    from services.wealth_adviser_preference_engine import preference_summary_lines
+
+    if user_context is not None:
+        context = AdviserContext(
+            portfolio=context.portfolio,
+            findings=context.findings,
+            data_quality=context.data_quality,
+            generated_from_snapshot_count=context.generated_from_snapshot_count,
+            deterministic_only=context.deterministic_only,
+            schema_version=context.schema_version,
+            user_context=user_context,
+        )
+
     findings = context.findings
     actionable = [item for item in findings if item.actionable]
     top_pool = actionable if actionable else list(findings)
@@ -321,6 +338,10 @@ def build_adviser_brief(context: AdviserContext) -> AdviserBrief:
             )
         )
 
+    preference_summary: Tuple[str, ...] = ()
+    if context.user_context is not None:
+        preference_summary = preference_summary_lines(context.user_context.preference_assessments)
+
     return AdviserBrief(
         headline=_headline_for_context(findings, context.data_quality),
         portfolio_summary=_portfolio_summary(context.portfolio),
@@ -330,6 +351,7 @@ def build_adviser_brief(context: AdviserContext) -> AdviserBrief:
         questions_for_user=build_questions(findings),
         prohibited_claims=PROHIBITED_CLAIMS,
         context=context,
+        preference_summary=preference_summary,
     )
 
 

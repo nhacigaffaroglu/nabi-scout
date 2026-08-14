@@ -31,12 +31,15 @@ def is_authenticated() -> bool:
 
 
 def clear_auth_session() -> None:
+    from services.wealth_adviser_conversation import clear_adviser_session_state
+
     for key in (
         SESSION_ACCESS_TOKEN_KEY,
         SESSION_REFRESH_TOKEN_KEY,
         SESSION_USER_EMAIL_KEY,
     ):
         st.session_state.pop(key, None)
+    clear_adviser_session_state(st.session_state)
 
 
 def _store_auth_session(session: object, email: str) -> None:

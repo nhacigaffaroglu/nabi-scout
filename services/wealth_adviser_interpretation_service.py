@@ -4,7 +4,12 @@ from datetime import datetime, timezone
 from typing import Optional, Sequence, Tuple
 
 from services.wealth_adviser_config import AdviserLlmConfig, load_adviser_llm_config
-from services.wealth_adviser_contract import AdviserBrief, AdviserResponse
+from services.wealth_adviser_contract import (
+    AdviserBrief,
+    AdviserConversationTurn,
+    AdviserResponse,
+    AdviserValidationContext,
+)
 from services.wealth_adviser_llm_client import WealthAdviserLlmClient, WealthAdviserLlmError
 from services.wealth_adviser_output_validator import (
     parse_structured_response,
@@ -15,7 +20,7 @@ from services.wealth_adviser_prompt import build_llm_messages, sanitize_user_que
 
 
 class WealthAdviserInterpretationService:
-    """Single-turn LLM interpretation over deterministic adviser briefs."""
+    """Bounded multi-turn LLM interpretation over deterministic adviser briefs."""
 
     def __init__(
         self,
@@ -48,6 +53,8 @@ class WealthAdviserInterpretationService:
             for finding in brief.top_findings
             if finding.limitations
         )
+        if brief.preference_summary:
+            limitations.extend(brief.preference_summary)
         if reasons:
             limitations.extend(
                 f"AI yorumu kullanılamadı: {reason}"
@@ -55,6 +62,11 @@ class WealthAdviserInterpretationService:
             )
 
         answer_parts = [brief.headline, "", brief.portfolio_summary]
+        if brief.preference_summary:
+            answer_parts.append("")
+            answer_parts.append("Profil/hedef ilişki gözlemleri:")
+            for line in brief.preference_summary:
+                answer_parts.append(f"- {line}")
         if brief.top_findings:
             answer_parts.append("")
             answer_parts.append("Öne çıkan deterministik bulgular:")
@@ -78,6 +90,7 @@ class WealthAdviserInterpretationService:
         brief: AdviserBrief,
         *,
         user_question: Optional[str] = None,
+        conversation_history: Sequence[AdviserConversationTurn] = (),
     ) -> AdviserResponse:
         if not self.config.is_usable:
             return self.build_deterministic_fallback(
@@ -86,9 +99,22 @@ class WealthAdviserInterpretationService:
             )
 
         question = sanitize_user_question(user_question)
+        if not question:
+            return self.build_deterministic_fallback(
+                brief,
+                reasons=("empty_question",),
+            )
+
+        validation_context = AdviserValidationContext.from_user_context(
+            brief.context.user_context
+        )
         try:
             raw = self.client.complete(
-                build_llm_messages(brief, user_question=question or None)
+                build_llm_messages(
+                    brief,
+                    user_question=question,
+                    conversation_history=conversation_history,
+                )
             )
             parsed = parse_structured_response(
                 raw,
@@ -106,7 +132,11 @@ class WealthAdviserInterpretationService:
                 reasons=(str(exc),),
             )
 
-        validation = validate_adviser_response(parsed, brief.context)
+        validation = validate_adviser_response(
+            parsed,
+            brief.context,
+            validation_context=validation_context,
+        )
         if not validation.valid:
             return self.build_deterministic_fallback(
                 brief,
@@ -126,4 +156,8 @@ class WealthAdviserInterpretationService:
             model_name=self.config.model,
             generated_at=parsed.generated_at,
             grounded=True,
+            acknowledged_preferences=parsed.acknowledged_preferences,
+            relevant_goal_ids=parsed.relevant_goal_ids,
+            preference_assessment_ids=parsed.preference_assessment_ids,
+            options_to_consider=parsed.options_to_consider,
         )

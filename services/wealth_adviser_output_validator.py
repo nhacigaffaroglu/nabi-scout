@@ -5,7 +5,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from services.wealth_adviser_contract import AdviserContext, AdviserResponse
+from services.wealth_adviser_contract import (
+    AdviserContext,
+    AdviserResponse,
+    AdviserValidationContext,
+)
 
 # Percentage tolerance: absolute 0.25 points OR relative 2% of grounded value.
 NUMERIC_ABSOLUTE_TOLERANCE = 0.25
@@ -24,6 +28,32 @@ BUY_SELL_PATTERNS = (
     re.compile(r"\b(?:hemen|şimdi)\s+(?:al|sat)\b", re.IGNORECASE),
     re.compile(r"\b(?:al|sat)\s+(?:hemen|şimdi)\b", re.IGNORECASE),
     re.compile(r"\b[A-Z]{1,5}\s+(?:al|sat)\b", re.IGNORECASE),
+)
+
+REBALANCE_PATTERNS = (
+    re.compile(r"\b(?:reduce|lower|cut)\s+[A-Z]{1,5}\s+to\s+\d+(?:[.,]\d+)?\s*%", re.IGNORECASE),
+    re.compile(r"\b[A-Z]{1,5}\s*(?:'|’)?(?:i|ı)?\s*%\s*\d+(?:[.,]\d+)?\s*(?:'|’)?(?:a|e)\s+indir", re.IGNORECASE),
+    re.compile(r"\b%\s*\d+(?:[.,]\d+)?\s*(?:'|’)?(?:a|e)\s+yatır\b", re.IGNORECASE),
+    re.compile(r"\bmove\s+\$?\d[\d,.\s]*\s+into\s+[A-Z]{1,5}\b", re.IGNORECASE),
+)
+
+SPECIFIC_SECURITY_REC_PATTERNS = (
+    re.compile(r"\b(?:buy|purchase|sell)\s+(?:VOO|SPY|QQQ|VTI|IVV|AAPL|MSFT|TSLA|NVDA)\b", re.IGNORECASE),
+    re.compile(r"\b(?:VOO|SPY|QQQ|VTI|IVV|AAPL|MSFT|TSLA|NVDA)\s+(?:al|sat)\b", re.IGNORECASE),
+)
+
+PROFILE_OVERRIDE_PATTERNS = (
+    re.compile(r"\b(?:diagnostic|tanı)\s+severity\b.*(?:lowered|reduced|downgraded)", re.IGNORECASE),
+    re.compile(r"\b(?:risk preference|profil).*\b(?:changes|değiştirir|değişti)\b.*\b(?:weight|ağırlık|return|getiri)\b", re.IGNORECASE),
+    re.compile(r"\b(?:severity|şiddet)\b.*(?:because of|due to|nedeniyle)\b.*\b(?:preference|tercih|profil)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:risk preference|profil|tercih).*(?:missing|eksik|incomplete|valuation).*(?:complete|tam|resolved|çöz)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:missing|eksik|incomplete).*(?:complete|tam|resolved|çöz).*(?:risk preference|profil|tercih)",
+        re.IGNORECASE,
+    ),
 )
 
 FUTURE_CERTAINTY_PATTERNS = (
@@ -204,6 +234,12 @@ def parse_structured_response(
         model_name=model_name,
         generated_at=generated_at,
         grounded=False,
+        acknowledged_preferences=_string_list(payload.get("acknowledged_preferences")),
+        relevant_goal_ids=_dedupe_preserve_order(_string_list(payload.get("relevant_goal_ids"))),
+        preference_assessment_ids=_dedupe_preserve_order(
+            _string_list(payload.get("preference_assessment_ids"))
+        ),
+        options_to_consider=_string_list(payload.get("options_to_consider"), max_items=10),
     )
 
 
@@ -372,11 +408,16 @@ def _combined_text(response: AdviserResponse) -> str:
 def validate_adviser_response(
     response: AdviserResponse,
     context: AdviserContext,
+    *,
+    validation_context: Optional[AdviserValidationContext] = None,
 ) -> AdviserValidationResult:
     reasons: List[str] = []
     safety_flags: List[str] = []
     text = _combined_text(response)
     lowered = text.lower()
+    validation_context = validation_context or AdviserValidationContext.from_user_context(
+        context.user_context
+    )
 
     valid_ids = known_finding_ids(context)
     for finding_id in response.referenced_finding_ids:
@@ -401,6 +442,42 @@ def validate_adviser_response(
             reasons.append("explicit_transaction_command")
             safety_flags.append("transaction_command")
             break
+
+    for pattern in REBALANCE_PATTERNS:
+        if _pattern_matches_unnegated(text, pattern):
+            reasons.append("exact_rebalance_instruction")
+            safety_flags.append("rebalance_instruction")
+            break
+
+    for pattern in SPECIFIC_SECURITY_REC_PATTERNS:
+        if _pattern_matches_unnegated(text, pattern):
+            reasons.append("specific_security_recommendation")
+            safety_flags.append("specific_security_recommendation")
+            break
+
+    for pattern in PROFILE_OVERRIDE_PATTERNS:
+        if pattern.search(text):
+            reasons.append("profile_overrides_financial_fact")
+            safety_flags.append("profile_fact_override")
+            break
+
+    for goal_id in response.relevant_goal_ids:
+        if goal_id not in validation_context.known_goal_ids:
+            reasons.append(f"unknown_goal_id:{goal_id}")
+            safety_flags.append("unknown_goal_reference")
+
+    for assessment_id in response.preference_assessment_ids:
+        if assessment_id not in validation_context.known_assessment_ids:
+            reasons.append(f"unknown_assessment_id:{assessment_id}")
+            safety_flags.append("unknown_assessment_reference")
+
+    for pref in response.acknowledged_preferences:
+        pref_lower = pref.lower()
+        if validation_context.known_profile_values:
+            if not any(value.lower() in pref_lower for value in validation_context.known_profile_values):
+                reasons.append("invented_profile_reference")
+                safety_flags.append("invented_profile")
+                break
 
     for pattern in FUTURE_CERTAINTY_PATTERNS:
         if _pattern_matches_unnegated(text, pattern):

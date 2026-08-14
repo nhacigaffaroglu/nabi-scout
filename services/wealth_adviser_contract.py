@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-ADVISER_SCHEMA_VERSION = "wealth-adviser-v1"
-ADVISER_LLM_INPUT_SCHEMA_VERSION = "wealth-adviser-llm-input-v1"
-ADVISER_RESPONSE_SCHEMA_VERSION = "wealth-adviser-response-v1"
+ADVISER_SCHEMA_VERSION = "wealth-adviser-v2"
+ADVISER_LLM_INPUT_SCHEMA_VERSION = "wealth-adviser-llm-input-v2"
+ADVISER_RESPONSE_SCHEMA_VERSION = "wealth-adviser-response-v2"
+MAX_CONVERSATION_TURNS = 8
 
 PROHIBITED_CLAIMS: Tuple[str, ...] = (
     "Do not claim fiduciary status.",
@@ -17,8 +18,17 @@ PROHIBITED_CLAIMS: Tuple[str, ...] = (
     "Do not call Modified Dietz TWR.",
     "Do not call partial base-currency valuation total net worth.",
     "Do not fabricate benchmark comparisons.",
-    "Do not issue transaction instructions unless a later explicitly designed adviser policy allows them.",
+    "Do not issue exact transaction instructions or specific security buy/sell recommendations.",
+    "Do not invent user profile fields or goals not present in authoritative context.",
+    "Do not claim diagnostic severity changed because of user preference.",
 )
+
+
+class PreferenceAssessmentStatus:
+    ALIGNED = "ALIGNED"
+    POTENTIAL_CONFLICT = "POTENTIAL_CONFLICT"
+    INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
+    NEUTRAL = "NEUTRAL"
 
 
 @dataclass(frozen=True)
@@ -126,6 +136,52 @@ class AdviserDataQuality:
 
 
 @dataclass(frozen=True)
+class AdviserPreferenceAssessment:
+    assessment_id: str
+    code: str
+    status: str
+    severity: str
+    profile_field: Optional[str]
+    profile_value: Optional[str]
+    diagnostic_code: Optional[str]
+    goal_id: Optional[str]
+    evidence: Dict[str, Any]
+    statement: str
+    limitations: Tuple[str, ...]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "assessment_id": self.assessment_id,
+            "code": self.code,
+            "status": self.status,
+            "severity": self.severity,
+            "profile_field": self.profile_field,
+            "profile_value": self.profile_value,
+            "diagnostic_code": self.diagnostic_code,
+            "goal_id": self.goal_id,
+            "evidence": dict(self.evidence),
+            "statement": self.statement,
+            "limitations": list(self.limitations),
+        }
+
+
+@dataclass(frozen=True)
+class AdviserUserContext:
+    investor_profile: Dict[str, Any]
+    active_goals: Tuple[Dict[str, Any], ...]
+    preference_assessments: Tuple[AdviserPreferenceAssessment, ...]
+    missing_profile_fields: Tuple[str, ...]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "investor_profile": dict(self.investor_profile),
+            "active_goals": list(self.active_goals),
+            "preference_assessments": [item.to_dict() for item in self.preference_assessments],
+            "missing_profile_fields": list(self.missing_profile_fields),
+        }
+
+
+@dataclass(frozen=True)
 class AdviserContext:
     portfolio: AdviserPortfolioFacts
     findings: Tuple[AdviserFinding, ...]
@@ -133,9 +189,10 @@ class AdviserContext:
     generated_from_snapshot_count: int
     deterministic_only: bool
     schema_version: str
+    user_context: Optional[AdviserUserContext] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "portfolio": self.portfolio.to_dict(),
             "findings": [item.to_dict() for item in self.findings],
             "data_quality": self.data_quality.to_dict(),
@@ -143,6 +200,9 @@ class AdviserContext:
             "deterministic_only": self.deterministic_only,
             "schema_version": self.schema_version,
         }
+        if self.user_context is not None:
+            payload["user_context"] = self.user_context.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -155,6 +215,7 @@ class AdviserBrief:
     questions_for_user: Tuple[str, ...]
     prohibited_claims: Tuple[str, ...]
     context: AdviserContext
+    preference_summary: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -165,21 +226,44 @@ class AdviserBrief:
             "data_quality_notes": list(self.data_quality_notes),
             "questions_for_user": list(self.questions_for_user),
             "prohibited_claims": list(self.prohibited_claims),
+            "preference_summary": list(self.preference_summary),
             "context": self.context.to_dict(),
         }
 
 
 @dataclass(frozen=True)
+class AdviserConversationTurn:
+    role: str
+    content: str
+    grounded: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "role": self.role,
+            "content": self.content,
+            "grounded": self.grounded,
+        }
+
+
+@dataclass(frozen=True)
 class AdviserLlmInputPayload:
     schema_version: str
-    brief: Dict[str, Any]
-    user_question: str
+    authoritative_adviser_brief: Dict[str, Any]
+    investor_profile: Dict[str, Any]
+    active_goals: Tuple[Dict[str, Any], ...]
+    preference_assessments: Tuple[Dict[str, Any], ...]
+    conversation_history: Tuple[Dict[str, Any], ...]
+    current_user_question: str
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema_version": self.schema_version,
-            "brief": dict(self.brief),
-            "user_question": self.user_question,
+            "authoritative_adviser_brief": dict(self.authoritative_adviser_brief),
+            "investor_profile": dict(self.investor_profile),
+            "active_goals": list(self.active_goals),
+            "preference_assessments": list(self.preference_assessments),
+            "conversation_history": list(self.conversation_history),
+            "current_user_question": self.current_user_question,
         }
 
 
@@ -195,6 +279,10 @@ class AdviserResponse:
     generated_at: str
     grounded: bool
     schema_version: str = ADVISER_RESPONSE_SCHEMA_VERSION
+    acknowledged_preferences: Tuple[str, ...] = field(default_factory=tuple)
+    relevant_goal_ids: Tuple[str, ...] = field(default_factory=tuple)
+    preference_assessment_ids: Tuple[str, ...] = field(default_factory=tuple)
+    options_to_consider: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -208,46 +296,43 @@ class AdviserResponse:
             "model_name": self.model_name,
             "generated_at": self.generated_at,
             "grounded": self.grounded,
+            "acknowledged_preferences": list(self.acknowledged_preferences),
+            "relevant_goal_ids": list(self.relevant_goal_ids),
+            "preference_assessment_ids": list(self.preference_assessment_ids),
+            "options_to_consider": list(self.options_to_consider),
         }
 
 
 @dataclass(frozen=True)
-class AdviserLlmInputPayload:
-    schema_version: str
-    brief: Dict[str, Any]
-    user_question: str
+class AdviserValidationContext:
+    known_goal_ids: Tuple[str, ...]
+    known_assessment_ids: Tuple[str, ...]
+    known_profile_fields: Tuple[str, ...]
+    known_profile_values: Tuple[str, ...]
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "brief": dict(self.brief),
-            "user_question": self.user_question,
-        }
-
-
-@dataclass(frozen=True)
-class AdviserResponse:
-    answer: str
-    key_points: Tuple[str, ...]
-    referenced_finding_ids: Tuple[str, ...]
-    limitations: Tuple[str, ...]
-    follow_up_questions: Tuple[str, ...]
-    safety_flags: Tuple[str, ...]
-    model_name: str
-    generated_at: str
-    grounded: bool
-    schema_version: str = ADVISER_RESPONSE_SCHEMA_VERSION
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "answer": self.answer,
-            "key_points": list(self.key_points),
-            "referenced_finding_ids": list(self.referenced_finding_ids),
-            "limitations": list(self.limitations),
-            "follow_up_questions": list(self.follow_up_questions),
-            "safety_flags": list(self.safety_flags),
-            "model_name": self.model_name,
-            "generated_at": self.generated_at,
-            "grounded": self.grounded,
-        }
+    @classmethod
+    def from_user_context(cls, user_context: Optional[AdviserUserContext]) -> "AdviserValidationContext":
+        if user_context is None:
+            return cls((), (), (), ())
+        profile = user_context.investor_profile
+        goal_ids = tuple(str(item.get("id")) for item in user_context.active_goals if item.get("id"))
+        assessment_ids = tuple(item.assessment_id for item in user_context.preference_assessments)
+        profile_fields = tuple(
+            field_name
+            for field_name in (
+                "investment_horizon",
+                "risk_preference",
+                "liquidity_need",
+                "cash_preference",
+                "concentration_preference",
+                "income_need",
+                "experience_level",
+            )
+            if profile.get(field_name)
+        )
+        profile_values = tuple(
+            str(profile[field_name])
+            for field_name in profile_fields
+            if profile.get(field_name)
+        )
+        return cls(goal_ids, assessment_ids, profile_fields, profile_values)
