@@ -1,14 +1,119 @@
 {
   "default_equity_methodology_id": "msci_islamic_index_series",
+  "default_equity_methodology_version": "2025-05",
   "methodologies": [
     {
       "methodology_id": "msci_islamic_index_series",
       "label": "MSCI Islamic Index Series",
+      "version": "2025-05",
+      "active": true,
+      "archived": false,
+      "effective_date": "2025-05-01",
+      "implementation_review": "May 2025 Index Review",
+      "asset_scope": ["equity"],
+      "source_reference": "MSCI Islamic Index Series Methodology (December 2025)",
+      "source_documents": [
+        {
+          "title": "MSCI Islamic Index Series Methodology",
+          "url": "https://www.msci.com/indexes/documents/methodology/2_MSCI_Islamic_Index_Series_Methodology_20251211.pdf",
+          "published": "2025-12"
+        },
+        {
+          "title": "Consultation on Methodology Enhancement to the MSCI Islamic Index Series and the MSCI Islamic Index M-Series",
+          "url": "https://www.msci.com/downloads/documents/indexes/consultations/equity/77724957-a3a4-ec5b-e8e9-c7e2a5b3bc09.pdf",
+          "published": "2024"
+        }
+      ],
+      "denominator_policy": "total_assets",
+      "default_screening_context": "NEW_ENTRY",
+      "notes": "Active MSCI Islamic Index Series rules. NABI applies NEW_ENTRY thresholds for ordinary research; existing-constituent exit buffers require authoritative membership history.",
+      "financial_screen_complete_methodology": true,
+      "rules": [
+        {
+          "rule_id": "msci.total_debt_to_total_assets",
+          "screen": "leverage",
+          "numerator": "total_debt",
+          "denominator": "total_assets",
+          "entry_buffer_pct": 30.0,
+          "financial_ratio_threshold_pct": 33.33,
+          "exit_buffer_pct": 35.0,
+          "threshold_pct": 30.0,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report",
+          "screening_context_thresholds": {
+            "NEW_ENTRY": 30.0,
+            "EXISTING_CONSTITUENT": 33.33,
+            "UNKNOWN_MEMBERSHIP": 30.0
+          }
+        },
+        {
+          "rule_id": "msci.cash_and_interest_bearing_to_total_assets",
+          "screen": "cash_interest",
+          "numerator": "cash_and_interest_bearing_securities",
+          "denominator": "total_assets",
+          "entry_buffer_pct": 30.0,
+          "financial_ratio_threshold_pct": 33.33,
+          "exit_buffer_pct": 35.0,
+          "threshold_pct": 30.0,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report",
+          "screening_context_thresholds": {
+            "NEW_ENTRY": 30.0,
+            "EXISTING_CONSTITUENT": 33.33,
+            "UNKNOWN_MEMBERSHIP": 30.0
+          }
+        },
+        {
+          "rule_id": "msci.receivables_and_cash_to_total_assets",
+          "screen": "receivables",
+          "numerator": "accounts_receivable_plus_cash",
+          "denominator": "total_assets",
+          "entry_buffer_pct": 46.0,
+          "financial_ratio_threshold_pct": 70.0,
+          "exit_buffer_pct": null,
+          "threshold_pct": 46.0,
+          "comparator": "<=",
+          "measurement_period": "latest_public_financial_report",
+          "screening_context_thresholds": {
+            "NEW_ENTRY": 46.0,
+            "EXISTING_CONSTITUENT": 70.0,
+            "UNKNOWN_MEMBERSHIP": 46.0
+          },
+          "notes": "May 2025: Entry Buffer 46%, Financial Ratio Threshold 70%, no Exit Buffer."
+        },
+        {
+          "rule_id": "msci.non_permissible_revenue",
+          "screen": "business_activity",
+          "numerator": "non_permissible_revenue",
+          "denominator": "total_revenue",
+          "threshold_pct": 5.0,
+          "comparator": "<",
+          "measurement_period": "latest_reporting_period",
+          "notes": "Business activity screen; requires explicit prohibited revenue evidence per MSCI Solutions BISR."
+        }
+      ]
+    },
+    {
+      "methodology_id": "msci_islamic_index_series",
+      "label": "MSCI Islamic Index Series",
       "version": "2024-10",
+      "active": false,
+      "archived": true,
+      "effective_date": "2024-10-01",
+      "implementation_review": "October 2024",
       "asset_scope": ["equity"],
       "source_reference": "MSCI Islamic Index Series Methodology (October 2024)",
+      "source_documents": [
+        {
+          "title": "MSCI Islamic Index Series Methodology (October 2024 archive)",
+          "url": "https://www.msci.com/indexes/documents/methodology/2_MSCI_Islamic_Index_Series_Methodology_20251211.pdf",
+          "published": "2024-10",
+          "notes": "Archived NABI encoding; receivables threshold was incorrectly flat at 33.33%."
+        }
+      ],
       "denominator_policy": "total_assets",
-      "notes": "Descriptive registry entry only; not calculated in NABI Scout 6B.1.",
+      "default_screening_context": "NEW_ENTRY",
+      "notes": "Archived NABI 2024-10 encoding for historical reproducibility only.",
       "financial_screen_complete_methodology": true,
       "rules": [
         {
@@ -37,7 +142,7 @@
           "threshold_pct": 33.33,
           "comparator": "<=",
           "measurement_period": "latest_public_financial_report",
-          "notes": "MSCI consultation documents note receivables threshold evolution; verify active version before calculation."
+          "notes": "Legacy flat threshold; superseded by 2025-05 entry/financial ratio tiers."
         },
         {
           "rule_id": "msci.non_permissible_revenue",
@@ -54,6 +159,9 @@
       "methodology_id": "sp_shariah",
       "label": "S&P Shariah Indices",
       "version": "2023-09",
+      "active": true,
+      "archived": false,
+      "effective_date": "2023-09-01",
       "asset_scope": ["equity"],
       "source_reference": "S&P Shariah Indices Methodology",
       "denominator_policy": "trailing_36_month_average_market_value_of_equity",
@@ -102,6 +210,9 @@
       "methodology_id": "djim",
       "label": "Dow Jones Islamic Market Indices",
       "version": "2019-05",
+      "active": true,
+      "archived": false,
+      "effective_date": "2019-05-01",
       "asset_scope": ["equity"],
       "source_reference": "Dow Jones Islamic Market Indices Methodology",
       "denominator_policy": "trailing_24_month_average_market_capitalization",
@@ -133,7 +244,7 @@
           "denominator": "trailing_24_month_average_market_capitalization",
           "threshold_pct": 33.0,
           "comparator": "<",
-          "measurement_period": "trailing_24_months"
+          "measurement_period": "trailing_36_months"
         },
         {
           "rule_id": "djim.non_permissible_revenue",
@@ -150,6 +261,8 @@
       "methodology_id": "ftse_yasaar",
       "label": "FTSE Yasaar Global Equity Shariah",
       "version": "ground_rules",
+      "active": true,
+      "archived": false,
       "asset_scope": ["equity"],
       "source_reference": "FTSE Yasaar Global Equity Shariah Index Series Ground Rules",
       "denominator_policy": "total_assets",
@@ -198,6 +311,8 @@
       "methodology_id": "aaoifi_std21",
       "label": "AAOIFI Shariah Standard No. 21",
       "version": "std21",
+      "active": true,
+      "archived": false,
       "asset_scope": ["equity"],
       "source_reference": "AAOIFI Shariah Standard No. 21 (equity screening excerpts)",
       "denominator_policy": "market_capitalization",

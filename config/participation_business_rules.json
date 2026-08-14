@@ -104,7 +104,7 @@
   },
   "methodologies": {
     "msci_islamic_index_series": {
-      "version": "2024-10",
+      "version": "2025-05",
       "business_screen_complete_methodology": true,
       "prohibited_categories": [
         "conventional_banking",

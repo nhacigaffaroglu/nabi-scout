@@ -71,8 +71,11 @@ class MockSECClient:
             raise self.extract_error
         return dict(self.financials)
 
+    def resolve_entity_metadata(self, payload, *, cik=None):
+        from services.sec_financial_client import SECFinancialClient
 
-class MethodologySelectionTests(unittest.TestCase):
+        metadata = SECFinancialClient.extract_entity_metadata(payload)
+        return metadata, (("metadata_source", "sec_company_facts"),)
     def test_default_methodology_from_registry(self) -> None:
         result = assess_equity_participation(
             "AAPL",

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
+from services.participation_message_normalization import (
+    merge_warning_messages,
+    normalize_warning_messages,
+)
 from services.company_report_participation_service import (
     CompanyReportParticipationView,
     build_company_report_participation,
@@ -86,7 +90,7 @@ def evaluate_research_eligibility_from_assessment(
             research_allowed=False,
             participation_status=status,
             reason_codes=(REASON_PARTICIPATION_ASSESSMENT_ERROR,),
-            limitations=tuple(result.errors),
+            limitations=normalize_warning_messages(result.errors),
             provenance=provenance,
         )
 
@@ -97,7 +101,7 @@ def evaluate_research_eligibility_from_assessment(
             research_allowed=True,
             participation_status=status,
             reason_codes=(REASON_PARTICIPATION_COMPLIANT,),
-            limitations=tuple(result.warnings),
+            limitations=normalize_warning_messages(result.warnings),
             provenance=provenance,
         )
 
@@ -108,27 +112,29 @@ def evaluate_research_eligibility_from_assessment(
             research_allowed=False,
             participation_status=status,
             reason_codes=(REASON_PARTICIPATION_NON_COMPLIANT,),
-            limitations=tuple(result.warnings),
+            limitations=normalize_warning_messages(result.warnings),
             provenance=provenance,
         )
 
     insufficient_reasons = _insufficient_evidence_reasons(result)
     if insufficient_reasons or not result.sec_available:
-        limitations = list(result.warnings)
-        if not result.sec_available:
-            limitations.append("SEC finansal verisi kullanılamadı.")
-        if result.missing_capabilities:
-            limitations.append(
+        limitations = merge_warning_messages(
+            result.warnings,
+            "SEC finansal verisi kullanılamadı." if not result.sec_available else None,
+            (
                 "Eksik kanıt alanları: "
                 + ", ".join(result.missing_capabilities[:4])
             )
+            if result.missing_capabilities
+            else None,
+        )
         return ResearchEligibilityResult(
             symbol=normalized,
             status=RESEARCH_STATUS_INSUFFICIENT_DATA,
             research_allowed=False,
             participation_status=status,
             reason_codes=(REASON_PARTICIPATION_INSUFFICIENT_EVIDENCE, *insufficient_reasons),
-            limitations=tuple(dict.fromkeys(limitations)),
+            limitations=limitations,
             provenance=provenance,
         )
 
@@ -139,7 +145,7 @@ def evaluate_research_eligibility_from_assessment(
             research_allowed=False,
             participation_status=status,
             reason_codes=(REASON_PARTICIPATION_UNVERIFIED,),
-            limitations=tuple(result.warnings),
+            limitations=normalize_warning_messages(result.warnings),
             provenance=provenance,
         )
 

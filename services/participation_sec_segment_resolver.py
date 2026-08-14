@@ -51,6 +51,11 @@ def _is_annual_entry(item: Mapping[str, Any]) -> bool:
     return days is not None and 300 <= days <= 430
 
 
+def _normalize_segment_key(label: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", str(label or "").strip().lower())
+    return " ".join(text.split())
+
+
 def _segment_label_from_entry(item: Mapping[str, Any]) -> Optional[str]:
     for key in ("segment", "dim", "axis", "member"):
         value = item.get(key)

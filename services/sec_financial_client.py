@@ -158,6 +158,7 @@ _IFRS_INTEREST_BEARING_SECURITIES_TAGS = [
 
 
 class SECFinancialClient:
+    SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
     BASE_URL = "https://data.sec.gov/api/xbrl/companyfacts"
 
     def __init__(
@@ -175,6 +176,87 @@ class SECFinancialClient:
             ),
             "Accept-Encoding": "gzip, deflate",
         })
+        self._submissions_cache: Dict[str, Dict[str, Any]] = {}
+
+    def company_submissions(self, cik: int | str) -> Dict[str, Any]:
+        cik_text = str(cik).strip().zfill(10)
+        cached = self._submissions_cache.get(cik_text)
+        if cached is not None:
+            return cached
+        try:
+            response = self.session.get(
+                self.SUBMISSIONS_URL.format(cik=cik_text),
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise SECFinancialError(
+                "SEC Submissions bağlantı hatası."
+            ) from exc
+
+        if response.status_code == 404:
+            raise SECFinancialError(
+                f"SEC Submissions bulunamadı: CIK {cik_text}"
+            )
+        if response.status_code != 200:
+            raise SECFinancialError(
+                f"SEC Submissions HTTP {response.status_code}."
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SECFinancialError(
+                "SEC Submissions geçerli JSON döndürmedi."
+            ) from exc
+        self._submissions_cache[cik_text] = payload
+        return payload
+
+    @staticmethod
+    def extract_entity_metadata_from_submissions(
+        payload: Dict[str, Any],
+    ) -> Dict[str, Optional[str]]:
+        sic = payload.get("sic")
+        sic_description = payload.get("sicDescription") or payload.get("sic_description")
+        return {
+            "sic_code": str(sic).strip() if sic not in (None, "") else None,
+            "sic_description": str(sic_description).strip()
+            if sic_description not in (None, "")
+            else None,
+            "entity_name": str(payload.get("name") or payload.get("entityName") or "").strip()
+            or None,
+        }
+
+    def resolve_entity_metadata(
+        self,
+        company_facts_payload: Dict[str, Any],
+        *,
+        cik: Optional[int | str] = None,
+    ) -> Tuple[Dict[str, Optional[str]], Tuple[Tuple[str, str], ...]]:
+        metadata = self.extract_entity_metadata(company_facts_payload)
+        evidence: list[tuple[str, str]] = [("metadata_source", "sec_company_facts")]
+        if metadata.get("sic_code"):
+            evidence.append(("sic_source", "sec_company_facts"))
+            return metadata, tuple(evidence)
+
+        if cik is None:
+            return metadata, tuple(evidence)
+
+        try:
+            submissions = self.company_submissions(cik)
+        except SECFinancialError:
+            return metadata, tuple(evidence)
+
+        submission_metadata = self.extract_entity_metadata_from_submissions(submissions)
+        if submission_metadata.get("sic_code"):
+            metadata = {
+                **metadata,
+                "sic_code": submission_metadata["sic_code"],
+                "sic_description": submission_metadata.get("sic_description")
+                or metadata.get("sic_description"),
+                "entity_name": metadata.get("entity_name")
+                or submission_metadata.get("entity_name"),
+            }
+            evidence.append(("sic_source", "sec_submissions"))
+        return metadata, tuple(evidence)
 
     def company_facts(self, cik: int | str) -> Dict[str, Any]:
         cik_text = str(cik).strip().zfill(10)

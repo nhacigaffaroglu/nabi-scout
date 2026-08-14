@@ -43,6 +43,10 @@ from services.participation_intelligence_contract import (
     RULE_OUTCOME_REVIEW_REQUIRED,
 )
 
+from services.participation_business_coverage import (
+    COVERAGE_NO_PROHIBITED_SUFFICIENT,
+    evaluate_business_activity_coverage,
+)
 from services.participation_pass_logic import RULE_TIER_REQUIRED, rule_tier_for
 
 SUPPORTED_COMPARATORS = frozenset({"<", "<=", ">", ">="})
@@ -467,6 +471,8 @@ def _sum_revenue_segments(
 def _evaluate_revenue_rule(
     rule: RevenueRuleDefinition,
     evidence: BusinessActivityEvidence,
+    *,
+    methodology_id: str,
 ) -> BusinessActivityRuleResult:
     if not evidence.revenue_segments:
         return BusinessActivityRuleResult(
@@ -477,7 +483,10 @@ def _evaluate_revenue_rule(
             threshold_pct=rule.threshold_pct,
             comparator=rule.comparator,
             confidence=CONFIDENCE_LOW,
-            warnings=("Explicit revenue segment evidence not provided.",),
+            warnings=(
+                "Explicit revenue segment evidence not provided; "
+                "coverage attestation cannot substitute for MSCI revenue attribution.",
+            ),
         )
 
     numerator_total, has_pct = _sum_revenue_segments(
@@ -678,7 +687,13 @@ def evaluate_business_activity(
         _evaluate_description_rule(rules, evidence, registry.shared_keyword_policy),
     ]
     for revenue_rule in rules.revenue_rules:
-        rule_results.append(_evaluate_revenue_rule(revenue_rule, evidence))
+        rule_results.append(
+            _evaluate_revenue_rule(
+                revenue_rule,
+                evidence,
+                methodology_id=methodology_id,
+            )
+        )
 
     overall_outcome = aggregate_business_outcomes(rule_results)
     business_rules_evaluated = any(

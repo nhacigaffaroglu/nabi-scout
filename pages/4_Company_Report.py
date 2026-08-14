@@ -21,6 +21,7 @@ from services.participation_assessment_persistence_service import (
 )
 from services.sec_contact_config import get_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
+from services.free_universe_client import FreeUniverseClient
 from components.company_intelligence_ui import render_company_intelligence_sections
 from components.company_report_ui import render_company_report_participation_section
 from components.investment_thesis_ui import (
@@ -57,6 +58,19 @@ from services.academy_ui import (
     render_metric_explanation,
 )
 from services.ui import prepare_protected_page
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_sec_company_lookup(contact_email: str) -> dict:
+    if not contact_email.strip():
+        return {}
+    rows = FreeUniverseClient(contact_email=contact_email.strip()).get_sec_companies()
+    return {
+        str(row.get("symbol") or "").strip().upper(): row
+        for row in rows
+        if row.get("symbol")
+    }
+
 
 client = prepare_protected_page("Company Report | NABI Scout", "📄")
 
@@ -395,11 +409,19 @@ try:
 except FMPError:
     pass
 
+participation_sec_email = get_sec_contact_email()
+participation_sec_lookup: dict = {}
+try:
+    participation_sec_lookup = load_sec_company_lookup(participation_sec_email)
+except Exception:
+    participation_sec_lookup = {}
+
 participation_view = build_company_report_participation(
     candidate,
-    sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
+    sec_client=SECFinancialClient(contact_email=participation_sec_email),
     fmp_client=participation_fmp_client,
     persistence_available=participation_history_result.available,
+    sec_ticker_lookup=participation_sec_lookup,
 )
 research_eligibility = evaluate_research_eligibility_from_participation_view(
     participation_view

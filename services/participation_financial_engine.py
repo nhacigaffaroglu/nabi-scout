@@ -28,6 +28,11 @@ from services.participation_methodology_registry import (
     MethodologyRuleDefinition,
     get_methodology,
 )
+from services.participation_screening_context import (
+    SCREENING_CONTEXT_EXISTING_CONSTITUENT,
+    SCREENING_CONTEXT_NEW_ENTRY,
+    resolve_threshold_context,
+)
 
 NumeratorResolver = Callable[[ParticipationFinancialInputs], Optional[Decimal]]
 
@@ -41,6 +46,24 @@ DENOMINATOR_REGISTRY_TO_FIELD: Dict[str, str] = {
 }
 
 SUPPORTED_COMPARATORS = frozenset({"<", "<=", ">", ">="})
+
+
+def resolve_rule_threshold_pct(
+    rule: MethodologyRuleDefinition,
+    *,
+    screening_context: str,
+) -> Optional[float]:
+    context = resolve_threshold_context(screening_context)
+    context_map = dict(rule.screening_context_thresholds)
+    if context in context_map:
+        return context_map[context]
+    if context == SCREENING_CONTEXT_EXISTING_CONSTITUENT:
+        if rule.financial_ratio_threshold_pct is not None:
+            return rule.financial_ratio_threshold_pct
+    else:
+        if rule.entry_buffer_pct is not None:
+            return rule.entry_buffer_pct
+    return rule.threshold_pct
 
 
 def _resolve_accounts_receivable_plus_cash(
@@ -144,11 +167,13 @@ def evaluate_ratio_rule(
     rule: MethodologyRuleDefinition,
     methodology: MethodologyDefinition,
     inputs: ParticipationFinancialInputs,
+    screening_context: str = SCREENING_CONTEXT_NEW_ENTRY,
 ) -> ParticipationRuleResult:
     warnings: List[str] = []
     if rule.notes:
         warnings.append(rule.notes)
 
+    resolved_threshold: Optional[float] = rule.threshold_pct
     provenance_by_field = field_provenance_map(inputs.field_provenance)
 
     def _metric_provenance() -> tuple[str, Tuple[str, ...]]:
@@ -162,13 +187,14 @@ def evaluate_ratio_rule(
     def _base_result(**kwargs) -> ParticipationRuleResult:
         metric_source, metric_source_fields = _metric_provenance()
         result_warnings = kwargs.pop("warnings", tuple(warnings))
+        kwargs.pop("threshold_pct", None)
         return ParticipationRuleResult(
             rule_id=rule.rule_id,
             methodology_id=methodology.methodology_id,
             methodology_version=methodology.version,
             numerator_definition=rule.numerator,
             denominator_definition=rule.denominator,
-            threshold_pct=rule.threshold_pct,
+            threshold_pct=kwargs.pop("applied_threshold_pct", resolved_threshold),
             comparator=rule.comparator,
             measurement_period=rule.measurement_period,
             source_dates=inputs.source_evidence,
@@ -199,7 +225,13 @@ def evaluate_ratio_rule(
             ),
         )
 
-    if rule.threshold_pct is None:
+    applicable_threshold = resolve_rule_threshold_pct(
+        rule,
+        screening_context=screening_context,
+    )
+    if applicable_threshold is not None:
+        resolved_threshold = applicable_threshold
+    if applicable_threshold is None:
         return _base_result(
             outcome=RULE_OUTCOME_REVIEW_REQUIRED,
             comparator=comparator,
@@ -226,7 +258,7 @@ def evaluate_ratio_rule(
         )
 
     ratio_pct = (numerator / denominator) * Decimal("100")
-    threshold_pct = Decimal(str(rule.threshold_pct))
+    threshold_pct = Decimal(str(applicable_threshold))
     outcome = compare_ratio_to_threshold(ratio_pct, threshold_pct, comparator)
 
     return _base_result(
@@ -234,6 +266,7 @@ def evaluate_ratio_rule(
         numerator_raw_value=float(numerator),
         denominator_raw_value=float(denominator),
         ratio_pct=float(ratio_pct),
+        applied_threshold_pct=applicable_threshold,
     )
 
 
@@ -280,13 +313,21 @@ def _methodology_complete_from_evaluation(
 def evaluate_financial_rules(
     methodology_id: str,
     inputs: ParticipationFinancialInputs,
+    *,
+    screening_context: str = SCREENING_CONTEXT_NEW_ENTRY,
+    methodology_version: Optional[str] = None,
 ) -> ParticipationFinancialScreenResult:
-    methodology = get_methodology(methodology_id)
+    methodology = get_methodology(methodology_id, version=methodology_version)
     if methodology is None:
         raise ValueError(f"Unknown methodology_id: {methodology_id}")
 
     rule_results = tuple(
-        evaluate_ratio_rule(rule=rule, methodology=methodology, inputs=inputs)
+        evaluate_ratio_rule(
+            rule=rule,
+            methodology=methodology,
+            inputs=inputs,
+            screening_context=screening_context,
+        )
         for rule in methodology.rules
     )
     overall_outcome = aggregate_rule_outcomes(rule_results)

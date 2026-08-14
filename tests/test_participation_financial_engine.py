@@ -175,12 +175,28 @@ class ThresholdBoundaryTests(unittest.TestCase):
 
     def test_msci_debt_rule_exact_boundary(self) -> None:
         inputs = sample_inputs(total_debt=33.33, total_assets=100.0)
-        result = evaluate_financial_rules("msci_islamic_index_series", inputs)
+        new_entry = evaluate_financial_rules(
+            "msci_islamic_index_series",
+            inputs,
+            screening_context="NEW_ENTRY",
+        )
         debt_rule = next(
-            rule for rule in result.rule_results if "total_debt" in rule.rule_id
+            rule for rule in new_entry.rule_results if "total_debt" in rule.rule_id
         )
         self.assertAlmostEqual(debt_rule.ratio_pct or 0.0, 33.33, places=6)
-        self.assertEqual(debt_rule.outcome, RULE_OUTCOME_PASS)
+        self.assertEqual(debt_rule.threshold_pct, 30.0)
+        self.assertEqual(debt_rule.outcome, RULE_OUTCOME_FAIL)
+
+        existing = evaluate_financial_rules(
+            "msci_islamic_index_series",
+            inputs,
+            screening_context="EXISTING_CONSTITUENT",
+        )
+        existing_debt = next(
+            rule for rule in existing.rule_results if "total_debt" in rule.rule_id
+        )
+        self.assertEqual(existing_debt.threshold_pct, 33.33)
+        self.assertEqual(existing_debt.outcome, RULE_OUTCOME_PASS)
 
 
 class DenominatorIsolationTests(unittest.TestCase):

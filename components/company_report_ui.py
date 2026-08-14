@@ -13,6 +13,8 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
+from services.participation_message_normalization import merge_warning_messages
+from services.participation_screening_context import screening_context_label_tr
 from services.ui_formatters import format_datetime_tr
 
 
@@ -102,6 +104,16 @@ def render_company_report_participation_section(
         )
         if diagnostics or result.participation_provider_calls or view.missing_capabilities:
             with st.expander("Teknik katılım kanıt ayrıntıları"):
+                if result.screening_context:
+                    st.caption(
+                        "Tarama bağlamı: "
+                        + screening_context_label_tr(result.screening_context)
+                    )
+                methodology = result.participation_assessment
+                if methodology.methodology_version:
+                    st.caption(
+                        f"Metodoloji sürümü: {methodology.methodology_version}"
+                    )
                 if result.participation_provider_calls:
                     st.caption(
                         "Sağlayıcı çağrıları (katılım): "
@@ -130,7 +142,7 @@ def render_company_report_participation_section(
                 for item in view.missing_capabilities:
                     st.caption(f"{item}: {translate_missing_capability(item)}")
 
-    combined_warnings = tuple(dict.fromkeys((*view.warnings, *assessment.warnings)))
+    combined_warnings = merge_warning_messages(view.warnings, assessment.warnings)
     if combined_warnings:
         st.markdown("**Uyarılar**")
         for warning in combined_warnings[:8]:

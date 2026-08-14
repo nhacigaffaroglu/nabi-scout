@@ -190,10 +190,8 @@ class CompanyReportPageTests(unittest.TestCase):
             source = handle.read()
         self.assertNotIn("SECFinancialClient()", source)
         self.assertIn("get_sec_contact_email()", source)
-        self.assertIn(
-            "SECFinancialClient(contact_email=get_sec_contact_email())",
-            source,
-        )
+        self.assertIn("SECFinancialClient(contact_email=", source)
+        self.assertIn("sec_ticker_lookup=", source)
 
     def test_participation_after_decision_not_in_nabi_metrics(self) -> None:
         with open("pages/4_Company_Report.py", encoding="utf-8") as handle:

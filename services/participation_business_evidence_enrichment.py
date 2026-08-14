@@ -54,7 +54,8 @@ def enrich_business_activity_evidence(
         if sec_sic:
             sic_code = sec_sic
             evidence_refs.append(("sic_code", sec_sic))
-            source = "sec_entity_metadata+candidate_record"
+            sic_source = sec_metadata.get("sic_source") or "sec_entity_metadata"
+            source = f"{sic_source}+candidate_record"
         if sec_sic_desc:
             sic_description = sec_sic_desc
             evidence_refs.append(("sic_description", sec_sic_desc))
@@ -117,6 +118,8 @@ def derive_non_permissible_revenue_amount(
     revenue_segments: Sequence[BusinessRevenueEvidence],
     *,
     numerator_categories: Sequence[str] = ("non_permissible",),
+    methodology_id: Optional[str] = None,
+    business_evidence: Optional[BusinessActivityEvidence] = None,
 ) -> Tuple[Optional[float], Tuple[str, ...]]:
     if total_revenue is None or total_revenue <= 0:
         return None, ("Toplam gelir kanıtı olmadan yasaklı gelir tutarı türetilmedi.",)
@@ -129,27 +132,34 @@ def derive_non_permissible_revenue_amount(
             continue
         matched_segments.append(segment)
 
-    if not matched_segments:
-        return None, ("Yasaklı gelir segment kanıtı sağlanmadı.",)
+    if matched_segments:
+        total_pct = 0.0
+        has_pct = False
+        absolute_total = 0.0
+        has_absolute = False
+        for segment in matched_segments:
+            if segment.revenue_pct is not None:
+                has_pct = True
+                total_pct += float(segment.revenue_pct)
+            if segment.revenue_value is not None:
+                has_absolute = True
+                absolute_total += float(segment.revenue_value)
 
-    total_pct = 0.0
-    has_pct = False
-    absolute_total = 0.0
-    has_absolute = False
-    for segment in matched_segments:
-        if segment.revenue_pct is not None:
-            has_pct = True
-            total_pct += float(segment.revenue_pct)
-        if segment.revenue_value is not None:
-            has_absolute = True
-            absolute_total += float(segment.revenue_value)
-
-    if has_absolute:
-        return absolute_total, ()
-    if has_pct:
-        return total_revenue * (total_pct / 100.0), (
-            "Yasaklı gelir tutarı segment yüzdesi × toplam gelirden türetildi.",
+        if has_absolute and absolute_total > 0:
+            return absolute_total, ()
+        if has_pct or (has_absolute and absolute_total == 0):
+            amount = absolute_total if has_absolute and not has_pct else total_revenue * (total_pct / 100.0)
+            warnings: Tuple[str, ...] = ()
+            if has_pct and not has_absolute:
+                warnings = (
+                    "Yasaklı gelir tutarı segment yüzdesi × toplam gelirden türetildi.",
+                )
+            return amount, warnings
+        return None, (
+            "Segment kanıtında güvenilir yüzde veya tutar bulunamadı.",
         )
+
     return None, (
-        "Segment kanıtında güvenilir yüzde veya tutar bulunamadı.",
+        "Yasaklı gelir segment kanıtı sağlanmadı; "
+        "MSCI metodolojisi açık gelir atfı gerektirir.",
     )

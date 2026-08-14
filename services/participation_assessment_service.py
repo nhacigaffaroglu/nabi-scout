@@ -26,6 +26,7 @@ from services.participation_business_evidence_enrichment import (
 )
 from services.participation_business_engine import evaluate_business_activity
 from services.participation_methodology_capabilities import blocking_missing_capabilities
+from services.participation_message_normalization import merge_warning_messages
 from services.participation_business_rules_registry import get_methodology_business_rules
 from services.participation_sec_segment_resolver import merge_revenue_segment_sources
 from services.participation_completeness import build_assessment_completeness
@@ -38,6 +39,11 @@ from services.participation_financial_contract import (
     ParticipationFinancialScreenResult,
 )
 from services.participation_financial_engine import evaluate_financial_rules
+from services.participation_screening_context import (
+    DEFAULT_EQUITY_SCREENING_CONTEXT,
+    normalize_screening_context,
+    screening_context_label_tr,
+)
 from services.participation_intelligence_contract import (
     ASSET_KIND_EQUITY,
     CONFIDENCE_LOW,
@@ -89,12 +95,14 @@ class ParticipationAssessmentResult:
     missing_capabilities: Tuple[str, ...] = DEFAULT_MISSING_CAPABILITIES
     assessment_completeness: Any = None
     participation_provider_calls: Dict[str, int] = field(default_factory=dict)
+    screening_context: str = DEFAULT_EQUITY_SCREENING_CONTEXT
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "symbol": self.symbol,
             "methodology_id": self.methodology_id,
             "resolved_methodology_version": self.resolved_methodology_version,
+            "screening_context": self.screening_context,
             "participation_assessment": self.participation_assessment.to_dict(),
             "warnings": list(self.warnings),
             "errors": list(self.errors),
@@ -241,9 +249,13 @@ def assess_equity_participation(
     sec_financials: Optional[dict[str, Any]] = None,
     fmp_client: Any = None,
     persistence_available: bool = False,
+    screening_context: Optional[str] = None,
 ) -> ParticipationAssessmentResult:
     normalized_symbol = _normalize_symbol(symbol)
     normalized_cik = _normalize_cik(cik)
+    resolved_screening_context = normalize_screening_context(
+        screening_context or DEFAULT_EQUITY_SCREENING_CONTEXT
+    )
     resolved_methodology_id, methodology_errors = _resolve_methodology_id(methodology_id)
 
     if resolved_methodology_id is None:
@@ -319,6 +331,8 @@ def assess_equity_participation(
     evidence_bundle = load_participation_evidence_bundle(
         normalized_symbol,
         fmp_client=fmp_client,
+        sec_client=sec_client,
+        cik=normalized_cik,
         sec_company_facts_payload=sec_company_facts_payload,
         sec_financials=sec_financials_payload,
         prohibited_categories=prohibited_categories,
@@ -357,6 +371,8 @@ def assess_equity_participation(
     non_permissible_revenue, revenue_warnings = derive_non_permissible_revenue_amount(
         financial_inputs.total_revenue,
         business_evidence.revenue_segments,
+        methodology_id=resolved_methodology_id,
+        business_evidence=business_evidence,
     )
     profile_market_cap = None
     if evidence_bundle.fmp_profile:
@@ -379,6 +395,8 @@ def assess_equity_participation(
     financial_screen = evaluate_financial_rules(
         resolved_methodology_id,
         financial_inputs,
+        screening_context=resolved_screening_context,
+        methodology_version=resolved_version,
     )
     business_screen: BusinessActivityScreenResult | None = None
     if business_evidence is not None:
@@ -409,18 +427,14 @@ def assess_equity_participation(
         ),
     )
 
-    warnings = tuple(
-        dict.fromkeys(
-            (
-                *sec_warnings,
-                *input_resolution.warnings,
-                *evidence_warnings,
-                *revenue_warnings,
-                *financial_screen.warnings,
-                *(business_screen.warnings if business_screen is not None else ()),
-                *assessment.warnings,
-            )
-        )
+    warnings = merge_warning_messages(
+        sec_warnings,
+        input_resolution.warnings,
+        evidence_warnings,
+        revenue_warnings,
+        financial_screen.warnings,
+        business_screen.warnings if business_screen is not None else (),
+        assessment.warnings,
     )
 
     missing_capabilities = _missing_capabilities_for_result(
@@ -461,4 +475,5 @@ def assess_equity_participation(
         missing_capabilities=missing_capabilities,
         assessment_completeness=completeness,
         participation_provider_calls=provider_calls,
+        screening_context=resolved_screening_context,
     )

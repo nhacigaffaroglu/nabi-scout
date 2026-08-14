@@ -12,6 +12,14 @@ class MethodologyRegistryError(ValueError):
 
 
 @dataclass(frozen=True)
+class MethodologySourceDocument:
+    title: str
+    url: str
+    published: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class MethodologyRuleDefinition:
     rule_id: str
     screen: str
@@ -21,6 +29,10 @@ class MethodologyRuleDefinition:
     comparator: Optional[str]
     measurement_period: Optional[str]
     notes: Optional[str] = None
+    entry_buffer_pct: Optional[float] = None
+    financial_ratio_threshold_pct: Optional[float] = None
+    exit_buffer_pct: Optional[float] = None
+    screening_context_thresholds: Tuple[Tuple[str, float], ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -34,6 +46,12 @@ class MethodologyDefinition:
     notes: str
     financial_screen_complete_methodology: bool = False
     rules: Tuple[MethodologyRuleDefinition, ...] = field(default_factory=tuple)
+    active: bool = True
+    archived: bool = False
+    effective_date: Optional[str] = None
+    implementation_review: Optional[str] = None
+    default_screening_context: str = "NEW_ENTRY"
+    source_documents: Tuple[MethodologySourceDocument, ...] = field(default_factory=tuple)
 
 
 _REGISTRY_PATH = (
@@ -44,8 +62,36 @@ _REGISTRY_PATH = (
 )
 
 
+def _parse_source_documents(raw_items: Any) -> Tuple[MethodologySourceDocument, ...]:
+    if not isinstance(raw_items, list):
+        return ()
+    documents: list[MethodologySourceDocument] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        documents.append(
+            MethodologySourceDocument(
+                title=title,
+                url=url,
+                published=str(item["published"]).strip() if item.get("published") else None,
+                notes=str(item["notes"]).strip() if item.get("notes") else None,
+            )
+        )
+    return tuple(documents)
+
+
 def _parse_rule(raw: Dict[str, Any]) -> MethodologyRuleDefinition:
     threshold = raw.get("threshold_pct")
+    context_thresholds = raw.get("screening_context_thresholds") or {}
+    parsed_context_thresholds = tuple(
+        (str(context), float(value))
+        for context, value in context_thresholds.items()
+        if value is not None
+    )
     return MethodologyRuleDefinition(
         rule_id=str(raw["rule_id"]),
         screen=str(raw.get("screen") or ""),
@@ -55,6 +101,18 @@ def _parse_rule(raw: Dict[str, Any]) -> MethodologyRuleDefinition:
         comparator=raw.get("comparator"),
         measurement_period=raw.get("measurement_period"),
         notes=raw.get("notes"),
+        entry_buffer_pct=(
+            float(raw["entry_buffer_pct"]) if raw.get("entry_buffer_pct") is not None else None
+        ),
+        financial_ratio_threshold_pct=(
+            float(raw["financial_ratio_threshold_pct"])
+            if raw.get("financial_ratio_threshold_pct") is not None
+            else None
+        ),
+        exit_buffer_pct=(
+            float(raw["exit_buffer_pct"]) if raw.get("exit_buffer_pct") is not None else None
+        ),
+        screening_context_thresholds=parsed_context_thresholds,
     )
 
 
@@ -72,6 +130,16 @@ def _parse_methodology(raw: Dict[str, Any]) -> MethodologyDefinition:
             raw.get("financial_screen_complete_methodology", False)
         ),
         rules=rules,
+        active=bool(raw.get("active", True)),
+        archived=bool(raw.get("archived", False)),
+        effective_date=str(raw["effective_date"]).strip() if raw.get("effective_date") else None,
+        implementation_review=(
+            str(raw["implementation_review"]).strip()
+            if raw.get("implementation_review")
+            else None
+        ),
+        default_screening_context=str(raw.get("default_screening_context") or "NEW_ENTRY"),
+        source_documents=_parse_source_documents(raw.get("source_documents")),
     )
 
 
@@ -100,9 +168,9 @@ def _load_methodologies() -> Tuple[MethodologyDefinition, ...]:
         raise MethodologyRegistryError("Methodology registry must list methodologies.")
 
     parsed = tuple(_parse_methodology(item) for item in raw_items)
-    ids = [item.methodology_id for item in parsed]
-    if len(set(ids)) != len(ids):
-        raise MethodologyRegistryError("Methodology IDs must be unique.")
+    keys = [(item.methodology_id, item.version) for item in parsed]
+    if len(set(keys)) != len(keys):
+        raise MethodologyRegistryError("Methodology id+version pairs must be unique.")
     for item in parsed:
         if not item.version:
             raise MethodologyRegistryError(
@@ -111,18 +179,65 @@ def _load_methodologies() -> Tuple[MethodologyDefinition, ...]:
     return parsed
 
 
-def list_methodologies() -> List[MethodologyDefinition]:
-    return list(_load_methodologies())
+def get_default_equity_methodology_version() -> str:
+    payload = _load_registry_payload()
+    default_version = str(payload.get("default_equity_methodology_version") or "").strip()
+    if not default_version:
+        raise MethodologyRegistryError("default_equity_methodology_version is not configured.")
+    return default_version
 
 
-def get_methodology(methodology_id: str) -> Optional[MethodologyDefinition]:
+def get_methodology(
+    methodology_id: str,
+    *,
+    version: Optional[str] = None,
+) -> Optional[MethodologyDefinition]:
     normalized = str(methodology_id or "").strip()
     if not normalized:
         return None
+    if version is not None:
+        target_version = str(version).strip()
+        for item in _load_methodologies():
+            if item.methodology_id == normalized and item.version == target_version:
+                return item
+        return None
+
+    payload = _load_registry_payload()
+    default_id = str(payload.get("default_equity_methodology_id") or "").strip()
+    if normalized == default_id:
+        target_version = get_default_equity_methodology_version()
+        for item in _load_methodologies():
+            if item.methodology_id == normalized and item.version == target_version:
+                return item
+        return None
+
+    active_matches = [
+        item
+        for item in _load_methodologies()
+        if item.methodology_id == normalized and item.active
+    ]
+    if len(active_matches) == 1:
+        return active_matches[0]
+    if active_matches:
+        return active_matches[0]
     for item in _load_methodologies():
         if item.methodology_id == normalized:
             return item
     return None
+
+
+def list_methodologies(*, include_archived: bool = False) -> List[MethodologyDefinition]:
+    items = list(_load_methodologies())
+    if include_archived:
+        return items
+    return [item for item in items if item.active and not item.archived]
+
+
+def list_methodology_versions(methodology_id: str) -> Tuple[MethodologyDefinition, ...]:
+    normalized = str(methodology_id or "").strip()
+    return tuple(
+        item for item in _load_methodologies() if item.methodology_id == normalized
+    )
 
 
 def get_default_equity_methodology_id() -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping, Optional, Tuple
 
 from services.participation_assessment_service import (
@@ -10,6 +10,8 @@ from services.participation_assessment_service import (
 from services.participation_business_evidence_resolver import (
     build_business_activity_evidence_from_candidate,
 )
+from services.participation_cik_resolver import resolve_participation_cik
+from services.participation_message_normalization import merge_warning_messages
 from services.participation_completeness import (
     build_assessment_completeness,
     translate_missing_capability,
@@ -104,6 +106,7 @@ def build_company_report_participation(
     sec_financials: Optional[dict[str, Any]] = None,
     fmp_client: Any = None,
     persistence_available: bool = False,
+    sec_ticker_lookup: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> CompanyReportParticipationView:
     symbol = str(candidate.get("symbol") or "").strip().upper()
     if not symbol:
@@ -114,18 +117,32 @@ def build_company_report_participation(
         )
 
     try:
+        cik_resolution = resolve_participation_cik(
+            symbol,
+            candidate_cik=candidate.get("cik"),
+            fmp_client=fmp_client,
+            sec_ticker_lookup=sec_ticker_lookup,
+        )
         business_evidence = build_business_activity_evidence_from_candidate(candidate)
         assessment_result = assess_equity_participation(
             symbol,
             methodology_id=methodology_id,
             sec_client=sec_client,
-            cik=candidate.get("cik"),
+            cik=cik_resolution.cik,
             market_capitalization=candidate.get("market_cap"),
             business_evidence=business_evidence,
             sec_financials=sec_financials,
             fmp_client=fmp_client,
             persistence_available=persistence_available,
         )
+        if cik_resolution.warnings:
+            assessment_result = replace(
+                assessment_result,
+                warnings=merge_warning_messages(
+                    cik_resolution.warnings,
+                    assessment_result.warnings,
+                ),
+            )
     except (TypeError, ValueError) as exc:
         return CompanyReportParticipationView(
             symbol=symbol,

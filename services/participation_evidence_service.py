@@ -37,6 +37,8 @@ def load_participation_evidence_bundle(
     symbol: str,
     *,
     fmp_client: Any = None,
+    sec_client: Any = None,
+    cik: Optional[int | str] = None,
     sec_company_facts_payload: Optional[Mapping[str, Any]] = None,
     sec_financials: Optional[Mapping[str, Any]] = None,
     prohibited_categories: Sequence[str] = (),
@@ -51,9 +53,20 @@ def load_participation_evidence_bundle(
     if sec_company_facts_payload:
         from services.sec_financial_client import SECFinancialClient
 
-        sec_metadata = SECFinancialClient.extract_entity_metadata(
-            dict(sec_company_facts_payload)
-        )
+        if sec_client is not None and cik is not None:
+            sec_metadata, metadata_evidence = sec_client.resolve_entity_metadata(
+                dict(sec_company_facts_payload),
+                cik=cik,
+            )
+            for key, value in metadata_evidence:
+                if key == "sic_source":
+                    sec_metadata = {**sec_metadata, "sic_source": value}
+            if any(key == "sic_source" and value == "sec_submissions" for key, value in metadata_evidence):
+                calls["sec_submissions"] = calls.get("sec_submissions", 0) + 1
+        else:
+            sec_metadata = SECFinancialClient.extract_entity_metadata(
+                dict(sec_company_facts_payload)
+            )
         raw_segments = extract_revenue_segments_from_sec(
             sec_company_facts_payload,
             sec_financials=sec_financials,
