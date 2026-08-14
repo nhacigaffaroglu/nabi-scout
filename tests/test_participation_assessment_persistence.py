@@ -348,7 +348,7 @@ class CompanyReportPersistenceIntegrationTests(unittest.TestCase):
     def test_failed_save_does_not_rerun(self) -> None:
         with open("pages/4_Company_Report.py", encoding="utf-8") as handle:
             source = handle.read()
-        save_block = source.split("if save_clicked:")[1]
+        save_block = source.split("if save_clicked:")[1].split("if company_intel_view is not None:")[0]
         self.assertIn("if save_result.saved or save_result.skipped_duplicate:", save_block)
         self.assertNotIn(
             "persistence_failed",

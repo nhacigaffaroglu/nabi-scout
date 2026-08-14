@@ -23,6 +23,16 @@ from services.sec_contact_config import get_sec_contact_email
 from services.sec_financial_client import SECFinancialClient
 from components.company_intelligence_ui import render_company_intelligence_sections
 from components.company_report_ui import render_company_report_participation_section
+from components.investment_thesis_ui import (
+    render_investment_thesis_section,
+    render_investment_thesis_technical_details,
+)
+from repositories.investment_thesis_repository import InvestmentThesisRepository
+from services.investment_thesis_persistence_service import (
+    fetch_investment_thesis_history,
+    save_investment_thesis_snapshot,
+)
+from services.investment_thesis_service import InvestmentThesisService
 from services.company_intelligence_core_service import CompanyIntelligenceCoreService
 from services.fmp_client import FMPClient, FMPError
 from services.research_workflow_service import (
@@ -421,6 +431,60 @@ if company_intel_view is not None:
 elif company_intel_error:
     st.info(f"Şirket istihbarat katmanı şu anda kullanılamıyor: {company_intel_error}")
 
+investment_thesis_view = None
+thesis_history_result = None
+if company_intel_view is not None:
+    thesis_repo = InvestmentThesisRepository(client)
+    thesis_history_result = fetch_investment_thesis_history(
+        thesis_repo,
+        participation_symbol,
+        limit=5,
+    )
+    previous_snapshot = (
+        thesis_history_result.history[0]
+        if thesis_history_result.available and thesis_history_result.history
+        else None
+    )
+    participation_context = None
+    if participation_view.available and participation_view.result is not None:
+        assessment = participation_view.result.participation_assessment
+        participation_context = (
+            f"Katılım durumu: {assessment.status} · "
+            f"Güven: {assessment.confidence}"
+        )
+    investment_thesis_view = InvestmentThesisService().build_view(
+        company_intel_view,
+        candidate=candidate,
+        participation_context=participation_context,
+        previous_snapshot=previous_snapshot,
+    )
+    thesis_save_message_key = f"thesis_save_message_{participation_symbol}"
+    thesis_save_skipped_key = f"thesis_save_skipped_{participation_symbol}"
+    thesis_save_failed_key = f"thesis_save_failed_{participation_symbol}"
+    thesis_save_clicked = render_investment_thesis_section(
+        investment_thesis_view,
+        history=thesis_history_result.history if thesis_history_result else (),
+        history_unavailable_message=(
+            thesis_history_result.message
+            if thesis_history_result and not thesis_history_result.available
+            else None
+        ),
+        save_message=st.session_state.get(thesis_save_message_key),
+        save_skipped_duplicate=st.session_state.get(thesis_save_skipped_key, False),
+        save_failed=st.session_state.get(thesis_save_failed_key, False),
+    )
+    render_investment_thesis_technical_details(investment_thesis_view)
+    if thesis_save_clicked:
+        thesis_save_result = save_investment_thesis_snapshot(
+            thesis_repo,
+            investment_thesis_view,
+        )
+        st.session_state[thesis_save_message_key] = thesis_save_result.message
+        st.session_state[thesis_save_skipped_key] = thesis_save_result.skipped_duplicate
+        st.session_state[thesis_save_failed_key] = thesis_save_result.persistence_failed
+        if thesis_save_result.saved or thesis_save_result.skipped_duplicate:
+            st.rerun()
+
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []
 if not history_events:
@@ -445,73 +509,22 @@ if timeline:
     for item in timeline[:8]:
         st.markdown(f"**{item['date_label']}** — {item['message']}")
 
-st.subheader("Yatırım tezi")
-st.info(
-    candidate.get("thesis_type")
-    or "Bu kayıt Investment Thesis Engine ile henüz analiz edilmedi."
-)
-st.write(
-    candidate.get("thesis_summary")
-    or "Yatırım tezi özeti bulunmuyor."
-)
-
-left, right = st.columns(2)
-
-with left:
-    st.markdown("### Tezi destekleyen noktalar")
+with st.expander("Scanner v1 tez özeti (eski)"):
+    st.info(
+        candidate.get("thesis_type")
+        or "Bu kayıt eski scanner tez motoru ile henüz analiz edilmedi."
+    )
+    st.write(candidate.get("thesis_summary") or "Yatırım tezi özeti bulunmuyor.")
     strengths = candidate.get("thesis_strengths") or []
+    concerns = candidate.get("thesis_concerns") or []
     if strengths:
+        st.markdown("**Destekleyen:**")
         for item in strengths:
             st.success(item)
-    else:
-        st.write("Belirgin güçlü tez unsuru bulunamadı.")
-
-with right:
-    st.markdown("### Tezi zayıflatan noktalar")
-    concerns = candidate.get("thesis_concerns") or []
     if concerns:
+        st.markdown("**Zayıflatan:**")
         for item in concerns:
             st.error(item)
-    else:
-        st.write("Belirgin tez riski bulunamadı.")
-
-st.subheader("Senaryo analizi")
-bull_col, bear_col = st.columns(2)
-
-with bull_col:
-    st.markdown("### Olumlu senaryo")
-    st.write(
-        candidate.get("thesis_bull_case")
-        or "Olumlu senaryo henüz üretilmedi."
-    )
-
-with bear_col:
-    st.markdown("### Olumsuz senaryo")
-    st.write(
-        candidate.get("thesis_bear_case")
-        or "Olumsuz senaryo henüz üretilmedi."
-    )
-
-st.subheader("Hangi koşullarda yeniden incelenmeli?")
-conditions = candidate.get("thesis_revisit_conditions") or []
-
-if conditions:
-    for item in conditions:
-        st.warning(item)
-else:
-    st.write(
-        candidate.get("thesis_revisit_trigger")
-        or (
-            "Bir sonraki finansal raporda büyüme, "
-            "nakit üretimi ve değerleme yeniden kontrol edilmeli."
-        )
-    )
-
-st.subheader("Değerleme görüşü")
-st.write(
-    candidate.get("thesis_valuation_view")
-    or "Değerleme görüşü üretilemedi."
-)
 
 st.subheader("Puanın kanıtları")
 factors = candidate.get("score_factors") or []
