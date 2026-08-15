@@ -180,9 +180,16 @@ class ValuationMetric:
     position: str
     meaningful: bool = True
     limitations: Tuple[str, ...] = ()
+    source_provider: Optional[str] = None
+    data_family: Optional[str] = None
+    fundamental_period_end: Optional[str] = None
+    market_data_as_of: Optional[str] = None
+    alignment_status: Optional[str] = None
+    confidence: Optional[str] = None
+    components: Tuple[Tuple[str, Any], ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload: Dict[str, Any] = {
             "code": self.code,
             "label": self.label,
             "current_value": self.current_value,
@@ -192,6 +199,21 @@ class ValuationMetric:
             "meaningful": self.meaningful,
             "limitations": list(self.limitations),
         }
+        if self.source_provider is not None:
+            payload["source_provider"] = self.source_provider
+        if self.data_family is not None:
+            payload["data_family"] = self.data_family
+        if self.fundamental_period_end is not None:
+            payload["fundamental_period_end"] = self.fundamental_period_end
+        if self.market_data_as_of is not None:
+            payload["market_data_as_of"] = self.market_data_as_of
+        if self.alignment_status is not None:
+            payload["alignment_status"] = self.alignment_status
+        if self.confidence is not None:
+            payload["confidence"] = self.confidence
+        if self.components:
+            payload["components"] = dict(self.components)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -343,6 +365,7 @@ class DataQualitySection:
     provider_failures: Tuple[str, ...]
     partial_sections: Tuple[str, ...]
     as_of: Optional[str]
+    provider_diagnostic_details: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -357,6 +380,7 @@ class DataQualitySection:
             "catalyst_data_available": self.catalyst_data_available,
             "warnings": list(self.warnings),
             "provider_failures": list(self.provider_failures),
+            "provider_diagnostic_details": list(self.provider_diagnostic_details),
             "partial_sections": list(self.partial_sections),
             "as_of": self.as_of,
         }

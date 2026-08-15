@@ -120,7 +120,49 @@ def derive_non_permissible_revenue_amount(
     numerator_categories: Sequence[str] = ("non_permissible",),
     methodology_id: Optional[str] = None,
     business_evidence: Optional[BusinessActivityEvidence] = None,
+    revenue_attribution: Optional[Any] = None,
 ) -> Tuple[Optional[float], Tuple[str, ...]]:
+    if revenue_attribution is not None:
+        from services.participation_revenue_attribution_contract import (
+            ATTRIBUTION_SUCCESS,
+            MAPPING_AMBIGUOUS,
+        )
+        from services.participation_revenue_granularity import (
+            can_conclude_zero_prohibited_revenue,
+        )
+
+        prohibited = revenue_attribution.prohibited_revenue
+        if prohibited is not None and prohibited > 0:
+            return float(prohibited), ()
+
+        if revenue_attribution.status != ATTRIBUTION_SUCCESS:
+            limitation = (
+                revenue_attribution.limitations[0]
+                if revenue_attribution.limitations
+                else "SEC 10-K inline XBRL gelir atfı güvenli biçimde hesaplanamadı."
+            )
+            return None, (limitation,)
+
+        if any(item.mapping_status == MAPPING_AMBIGUOUS for item in revenue_attribution.items):
+            return None, (
+                "One or more revenue categories are ambiguous under MSCI taxonomy.",
+            )
+
+        denominator = revenue_attribution.denominator_value or total_revenue
+        if denominator is None or denominator <= 0:
+            return None, ("Missing consolidated revenue denominator.",)
+
+        safe_zero = can_conclude_zero_prohibited_revenue(revenue_attribution)
+        if safe_zero.allowed:
+            return 0.0, ()
+
+        limitation = (
+            safe_zero.limitations[0]
+            if safe_zero.limitations
+            else "Gelir kırılımı yasaklı gelir için yeterli kanıt sağlamıyor."
+        )
+        return None, (limitation,)
+
     if total_revenue is None or total_revenue <= 0:
         return None, ("Toplam gelir kanıtı olmadan yasaklı gelir tutarı türetilmedi.",)
 

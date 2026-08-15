@@ -1246,6 +1246,11 @@ with tab_adviser:
                         intel_view = CompanyIntelligenceCoreService(fmp_client).build_view(
                             symbol,
                             research_eligibility=research_eligibility,
+                            sec_financials=(
+                                participation_view.result.sec_financials
+                                if participation_view.result is not None
+                                else None
+                            ),
                         )
                         unified_research = unified_research_service.build_context(
                             symbol=symbol,

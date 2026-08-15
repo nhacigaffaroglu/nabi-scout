@@ -1,0 +1,472 @@
+{
+  "version": "2025-05",
+  "methodology_id": "msci_islamic_index_series",
+  "source_reference": "MSCI Islamic Index Series Methodology (December 2025)",
+  "notes": "Deterministic revenue member mapping for MSCI 2025-05 business activity screen. AMBIGUOUS never contributes to automatic PASS.",
+  "prohibited_rules": [
+    {
+      "rule_id": "msci.rev.alcohol.direct",
+      "methodology_version": "2025-05",
+      "pattern": "alcohol",
+      "msci_category": "alcohol",
+      "mapping_status": "DIRECT",
+      "rationale": "Explicit alcohol revenue disclosure.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: alcohol"
+    },
+    {
+      "rule_id": "msci.rev.alcohol.beer",
+      "methodology_version": "2025-05",
+      "pattern": "beer",
+      "msci_category": "alcohol",
+      "mapping_status": "DIRECT",
+      "rationale": "Beer revenue line maps to alcohol.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: alcohol"
+    },
+    {
+      "rule_id": "msci.rev.alcohol.wine",
+      "methodology_version": "2025-05",
+      "pattern": "wine",
+      "msci_category": "alcohol",
+      "mapping_status": "DIRECT",
+      "rationale": "Wine revenue line maps to alcohol.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: alcohol"
+    },
+    {
+      "rule_id": "msci.rev.alcohol.spirits",
+      "methodology_version": "2025-05",
+      "pattern": "spirits",
+      "msci_category": "alcohol",
+      "mapping_status": "DIRECT",
+      "rationale": "Spirits revenue line maps to alcohol.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: alcohol"
+    },
+    {
+      "rule_id": "msci.rev.tobacco.direct",
+      "methodology_version": "2025-05",
+      "pattern": "tobacco",
+      "msci_category": "tobacco",
+      "mapping_status": "DIRECT",
+      "rationale": "Explicit tobacco revenue disclosure.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: tobacco"
+    },
+    {
+      "rule_id": "msci.rev.tobacco.cigarette",
+      "methodology_version": "2025-05",
+      "pattern": "cigarette",
+      "msci_category": "tobacco",
+      "mapping_status": "DIRECT",
+      "rationale": "Cigarette revenue maps to tobacco.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: tobacco"
+    },
+    {
+      "rule_id": "msci.rev.pork.direct",
+      "methodology_version": "2025-05",
+      "pattern": "pork",
+      "msci_category": "pork",
+      "mapping_status": "DIRECT",
+      "rationale": "Explicit pork product revenue.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: pork-related products"
+    },
+    {
+      "rule_id": "msci.rev.gambling.casino",
+      "methodology_version": "2025-05",
+      "pattern": "casino",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Casino operations are prohibited gambling activity.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.gambling.betting",
+      "methodology_version": "2025-05",
+      "pattern": "betting",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Betting operations are prohibited gambling activity.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.gambling.sportsbook",
+      "methodology_version": "2025-05",
+      "pattern": "sportsbook",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Sportsbook operations are prohibited gambling activity.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.gambling.lottery",
+      "methodology_version": "2025-05",
+      "pattern": "lottery",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Lottery operations are prohibited gambling activity.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.gambling.wagering",
+      "methodology_version": "2025-05",
+      "pattern": "wagering",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Wagering operations are prohibited gambling activity.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.gambling.operator",
+      "methodology_version": "2025-05",
+      "pattern": "gambling",
+      "msci_category": "gambling",
+      "mapping_status": "DIRECT",
+      "rationale": "Explicit gambling revenue disclosure.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: gambling"
+    },
+    {
+      "rule_id": "msci.rev.banking.interest_income",
+      "methodology_version": "2025-05",
+      "pattern": "interest income",
+      "msci_category": "conventional_banking",
+      "mapping_status": "DEFENSIBLE_WITH_RULE",
+      "rationale": "Interest income segment under conventional financial services screen.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: conventional financial services"
+    },
+    {
+      "rule_id": "msci.rev.banking.interest_revenue",
+      "methodology_version": "2025-05",
+      "pattern": "interest revenue",
+      "msci_category": "conventional_banking",
+      "mapping_status": "DEFENSIBLE_WITH_RULE",
+      "rationale": "Interest revenue segment under conventional financial services screen.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: conventional financial services"
+    },
+    {
+      "rule_id": "msci.rev.adult.direct",
+      "methodology_version": "2025-05",
+      "pattern": "adult entertainment",
+      "msci_category": "adult_entertainment",
+      "mapping_status": "DIRECT",
+      "rationale": "Explicit adult entertainment revenue.",
+      "source_authority": "MSCI Islamic Index Series prohibited activity: adult entertainment"
+    }
+  ],
+  "no_match_rules": [
+    {
+      "rule_id": "msci.rev.nomatch.software",
+      "methodology_version": "2025-05",
+      "pattern": "software",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Software revenue is not a MSCI 2025-05 prohibited category.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.cloud",
+      "methodology_version": "2025-05",
+      "pattern": "cloud",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Cloud services revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.subscription",
+      "methodology_version": "2025-05",
+      "pattern": "subscription",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Subscription revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.services",
+      "methodology_version": "2025-05",
+      "pattern": "services",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "General services revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.professional_services",
+      "methodology_version": "2025-05",
+      "pattern": "professional services",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Professional services revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.support",
+      "methodology_version": "2025-05",
+      "pattern": "support",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Support revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.advertising",
+      "methodology_version": "2025-05",
+      "pattern": "advertising",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Advertising revenue is not automatically prohibited under MSCI.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.family_of_apps",
+      "methodology_version": "2025-05",
+      "pattern": "family of apps",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Family of Apps segment is not a prohibited category.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.reality_labs",
+      "methodology_version": "2025-05",
+      "pattern": "reality labs",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Reality Labs segment is not a prohibited category.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.innovative_medicine",
+      "methodology_version": "2025-05",
+      "pattern": "innovative medicine",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Pharmaceutical segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.medtech",
+      "methodology_version": "2025-05",
+      "pattern": "medtech",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Medical technology segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.medical_devices",
+      "methodology_version": "2025-05",
+      "pattern": "medical devices",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Medical devices segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.gaming_hardware",
+      "methodology_version": "2025-05",
+      "pattern": "gaming",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Video game / graphics gaming revenue is not casino/betting gambling.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.compute",
+      "methodology_version": "2025-05",
+      "pattern": "compute",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Compute segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.networking",
+      "methodology_version": "2025-05",
+      "pattern": "networking",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Networking segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.graphics",
+      "methodology_version": "2025-05",
+      "pattern": "graphics",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Graphics segment is not prohibited gambling.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.aws",
+      "methodology_version": "2025-05",
+      "pattern": "amazon web services",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "AWS cloud revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.intelligent_cloud",
+      "methodology_version": "2025-05",
+      "pattern": "intelligent cloud",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Intelligent Cloud segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.productivity",
+      "methodology_version": "2025-05",
+      "pattern": "productivity",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Productivity segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.personal_computing",
+      "methodology_version": "2025-05",
+      "pattern": "personal computing",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Personal computing segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.more_personal_computing",
+      "methodology_version": "2025-05",
+      "pattern": "more personal computing",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "More Personal Computing segment is not prohibited gambling.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.iphone",
+      "methodology_version": "2025-05",
+      "pattern": "iphone",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "iPhone product revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.hardware",
+      "methodology_version": "2025-05",
+      "pattern": "hardware",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Hardware revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.licensing",
+      "methodology_version": "2025-05",
+      "pattern": "licensing",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Licensing revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.product",
+      "methodology_version": "2025-05",
+      "pattern": "product",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Product revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.medtech",
+      "methodology_version": "2025-05",
+      "pattern": "med tech",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Medical technology segment is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.americas",
+      "methodology_version": "2025-05",
+      "pattern": "americas",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Geographic revenue region is not a prohibited activity.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.europe",
+      "methodology_version": "2025-05",
+      "pattern": "europe",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Geographic revenue region is not a prohibited activity.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.asia_pacific",
+      "methodology_version": "2025-05",
+      "pattern": "asia pacific",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Geographic revenue region is not a prohibited activity.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.united_states",
+      "methodology_version": "2025-05",
+      "pattern": "united states",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Geographic revenue region is not a prohibited activity.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.pharmaceutical",
+      "methodology_version": "2025-05",
+      "pattern": "pharmaceutical",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Pharmaceutical product revenue is not prohibited under MSCI 2025-05.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.subscription_support",
+      "methodology_version": "2025-05",
+      "pattern": "subscription and support",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Subscription and support revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.professional_services_other",
+      "methodology_version": "2025-05",
+      "pattern": "professional services and other",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Professional services revenue is not prohibited.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    },
+    {
+      "rule_id": "msci.rev.nomatch.other",
+      "methodology_version": "2025-05",
+      "pattern": "other",
+      "msci_category": "",
+      "mapping_status": "NO_MATCH",
+      "rationale": "Residual other revenue line within complete partition.",
+      "source_authority": "MSCI Islamic Index Series business activity taxonomy"
+    }
+  ],
+  "ambiguous_patterns": [
+    {
+      "rule_id": "msci.rev.ambiguous.financial",
+      "pattern": "financial",
+      "rationale": "Financial segment label may include conventional banking; requires activity context."
+    },
+    {
+      "rule_id": "msci.rev.ambiguous.entertainment",
+      "pattern": "entertainment",
+      "rationale": "Entertainment label may span prohibited and permissible activities."
+    }
+  ]
+}

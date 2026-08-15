@@ -139,13 +139,14 @@ class FalsePositiveDescriptionTests(unittest.TestCase):
             {RULE_OUTCOME_REVIEW_REQUIRED, RULE_OUTCOME_INSUFFICIENT_DATA},
         )
 
-    def test_gaming_software_review_not_blind_fail(self) -> None:
+    def test_gaming_software_not_treated_as_gambling(self) -> None:
         result = evaluate_business_activity(
             "msci_islamic_index_series",
             evidence(business_description="Develops gaming software for mobile devices"),
         )
         desc_rule = next(r for r in result.rule_results if "description" in r.rule_id)
-        self.assertEqual(desc_rule.outcome, RULE_OUTCOME_REVIEW_REQUIRED)
+        self.assertNotEqual(desc_rule.outcome, RULE_OUTCOME_FAIL)
+        self.assertEqual(desc_rule.outcome, RULE_OUTCOME_INSUFFICIENT_DATA)
 
     def test_cyber_defense_not_weapons_fail(self) -> None:
         result = evaluate_business_activity(
@@ -158,6 +159,29 @@ class FalsePositiveDescriptionTests(unittest.TestCase):
 
 class RevenueEvidenceTests(unittest.TestCase):
     def test_revenue_threshold_below_pass(self) -> None:
+        result = evaluate_business_activity(
+            "msci_islamic_index_series",
+            evidence(
+                reported_total_revenue=1_000.0,
+                revenue_segments=(
+                    BusinessRevenueEvidence(
+                        category="no_match",
+                        segment_name="Subscription and support",
+                        revenue_value=950.0,
+                    ),
+                    BusinessRevenueEvidence(
+                        category="no_match",
+                        segment_name="Professional services",
+                        revenue_value=50.0,
+                    ),
+                ),
+            ),
+        )
+        revenue_rule = next(r for r in result.rule_results if "non_permissible_revenue" in r.rule_id)
+        self.assertEqual(revenue_rule.outcome, RULE_OUTCOME_PASS)
+        self.assertEqual(revenue_rule.ratio_pct, 0.0)
+
+    def test_revenue_threshold_below_pass_legacy(self) -> None:
         result = evaluate_business_activity(
             "msci_islamic_index_series",
             evidence(

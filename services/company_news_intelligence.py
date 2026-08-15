@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 from services.company_intelligence_constants import NEWS_MATERIALITY_RECENT_DAYS, PROVIDER_NAME
+from services.company_intelligence_earnings_calendar import build_earnings_catalysts
 from services.company_intelligence_contract import (
     CatalystItem,
     IntelligenceProvenance,
@@ -154,26 +155,16 @@ def build_news_intelligence(bundle: CompanyProviderBundle) -> NewsSection:
 def build_catalysts(bundle: CompanyProviderBundle, news_events: Tuple[NewsEvent, ...]) -> Tuple[CatalystItem, ...]:
     items: List[CatalystItem] = []
     seen: Set[str] = set()
-    for row in bundle.earnings_calendar or []:
-        date = row.get("date") or row.get("earningsDate")
-        if not date:
+
+    for catalyst in build_earnings_catalysts(
+        symbol=bundle.symbol,
+        calendar_rows=list(bundle.earnings_calendar or []),
+    ):
+        if catalyst.code in seen:
             continue
-        key = f"earnings-{date}"
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(
-            CatalystItem(
-                code=key,
-                catalyst_type="EARNINGS",
-                date=str(date),
-                description="Planlanan/bilinen kazanç açıklaması tarihi.",
-                source=PROVIDER_NAME,
-                confidence="HIGH",
-                status="UPCOMING",
-                related_symbols=(bundle.symbol,),
-            )
-        )
+        seen.add(catalyst.code)
+        items.append(catalyst)
+
     for event in news_events:
         if event.materiality not in {"MATERIAL", "THESIS_RELEVANT"}:
             continue

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from services.participation_business_contract import (
     BUSINESS_SCREEN_OUTCOME_FAIL,
@@ -473,6 +473,7 @@ def _evaluate_revenue_rule(
     evidence: BusinessActivityEvidence,
     *,
     methodology_id: str,
+    revenue_attribution: Optional[Any] = None,
 ) -> BusinessActivityRuleResult:
     if not evidence.revenue_segments:
         return BusinessActivityRuleResult(
@@ -494,16 +495,61 @@ def _evaluate_revenue_rule(
         rule.numerator_categories,
     )
     if numerator_total is None:
-        return BusinessActivityRuleResult(
-            rule_id=rule.rule_id,
-            category=rule.category,
-            outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
-            evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
-            threshold_pct=rule.threshold_pct,
-            comparator=rule.comparator,
-            confidence=CONFIDENCE_LOW,
-            warnings=("No explicit revenue values for prohibited categories.",),
-        )
+        if evidence.revenue_segments:
+            prohibited_found = any(
+                _segment_matches_categories(segment, rule.numerator_categories)
+                for segment in evidence.revenue_segments
+            )
+            ambiguous_found = any(
+                str(segment.category or "").lower() in {"unknown", "ambiguous"}
+                for segment in evidence.revenue_segments
+            )
+            if not prohibited_found and not ambiguous_found:
+                numerator_total = Decimal("0")
+            else:
+                return BusinessActivityRuleResult(
+                    rule_id=rule.rule_id,
+                    category=rule.category,
+                    outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+                    evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+                    threshold_pct=rule.threshold_pct,
+                    comparator=rule.comparator,
+                    confidence=CONFIDENCE_LOW,
+                    warnings=("No explicit revenue values for prohibited categories.",),
+                )
+        else:
+            return BusinessActivityRuleResult(
+                rule_id=rule.rule_id,
+                category=rule.category,
+                outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+                evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+                threshold_pct=rule.threshold_pct,
+                comparator=rule.comparator,
+                confidence=CONFIDENCE_LOW,
+                warnings=("No explicit revenue values for prohibited categories.",),
+            )
+
+    if revenue_attribution is not None and (revenue_attribution.prohibited_revenue or 0) > 0:
+        numerator_total = Decimal(str(revenue_attribution.prohibited_revenue))
+        has_pct = False
+
+    if numerator_total == Decimal("0") and revenue_attribution is not None:
+        from services.participation_revenue_granularity import can_conclude_zero_prohibited_revenue
+
+        safe_zero = can_conclude_zero_prohibited_revenue(revenue_attribution)
+        if not safe_zero.allowed:
+            return BusinessActivityRuleResult(
+                rule_id=rule.rule_id,
+                category=rule.category,
+                outcome=RULE_OUTCOME_INSUFFICIENT_DATA,
+                evidence_type=EVIDENCE_TYPE_REVENUE_SEGMENT,
+                threshold_pct=rule.threshold_pct,
+                comparator=rule.comparator,
+                confidence=CONFIDENCE_LOW,
+                warnings=tuple(safe_zero.limitations) or (
+                    "Gelir kırılımı yasaklı gelir için yeterli kanıt sağlamıyor.",
+                ),
+            )
 
     if has_pct:
         ratio_pct = numerator_total
@@ -671,6 +717,8 @@ def _methodology_complete_from_business_evaluation(
 def evaluate_business_activity(
     methodology_id: str,
     evidence: BusinessActivityEvidence,
+    *,
+    revenue_attribution: Optional[Any] = None,
 ) -> BusinessActivityScreenResult:
     rules = get_methodology_business_rules(methodology_id)
     if rules is None:
@@ -692,6 +740,7 @@ def evaluate_business_activity(
                 revenue_rule,
                 evidence,
                 methodology_id=methodology_id,
+                revenue_attribution=revenue_attribution,
             )
         )
 

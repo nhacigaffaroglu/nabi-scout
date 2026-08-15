@@ -17,7 +17,20 @@ from services.company_intelligence_data import (
 )
 from services.company_news_intelligence import build_catalysts, build_news_intelligence
 from services.company_peer_intelligence import build_peer_intelligence
-from services.company_valuation_intelligence import build_valuation_intelligence
+from services.company_valuation_intelligence import (
+    build_valuation_intelligence,
+    fmp_bundle_has_usable_valuation_ratios,
+    valuation_section_has_meaningful_metrics,
+)
+from services.company_intelligence_sec_valuation import (
+    SEC_HYBRID_VALUATION_FAMILY,
+    build_sec_hybrid_valuation,
+)
+from services.company_intelligence_provider_diagnostics import build_provider_diagnostics
+from services.company_intelligence_sec_trends import (
+    build_financial_trends_from_sec,
+    sec_annual_yoy_available,
+)
 from services.fmp_client import FMPClient, normalize_fmp_error_class
 from services.research_eligibility_contract import ResearchEligibilityResult
 from services.research_eligibility_service import require_research_allowed
@@ -124,11 +137,23 @@ def _build_data_quality(bundle: CompanyProviderBundle, view_parts) -> DataQualit
     if view_parts["earnings"] and view_parts["earnings"].expectations.expectations_available:
         earnings_expectations = True
 
+    valuation_section = view_parts["valuation"]
     historical_valuation = False
-    if view_parts["valuation"]:
+    sec_hybrid_valuation = False
+    if valuation_section:
         historical_valuation = any(
-            metric.historical_median is not None for metric in view_parts["valuation"].metrics
+            metric.historical_median is not None for metric in valuation_section.metrics
         )
+        sec_hybrid_valuation = (
+            valuation_section.provenance.data_family == SEC_HYBRID_VALUATION_FAMILY
+        )
+    has_meaningful_valuation = bool(
+        valuation_section
+        and any(
+            metric.meaningful and metric.current_value is not None
+            for metric in valuation_section.metrics
+        )
+    )
 
     yoy_available = False
     if bundle.income_quarterly:
@@ -148,13 +173,22 @@ def _build_data_quality(bundle: CompanyProviderBundle, view_parts) -> DataQualit
             failure.split(":", 1) if ":" in failure else (failure, failure)
         ]
     )
+    provider_diagnostic_details = tuple(
+        item.to_dict()
+        for item in build_provider_diagnostics(
+            bundle.failures,
+            recorded=tuple(bundle.provider_diagnostics),
+        )
+    )
 
     return DataQualitySection(
         company_profile_available=bool(bundle.profile),
-        financial_history_available=bool(bundle.income_quarterly),
+        financial_history_available=bool(bundle.income_quarterly or sec_annual_yoy_available(bundle.sec_financials)),
         quarterly_comparison_available=yoy_available,
         earnings_expectations_available=earnings_expectations,
-        valuation_available=bool(bundle.ratios_ttm or bundle.key_metrics_ttm),
+        valuation_available=bool(
+            bundle.ratios_ttm or bundle.key_metrics_ttm or has_meaningful_valuation
+        ),
         historical_valuation_available=historical_valuation,
         peer_data_available=bool(bundle.peers),
         news_available=bool(view_parts["news"] and view_parts["news"].events),
@@ -162,15 +196,22 @@ def _build_data_quality(bundle: CompanyProviderBundle, view_parts) -> DataQualit
         warnings=tuple(
             warning
             for warning in (
-                "Finansal geçmiş eksik." if not bundle.income_quarterly else None,
+                "Finansal geçmiş eksik." if not bundle.income_quarterly and not sec_annual_yoy_available(bundle.sec_financials) else None,
+                "FMP çeyreklik finansal verisi plan kapsamında değil; Finansal Eğilim SEC yıllık verisinden oluşturuldu."
+                if not bundle.income_quarterly and sec_annual_yoy_available(bundle.sec_financials)
+                else None,
                 "Beklenti verisi yok." if not earnings_expectations else None,
-                "Tarihsel değerleme yetersiz." if not historical_valuation else None,
+                "FMP değerleme endpoint'leri plan kapsamında değil; SEC yıllık finansallar + piyasa değeri hibrit değerleme kullanıldı."
+                if sec_hybrid_valuation
+                else None,
+                "Tarihsel değerleme yetersiz." if valuation_section and not historical_valuation else None,
                 "Rakip verisi yok." if not bundle.peers else None,
                 "Haber verisi yok." if not (view_parts["news"] and view_parts["news"].events) else None,
             )
             if warning
         ),
         provider_failures=normalized_failures,
+        provider_diagnostic_details=provider_diagnostic_details,
         partial_sections=tuple(partial),
         as_of=bundle.retrieved_at,
     )
@@ -187,13 +228,19 @@ class CompanyIntelligenceCoreService:
         *,
         research_eligibility: ResearchEligibilityResult,
         refresh: bool = False,
+        sec_financials: Optional[dict] = None,
     ) -> CompanyProviderBundle:
         require_research_allowed(research_eligibility, symbol=symbol)
         normalized = symbol.strip().upper()
-        if not refresh and normalized in self._bundle_cache:
-            return self._bundle_cache[normalized]
-        bundle = load_company_provider_bundle(self.fmp, normalized)
-        self._bundle_cache[normalized] = bundle
+        if refresh or normalized not in self._bundle_cache:
+            self._bundle_cache[normalized] = load_company_provider_bundle(
+                self.fmp,
+                normalized,
+                sec_financials=sec_financials,
+            )
+        bundle = self._bundle_cache[normalized]
+        if sec_financials:
+            bundle.sec_financials = dict(sec_financials)
         return bundle
 
     def build_view(
@@ -202,13 +249,31 @@ class CompanyIntelligenceCoreService:
         *,
         research_eligibility: ResearchEligibilityResult,
         refresh: bool = False,
+        sec_financials: Optional[dict] = None,
     ) -> CompanyIntelligenceView:
         require_research_allowed(research_eligibility, symbol=symbol)
-        bundle = self.load_bundle(symbol, research_eligibility=research_eligibility, refresh=refresh)
+        bundle = self.load_bundle(
+            symbol,
+            research_eligibility=research_eligibility,
+            refresh=refresh,
+            sec_financials=sec_financials,
+        )
         business = build_business_snapshot(bundle) if bundle.profile else None
         trends = build_financial_trends(bundle) if bundle.income_quarterly else None
+        if trends is None and bundle.sec_financials:
+            trends = build_financial_trends_from_sec(
+                bundle.sec_financials,
+                symbol=bundle.symbol,
+                retrieved_at=bundle.retrieved_at,
+            )
         earnings = build_earnings_intelligence(bundle) if bundle.income_quarterly else None
-        valuation = build_valuation_intelligence(bundle) if bundle.ratios_ttm else None
+        valuation = None
+        if fmp_bundle_has_usable_valuation_ratios(bundle):
+            valuation = build_valuation_intelligence(bundle)
+        if not valuation_section_has_meaningful_metrics(valuation):
+            hybrid_valuation = build_sec_hybrid_valuation(bundle)
+            if hybrid_valuation is not None:
+                valuation = hybrid_valuation
         peers = build_peer_intelligence(bundle) if bundle.peers or bundle.failures else None
         news = build_news_intelligence(bundle) if bundle.news or any(
             failure.startswith("stock_news") for failure in bundle.failures

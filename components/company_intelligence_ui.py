@@ -78,6 +78,13 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
     if valuation is None or not valuation.metrics:
         st.info("Değerleme verisi şu anda kullanılamıyor.")
     else:
+        is_hybrid = valuation.provenance.data_family == "sec_annual_market_hybrid"
+        if is_hybrid:
+            st.caption("Kaynak: SEC yıllık finansallar + piyasa verisi (FMP profil)")
+            if valuation.provenance.source_period:
+                st.caption(f"Finansal dönem: {valuation.provenance.source_period}")
+            if valuation.provenance.retrieved_at:
+                st.caption(f"Piyasa verisi: {str(valuation.provenance.retrieved_at)[:10]}")
         rows = []
         position_labels = {
             "BELOW_HISTORICAL_RANGE": "Tarihsel aralığın altında",
@@ -85,24 +92,44 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
             "NEAR_HISTORICAL_MEDIAN": "Tarihsel medyana yakın",
             "ABOVE_HISTORICAL_MEDIAN": "Tarihsel medyanın üstünde",
             "ABOVE_HISTORICAL_RANGE": "Tarihsel aralığın üstünde",
-            "INSUFFICIENT_DATA": "Yetersiz veri",
+            "INSUFFICIENT_DATA": "Tarihsel karşılaştırma yok",
         }
+        hybrid_metrics = []
         for metric in valuation.metrics:
             if not metric.meaningful and metric.current_value is None:
                 continue
-            rows.append(
-                {
-                    "Metrik": metric.label,
-                    "Güncel": _metric(metric.current_value),
-                    "Tarihsel Medyan": _metric(metric.historical_median),
-                    "Prim %": _metric(metric.premium_to_median_pct, "%"),
-                    "Bağlam": position_labels.get(metric.position, metric.position),
-                }
-            )
+            context = position_labels.get(metric.position, metric.position)
+            if metric.alignment_status and metric.position == "INSUFFICIENT_DATA":
+                context = "Hibrit yıllık oran"
+            row = {
+                "Metrik": metric.label,
+                "Güncel": _metric(metric.current_value),
+                "Tarihsel Medyan": _metric(metric.historical_median),
+                "Prim %": _metric(metric.premium_to_median_pct, "%"),
+                "Bağlam": context,
+            }
+            if metric.confidence:
+                row["Güven"] = metric.confidence
+            rows.append(row)
+            if is_hybrid and metric.limitations:
+                hybrid_metrics.append(metric)
         if rows:
             st.dataframe(rows, use_container_width=True, hide_index=True)
         else:
             st.info("Anlamlı değerleme metriği üretilemedi.")
+        if hybrid_metrics:
+            with st.expander("Değerleme kaynağı ve sınırlamalar"):
+                for metric in hybrid_metrics:
+                    st.markdown(f"**{metric.label}**")
+                    if metric.fundamental_period_end:
+                        st.caption(f"Finansal dönem: {metric.fundamental_period_end}")
+                    if metric.market_data_as_of:
+                        st.caption(f"Piyasa verisi: {metric.market_data_as_of}")
+                    for limitation in metric.limitations:
+                        st.caption(limitation)
+        for observation in valuation.observations:
+            for limitation in observation.limitations:
+                st.caption(limitation)
 
     st.subheader("Rakipler")
     peers = view.peers
@@ -152,7 +179,11 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
         st.info("Bilinen katalizör bulunamadı.")
     else:
         for item in view.catalysts[:8]:
-            st.markdown(f"- **{item.catalyst_type}** · {item.description}")
+            date_suffix = f" · {item.date}" if item.date else ""
+            confidence_suffix = f" · güven: {item.confidence}" if item.confidence else ""
+            st.markdown(
+                f"- **{item.catalyst_type}**{date_suffix}{confidence_suffix} · {item.description}"
+            )
 
     st.subheader("Risk Sinyalleri")
     if not view.factual_risks:
@@ -166,7 +197,16 @@ def render_company_intelligence_sections(view: CompanyIntelligenceView) -> None:
         with st.expander("Veri kalitesi"):
             for warning in quality.warnings:
                 st.caption(warning)
-            if quality.provider_failures:
+            diagnostic_messages = [
+                item.get("user_message_tr")
+                for item in (quality.provider_diagnostic_details or ())
+                if item.get("user_message_tr")
+            ]
+            if diagnostic_messages:
+                st.caption("Sağlayıcı tanılama:")
+                for message in diagnostic_messages[:8]:
+                    st.caption(f"• {message}")
+            elif quality.provider_failures:
                 st.caption(
                     "Sağlayıcı kısıtları: "
                     + ", ".join(sorted(set(quality.provider_failures))[:6])

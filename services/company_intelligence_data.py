@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.company_intelligence_constants import MAX_PEER_COUNT
+from services.company_intelligence_earnings_calendar import filter_earnings_calendar_for_symbol
+from services.company_intelligence_provider_diagnostics import (
+    ProviderDiagnostic,
+    diagnostic_from_fmp_error,
+)
 from services.fmp_client import FMPClient, FMPError
 
 
@@ -26,9 +31,11 @@ class CompanyProviderBundle:
     analyst_estimates: List[Dict[str, Any]] = field(default_factory=list)
     earnings_surprises: List[Dict[str, Any]] = field(default_factory=list)
     earnings_calendar: List[Dict[str, Any]] = field(default_factory=list)
+    sec_financials: Dict[str, Any] = field(default_factory=dict)
     peer_profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     peer_ratios_ttm: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     failures: List[str] = field(default_factory=list)
+    provider_diagnostics: List[ProviderDiagnostic] = field(default_factory=list)
     call_counts: Dict[str, int] = field(default_factory=dict)
     retrieved_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
@@ -41,15 +48,23 @@ def _safe_fetch(label: str, callback, bundle: CompanyProviderBundle) -> Any:
         return callback()
     except FMPError as exc:
         bundle.failures.append(f"{label}:{exc.error_class}")
+        bundle.provider_diagnostics.append(diagnostic_from_fmp_error(label, exc))
         return None
     except Exception as exc:
         bundle.failures.append(f"{label}:{exc.__class__.__name__}")
         return None
 
 
-def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProviderBundle:
+def load_company_provider_bundle(
+    fmp: FMPClient,
+    symbol: str,
+    *,
+    sec_financials: Optional[Dict[str, Any]] = None,
+) -> CompanyProviderBundle:
     normalized = symbol.strip().upper()
     bundle = CompanyProviderBundle(symbol=normalized)
+    if sec_financials:
+        bundle.sec_financials = dict(sec_financials)
 
     profile = _safe_fetch("profile", lambda: fmp.profile(normalized), bundle)
     if isinstance(profile, dict):
@@ -125,7 +140,12 @@ def load_company_provider_bundle(fmp: FMPClient, symbol: str) -> CompanyProvider
         bundle,
     )
     if isinstance(calendar, list):
-        bundle.earnings_calendar = calendar
+        filtered, stats = filter_earnings_calendar_for_symbol(calendar, normalized)
+        bundle.earnings_calendar = filtered
+        if stats["foreign_symbol_rows"]:
+            bundle.failures.append(
+                f"earnings_calendar:foreign_symbol_rows:{stats['foreign_symbol_rows']}"
+            )
 
     for peer_symbol in bundle.peers:
         peer_ratios = _safe_fetch(

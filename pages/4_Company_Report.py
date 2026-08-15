@@ -436,6 +436,11 @@ if research_eligibility.research_allowed and symbol != "—":
         company_intel_view = company_intel_service.build_view(
             str(symbol),
             research_eligibility=research_eligibility,
+            sec_financials=(
+                participation_view.result.sec_financials
+                if participation_view.result is not None
+                else None
+            ),
         )
     except FMPError as exc:
         company_intel_error = str(exc)

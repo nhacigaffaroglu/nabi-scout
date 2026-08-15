@@ -537,6 +537,27 @@ class SECFinancialClient:
 
         share_change_3y = self._change(shares, 3)
 
+        prior_period_end = revenue[1]["end"] if len(revenue) > 1 else None
+        prior_payload: dict[str, Any] = {}
+        if prior_period_end:
+            prior_payload = {
+                "comparison_period_end": prior_period_end,
+                "revenue_prior": self._value(revenue, 1),
+                "eps_prior": self._value(eps, 1),
+                "operating_income_prior": self._value(operating_income, 1),
+                "net_income_prior": self._value(net_income, 1),
+                "operating_cash_flow_prior": self._value(operating_cash, 1),
+                "capital_expenditure_prior": self._value(capex, 1),
+                "total_assets_prior": self._aligned_instant_value(assets, prior_period_end),
+                "cash_prior": self._aligned_instant_value(cash, prior_period_end),
+                "total_debt_prior": self._aligned_instant_value(debt, prior_period_end),
+                "gross_profit_prior": self._value(gross_profit, 1),
+            }
+            prior_ocf = prior_payload.get("operating_cash_flow_prior")
+            prior_capex = prior_payload.get("capital_expenditure_prior")
+            if prior_ocf is not None and prior_capex is not None:
+                prior_payload["free_cash_flow_prior"] = prior_ocf - abs(prior_capex)
+
         return {
             "revenue": revenue_latest,
             "revenue_growth_1y": self._growth(revenue, 1),
@@ -557,6 +578,7 @@ class SECFinancialClient:
                 revenue_latest,
             ),
             "operating_income": operating_income_latest,
+            "net_income": net_income_latest,
             "nopat": nopat,
             "invested_capital": invested_capital,
             "tax_rate": tax_rate,
@@ -597,6 +619,7 @@ class SECFinancialClient:
             "annual_periods_found": len(revenue),
             "financial_currency": currency,
             "financial_taxonomy": taxonomy,
+            **prior_payload,
         }
 
     def _resolve_facts(

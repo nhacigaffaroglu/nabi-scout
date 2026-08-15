@@ -18,6 +18,41 @@ from services.company_intelligence_contract import (
 from services.company_intelligence_data import CompanyProviderBundle
 from services.company_intelligence_utils import median_value, pct_change, safe_float
 
+_FMP_VALUATION_RATIO_KEYS = (
+    "priceToEarningsRatioTTM",
+    "priceToSalesRatioTTM",
+    "priceToBookRatioTTM",
+    "dividendYieldTTM",
+)
+_FMP_KEY_METRIC_VALUATION_KEYS = (
+    "enterpriseValueOverEBITDATTM",
+    "freeCashFlowYieldTTM",
+    "earningsYieldTTM",
+)
+
+
+def fmp_bundle_has_usable_valuation_ratios(bundle: CompanyProviderBundle) -> bool:
+    ratios = bundle.ratios_ttm or {}
+    metrics = bundle.key_metrics_ttm or {}
+    for key in _FMP_VALUATION_RATIO_KEYS:
+        if safe_float(ratios.get(key)) is not None:
+            return True
+    for key in _FMP_KEY_METRIC_VALUATION_KEYS:
+        if safe_float(metrics.get(key)) is not None:
+            return True
+    return False
+
+
+def valuation_section_has_meaningful_metrics(
+    section: Optional[ValuationSection],
+) -> bool:
+    if section is None:
+        return False
+    return any(
+        metric.meaningful and metric.current_value is not None
+        for metric in section.metrics
+    )
+
 
 def _valuation_position(
     current: Optional[float],

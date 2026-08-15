@@ -96,6 +96,8 @@ class ParticipationAssessmentResult:
     assessment_completeness: Any = None
     participation_provider_calls: Dict[str, int] = field(default_factory=dict)
     screening_context: str = DEFAULT_EQUITY_SCREENING_CONTEXT
+    revenue_attribution: Any = None
+    sec_financials: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -336,6 +338,8 @@ def assess_equity_participation(
         sec_company_facts_payload=sec_company_facts_payload,
         sec_financials=sec_financials_payload,
         prohibited_categories=prohibited_categories,
+        methodology_id=resolved_methodology_id or "msci_islamic_index_series",
+        methodology_version=resolved_version or "2025-05",
     )
     provider_calls = dict(evidence_bundle.provider_calls)
     evidence_warnings = list(evidence_bundle.warnings)
@@ -373,6 +377,7 @@ def assess_equity_participation(
         business_evidence.revenue_segments,
         methodology_id=resolved_methodology_id,
         business_evidence=business_evidence,
+        revenue_attribution=evidence_bundle.revenue_attribution,
     )
     profile_market_cap = None
     if evidence_bundle.fmp_profile:
@@ -403,6 +408,7 @@ def assess_equity_participation(
         business_screen = evaluate_business_activity(
             resolved_methodology_id,
             business_evidence,
+            revenue_attribution=evidence_bundle.revenue_attribution,
         )
 
     if business_screen is not None:
@@ -476,4 +482,6 @@ def assess_equity_participation(
         assessment_completeness=completeness,
         participation_provider_calls=provider_calls,
         screening_context=resolved_screening_context,
+        revenue_attribution=evidence_bundle.revenue_attribution,
+        sec_financials=sec_financials_payload or None,
     )

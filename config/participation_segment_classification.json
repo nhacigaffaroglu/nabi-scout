@@ -1,6 +1,6 @@
 {
-  "version": "2024-10",
-  "notes": "Deterministic segment label classification. UNKNOWN when ambiguous.",
+  "version": "2025-05",
+  "notes": "Deterministic segment label classification. UNKNOWN when ambiguous. Video-game gaming is not gambling.",
   "non_permissible_patterns": [
     { "pattern": "interest income", "category": "conventional_banking" },
     { "pattern": "interest revenue", "category": "conventional_banking" },
@@ -12,7 +12,10 @@
     { "pattern": "distilled", "category": "alcohol" },
     { "pattern": "gambling", "category": "gambling" },
     { "pattern": "casino", "category": "gambling" },
-    { "pattern": "gaming revenue", "category": "gambling" },
+    { "pattern": "betting", "category": "gambling" },
+    { "pattern": "sportsbook", "category": "gambling" },
+    { "pattern": "lottery", "category": "gambling" },
+    { "pattern": "wagering", "category": "gambling" },
     { "pattern": "tobacco", "category": "tobacco" },
     { "pattern": "cigarette", "category": "tobacco" },
     { "pattern": "pork", "category": "pork" },

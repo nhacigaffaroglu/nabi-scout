@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from services.participation_financial_contract import ParticipationFinancialInputs
 from services.participation_financial_provenance import FinancialFieldProvenance, SOURCE_FMP
+from services.company_intelligence_provider_diagnostics import format_fmp_exception_limitation
+from services.fmp_client import FMPError
 
 
 @dataclass(frozen=True)
@@ -97,9 +99,17 @@ def resolve_historical_market_cap_evidence(
             to_date=end_text,
         )
         calls["historical_price_eod_light"] = calls.get("historical_price_eod_light", 0) + 1
+    except FMPError as exc:
+        return HistoricalMarketCapEvidence(
+            limitations=(
+                format_fmp_exception_limitation("historical_price_eod_light", exc),
+            ),
+            source_evidence=tuple(evidence),
+            provider_calls=calls,
+        )
     except Exception as exc:
         return HistoricalMarketCapEvidence(
-            limitations=(f"Tarihsel fiyat verisi alınamadı: {exc.__class__.__name__}",),
+            limitations=(format_fmp_exception_limitation("historical_price_eod_light", exc),),
             source_evidence=tuple(evidence),
             provider_calls=calls,
         )

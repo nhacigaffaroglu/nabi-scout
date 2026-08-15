@@ -1,18 +1,29 @@
 import inspect
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from components.company_report_ui import render_company_report_participation_section
 from services.company_report_participation_service import (
+    CompanyReportParticipationView,
     build_company_report_participation,
     participation_status_is_final_uygun,
 )
 from services.participation_business_evidence_resolver import (
     build_business_activity_evidence_from_candidate,
 )
+from services.participation_assessment_service import ParticipationAssessmentResult
+from services.participation_completeness import ParticipationAssessmentCompleteness
 from services.participation_intelligence_contract import (
+    METHODOLOGY_COMPLETENESS_COMPLETE,
+    PARTICIPATION_SOURCE_METHODOLOGY,
     PARTICIPATION_STATUS_KONTROL_ET,
     PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
+    ParticipationAssessment,
+)
+from services.participation_screening_context import (
+    SCREENING_CONTEXT_NEW_ENTRY,
+    screening_context_label_tr,
 )
 from services.sec_financial_client import SECFinancialError
 
@@ -171,6 +182,73 @@ class DependencyFirewallTests(unittest.TestCase):
         source = inspect.getsource(module)
         self.assertIn("assess_equity_participation", source)
         self.assertNotIn("evaluate_financial_rules", source)
+
+
+class CompanyReportParticipationUiRenderTests(unittest.TestCase):
+    def test_imports_screening_context_label_helper(self) -> None:
+        with open("components/company_report_ui.py", encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn(
+            "from services.participation_screening_context import screening_context_label_tr",
+            source,
+        )
+
+    def test_technical_details_expander_renders_screening_context_label(self) -> None:
+        assessment = ParticipationAssessment(
+            symbol="CRM",
+            asset_kind="equity",
+            status=PARTICIPATION_STATUS_UYGUN,
+            source=PARTICIPATION_SOURCE_METHODOLOGY,
+            confidence="medium",
+            methodology_id="msci_islamic_index_series",
+            methodology_version="2025-05",
+            methodology_label="MSCI Islamic Index Series",
+            methodology_completeness=METHODOLOGY_COMPLETENESS_COMPLETE,
+        )
+        result = ParticipationAssessmentResult(
+            symbol="CRM",
+            methodology_id="msci_islamic_index_series",
+            resolved_methodology_version="2025-05",
+            participation_assessment=assessment,
+            assessment_completeness=ParticipationAssessmentCompleteness(
+                financial_rules_total=4,
+                financial_rules_evaluated=4,
+                business_rules_total=4,
+                business_rules_evaluated=4,
+                methodology_complete=True,
+                assessment_complete=True,
+                financial_methodology_complete=True,
+                business_methodology_complete=True,
+            ),
+            participation_provider_calls={"sec_inline_xbrl": 1},
+            screening_context=SCREENING_CONTEXT_NEW_ENTRY,
+            missing_capabilities=(),
+        )
+        view = CompanyReportParticipationView(
+            symbol="CRM",
+            available=True,
+            result=result,
+            financial_screen_summary="Genel sonuç: Geçti · 4/4 kural",
+            business_screen_summary="Genel sonuç: Geçti · 4/4 kural",
+        )
+
+        mock_st = MagicMock()
+        mock_st.columns.return_value = (MagicMock(), MagicMock())
+        expander = MagicMock()
+        expander.__enter__ = MagicMock(return_value=MagicMock())
+        expander.__exit__ = MagicMock(return_value=False)
+        mock_st.expander.return_value = expander
+        mock_st.button.return_value = False
+
+        with patch("components.company_report_ui.st", mock_st):
+            render_company_report_participation_section(view)
+
+        expected_label = screening_context_label_tr(SCREENING_CONTEXT_NEW_ENTRY)
+        caption_calls = [str(call.args[0]) for call in mock_st.caption.call_args_list]
+        self.assertTrue(
+            any("Tarama bağlamı:" in text and expected_label in text for text in caption_calls),
+            msg=f"expected screening context caption with {expected_label!r}, got {caption_calls}",
+        )
 
 
 class CompanyReportPageTests(unittest.TestCase):

@@ -1,0 +1,195 @@
+{
+  "version": "2025-05",
+  "notes": "Deterministic revenue-partition granularity and safe-zero policy for MSCI 2025-05.",
+  "granularity_levels": [
+    "ACTIVITY_SPECIFIC",
+    "PRODUCT_SERVICE_SPECIFIC",
+    "BUSINESS_LINE_SPECIFIC",
+    "BROAD_OPERATING_SEGMENT",
+    "GEOGRAPHIC",
+    "UNKNOWN"
+  ],
+  "safe_zero_eligible_granularities": [
+    "ACTIVITY_SPECIFIC",
+    "PRODUCT_SERVICE_SPECIFIC",
+    "BUSINESS_LINE_SPECIFIC"
+  ],
+  "axis_defaults": {
+    "StatementGeographicalAxis": "GEOGRAPHIC",
+    "StatementBusinessSegmentsAxis": "BROAD_OPERATING_SEGMENT",
+    "ProductOrServiceAxis": "PRODUCT_SERVICE_SPECIFIC",
+    "SubsegmentsAxis": "BROAD_OPERATING_SEGMENT",
+    "ConsolidationItemsAxis": "UNKNOWN"
+  },
+  "member_label_rules": [
+    {
+      "rule_id": "gran.geographic.north_america",
+      "pattern": "north america",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.international",
+      "pattern": "international",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.europe",
+      "pattern": "europe",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.asia",
+      "pattern": "asia pacific",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.americas",
+      "pattern": "americas",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.united_states",
+      "pattern": "united states",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.geographic.non_us",
+      "pattern": "non us",
+      "granularity": "GEOGRAPHIC"
+    },
+    {
+      "rule_id": "gran.broad.google_services",
+      "pattern": "google services",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.google_cloud",
+      "pattern": "google cloud",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.family_of_apps",
+      "pattern": "family of apps",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.reality_labs",
+      "pattern": "reality labs",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.intelligent_cloud",
+      "pattern": "intelligent cloud",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.productivity",
+      "pattern": "productivity and business processes",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.more_personal_computing",
+      "pattern": "more personal computing",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.compute_networking",
+      "pattern": "compute and networking",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.graphics_segment",
+      "pattern": "graphics segment",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.aws",
+      "pattern": "amazon web services",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.operating_segments",
+      "pattern": "operating segments",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.broad.all_other_segments",
+      "pattern": "all other segments",
+      "granularity": "BROAD_OPERATING_SEGMENT"
+    },
+    {
+      "rule_id": "gran.product.subscription_support",
+      "pattern": "subscription and support",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.product.professional_services_other",
+      "pattern": "professional services and other",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.product.subscription",
+      "pattern": "subscription",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.product.professional_services",
+      "pattern": "professional services",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.product.advertising",
+      "pattern": "advertising",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.product.licensing",
+      "pattern": "licensing",
+      "granularity": "PRODUCT_SERVICE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.business.innovative_medicine",
+      "pattern": "innovative medicine",
+      "granularity": "BUSINESS_LINE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.business.pharmaceutical_segment",
+      "pattern": "pharmaceutical",
+      "granularity": "BUSINESS_LINE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.business.medtech",
+      "pattern": "med tech",
+      "granularity": "BUSINESS_LINE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.business.medical_devices",
+      "pattern": "medical devices",
+      "granularity": "BUSINESS_LINE_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.activity.interest_income",
+      "pattern": "interest income",
+      "granularity": "ACTIVITY_SPECIFIC"
+    },
+    {
+      "rule_id": "gran.activity.casino",
+      "pattern": "casino",
+      "granularity": "ACTIVITY_SPECIFIC"
+    }
+  ],
+  "conservative_other_label_patterns": [
+    "all other",
+    "miscellaneous",
+    "unallocated",
+    "corporate and other",
+    "eliminations"
+  ],
+  "standalone_other_label_patterns": [
+    "^other$",
+    "^other revenue$",
+    "^all other$",
+    "^corporate$"
+  ],
+  "material_other_share_of_denominator": 0.05
+}

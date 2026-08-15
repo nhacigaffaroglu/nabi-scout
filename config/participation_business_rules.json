@@ -29,7 +29,8 @@
     "review_patterns": [
       { "pattern": "casino", "category": "gambling" },
       { "pattern": "gambling", "category": "gambling" },
-      { "pattern": "gaming software", "category": "gambling" },
+      { "pattern": "casino software", "category": "gambling" },
+      { "pattern": "betting platform", "category": "gambling" },
       { "pattern": "tobacco", "category": "tobacco" },
       { "pattern": "alcohol", "category": "alcohol" },
       { "pattern": "brewery", "category": "alcohol" },

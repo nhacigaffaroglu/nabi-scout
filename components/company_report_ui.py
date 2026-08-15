@@ -14,6 +14,10 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.participation_message_normalization import merge_warning_messages
+from services.participation_revenue_granularity import (
+    attribution_quality_label_tr,
+    granularity_label_tr,
+)
 from services.participation_screening_context import screening_context_label_tr
 from services.ui_formatters import format_datetime_tr
 
@@ -139,6 +143,39 @@ def render_company_report_participation_section(
                         st.caption(f"Kaynak: {row['source']}")
                         if row.get("source_fields"):
                             st.caption(f"Kaynak alanları: {row['source_fields']}")
+                attribution = getattr(result, "revenue_attribution", None)
+                if attribution is not None and getattr(attribution, "items", None):
+                    st.markdown("**Yasaklı faaliyet gelir oranı — SEC 10-K Inline XBRL**")
+                    st.caption(f"Durum: {getattr(attribution, 'status', '—')}")
+                    if getattr(attribution, "partition_status", None):
+                        st.caption(f"Bölümleme durumu: {attribution.partition_status}")
+                    if getattr(attribution, "partition_granularity", None):
+                        st.caption(
+                            "Gelir ayrımı düzeyi: "
+                            + granularity_label_tr(attribution.partition_granularity)
+                        )
+                    if getattr(attribution, "attribution_quality", None):
+                        st.caption(
+                            "Kanıt kalitesi: "
+                            + attribution_quality_label_tr(attribution.attribution_quality)
+                        )
+                    if attribution.prohibited_ratio is not None:
+                        st.caption(f"Oran: {attribution.prohibited_ratio * 100:.2f}%")
+                    st.caption("Eşik: <5%")
+                    st.caption(f"Dönem: FY {attribution.screening_period or '—'}")
+                    st.caption(f"Kaynak: SEC 10-K Inline XBRL ({attribution.filing_accession})")
+                    st.caption(f"Seçilen eksen: {attribution.selected_axis or '—'}")
+                    if attribution.partition_coverage is not None:
+                        st.caption(f"Kapsam: {attribution.partition_coverage * 100:.1f}%")
+                    for limitation in attribution.limitations[:3]:
+                        st.caption(limitation)
+                    with st.expander("Gelir bölümleme kanıtı"):
+                        for item in attribution.items:
+                            st.caption(
+                                f"- {item.reported_label} — ${item.amount:,.0f} → "
+                                f"{item.mapping_status}"
+                                + (f" ({item.msci_category})" if item.msci_category else "")
+                            )
                 for item in view.missing_capabilities:
                     st.caption(f"{item}: {translate_missing_capability(item)}")
 

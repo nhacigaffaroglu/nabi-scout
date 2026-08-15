@@ -19,6 +19,7 @@ class ParticipationEvidenceBundle:
     fmp_profile: Dict[str, Any] = field(default_factory=dict)
     sec_metadata: Dict[str, Optional[str]] = field(default_factory=dict)
     revenue_segments: Tuple[BusinessRevenueEvidence, ...] = field(default_factory=tuple)
+    revenue_attribution: Any = None
     market_cap_evidence: Any = None
     provider_calls: Dict[str, int] = field(default_factory=dict)
     warnings: Tuple[str, ...] = field(default_factory=tuple)
@@ -42,6 +43,8 @@ def load_participation_evidence_bundle(
     sec_company_facts_payload: Optional[Mapping[str, Any]] = None,
     sec_financials: Optional[Mapping[str, Any]] = None,
     prohibited_categories: Sequence[str] = (),
+    methodology_id: str = "msci_islamic_index_series",
+    methodology_version: str = "2025-05",
 ) -> ParticipationEvidenceBundle:
     normalized = str(symbol or "").strip().upper()
     calls: Dict[str, int] = {}
@@ -49,6 +52,7 @@ def load_participation_evidence_bundle(
     profile: Dict[str, Any] = {}
     sec_metadata: Dict[str, Optional[str]] = {}
     revenue_segments: Tuple[BusinessRevenueEvidence, ...] = ()
+    revenue_attribution = None
 
     if sec_company_facts_payload:
         from services.sec_financial_client import SECFinancialClient
@@ -79,6 +83,37 @@ def load_participation_evidence_bundle(
             calls["sec_revenue_segments"] = 1
         elif sec_financials and sec_financials.get("revenue"):
             warnings.append("SEC toplam gelir mevcut ancak yapılandırılmış segment ayrımı bulunamadı.")
+            from services.participation_inline_xbrl_integration import (
+                attribution_items_to_business_evidence,
+                should_attempt_inline_xbrl_attribution,
+            )
+            from services.participation_inline_xbrl_attribution import (
+                resolve_inline_xbrl_revenue_attribution,
+            )
+
+            if (
+                sec_client is not None
+                and cik is not None
+                and should_attempt_inline_xbrl_attribution(
+                    existing_segment_count=0,
+                    total_revenue=sec_financials.get("revenue"),
+                )
+            ):
+                calls["sec_submissions"] = calls.get("sec_submissions", 0) + 1
+                revenue_attribution = resolve_inline_xbrl_revenue_attribution(
+                    symbol=normalized,
+                    cik=cik,
+                    sec_client=sec_client,
+                    methodology_id=methodology_id,
+                    methodology_version=methodology_version,
+                    prohibited_categories=prohibited_categories,
+                    preferred_period_end=str(sec_financials.get("financial_period_end") or "")[:10] or None,
+                )
+                calls["sec_inline_xbrl"] = calls.get("sec_inline_xbrl", 0) + 1
+                if revenue_attribution.items:
+                    revenue_segments = attribution_items_to_business_evidence(revenue_attribution)
+                elif revenue_attribution.limitations:
+                    warnings.extend(revenue_attribution.limitations)
 
     market_cap_evidence = None
     if fmp_client is not None:
@@ -113,6 +148,7 @@ def load_participation_evidence_bundle(
         fmp_profile=profile,
         sec_metadata=sec_metadata,
         revenue_segments=revenue_segments,
+        revenue_attribution=revenue_attribution,
         market_cap_evidence=market_cap_evidence,
         provider_calls=calls,
         warnings=tuple(dict.fromkeys(warnings)),
