@@ -229,6 +229,7 @@ class CompanyIntelligenceCoreService:
         research_eligibility: ResearchEligibilityResult,
         refresh: bool = False,
         sec_financials: Optional[dict] = None,
+        market_cap_fallback: Optional[float] = None,
     ) -> CompanyProviderBundle:
         require_research_allowed(research_eligibility, symbol=symbol)
         normalized = symbol.strip().upper()
@@ -237,10 +238,13 @@ class CompanyIntelligenceCoreService:
                 self.fmp,
                 normalized,
                 sec_financials=sec_financials,
+                market_cap_fallback=market_cap_fallback,
             )
         bundle = self._bundle_cache[normalized]
         if sec_financials:
             bundle.sec_financials = dict(sec_financials)
+        if market_cap_fallback is not None:
+            bundle.market_cap_fallback = market_cap_fallback
         return bundle
 
     def build_view(
@@ -250,6 +254,7 @@ class CompanyIntelligenceCoreService:
         research_eligibility: ResearchEligibilityResult,
         refresh: bool = False,
         sec_financials: Optional[dict] = None,
+        market_cap_fallback: Optional[float] = None,
     ) -> CompanyIntelligenceView:
         require_research_allowed(research_eligibility, symbol=symbol)
         bundle = self.load_bundle(
@@ -257,6 +262,7 @@ class CompanyIntelligenceCoreService:
             research_eligibility=research_eligibility,
             refresh=refresh,
             sec_financials=sec_financials,
+            market_cap_fallback=market_cap_fallback,
         )
         business = build_business_snapshot(bundle) if bundle.profile else None
         trends = build_financial_trends(bundle) if bundle.income_quarterly else None

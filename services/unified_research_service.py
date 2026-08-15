@@ -104,6 +104,7 @@ class UnifiedResearchService:
         symbol: str,
         research_eligibility: ResearchEligibilityResult,
         company_intelligence_view=None,
+        investment_thesis_view: Optional[InvestmentThesisView] = None,
         candidate: Optional[Mapping[str, Any]] = None,
         participation_view=None,
         portfolio_view: Optional[PortfolioIntelligenceView] = None,
@@ -114,8 +115,8 @@ class UnifiedResearchService:
         normalized = str(symbol or "").strip().upper()
         require_research_allowed(research_eligibility, symbol=normalized)
         thesis_service = InvestmentThesisService()
-        thesis_view = None
-        if company_intelligence_view is not None:
+        thesis_view = investment_thesis_view
+        if thesis_view is None and company_intelligence_view is not None:
             thesis_view = thesis_service.build_view(
                 company_intelligence_view,
                 research_eligibility=research_eligibility,

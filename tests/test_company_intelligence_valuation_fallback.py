@@ -531,6 +531,120 @@ class GenericEligibleSymbolOrchestrationTests(unittest.TestCase):
         self.assertIsNotNone(view.valuation)
 
 
+class CrmProfileRateLimitHybridFallbackTests(unittest.TestCase):
+    def _mock_sec_client(self, sec_payload: dict) -> MagicMock:
+        client = MagicMock()
+        client.company_facts.return_value = {"facts": {"us-gaap": {}}}
+        client.extract_financials.return_value = sec_payload
+        client.resolve_entity_metadata.return_value = (
+            {"sic_code": "7372", "sic_description": "Services-Prepackaged Software"},
+            (("sic_source", "sec_submissions"),),
+        )
+        return client
+
+    def _rate_limited_fmp(self) -> MagicMock:
+        fmp = MagicMock()
+        fmp.profile.side_effect = FMPError("rate limit", error_class="rate_limit", status_code=429)
+        restricted = FMPError("restricted", error_class="plan_restricted", status_code=402)
+        for attr in (
+            "income_statement_quarterly",
+            "balance_sheet_quarterly",
+            "cash_flow_quarterly",
+            "ratios_ttm",
+            "key_metrics_ttm",
+            "stock_news",
+            "ratios",
+            "key_metrics",
+        ):
+            getattr(fmp, attr).side_effect = restricted
+        fmp.stock_peers.return_value = []
+        fmp.earnings_surprises.return_value = []
+        fmp.earnings_calendar.return_value = []
+        return fmp
+
+    def test_profile_rate_limit_without_fallback_has_no_hybrid_metrics(self) -> None:
+        participation = build_company_report_participation(
+            _crm_candidate(),
+            sec_client=self._mock_sec_client(_crm_live_like_sec_financials()),
+            fmp_client=self._rate_limited_fmp(),
+            sec_ticker_lookup=CRM_SEC_LOOKUP,
+        )
+        assert participation.result is not None
+        view = CompanyIntelligenceCoreService(self._rate_limited_fmp()).build_view(
+            "CRM",
+            research_eligibility=research_eligibility_pass_fixture("CRM"),
+            sec_financials=participation.result.sec_financials,
+        )
+        self.assertIsNone(view.valuation)
+        self.assertFalse(view.data_quality.valuation_available)
+        self.assertIn("profile:RATE_LIMIT", view.data_quality.provider_failures)
+
+    def test_profile_rate_limit_with_candidate_market_cap_fallback_builds_hybrid_metrics(
+        self,
+    ) -> None:
+        participation = build_company_report_participation(
+            _crm_candidate(),
+            sec_client=self._mock_sec_client(_crm_live_like_sec_financials()),
+            fmp_client=self._rate_limited_fmp(),
+            sec_ticker_lookup=CRM_SEC_LOOKUP,
+        )
+        assert participation.result is not None
+        view = CompanyIntelligenceCoreService(self._rate_limited_fmp()).build_view(
+            "CRM",
+            research_eligibility=research_eligibility_pass_fixture("CRM"),
+            sec_financials=participation.result.sec_financials,
+            market_cap_fallback=_crm_candidate()["market_cap"],
+        )
+        assert view.valuation is not None
+        codes = {metric.code for metric in view.valuation.metrics}
+        self.assertIn("price_to_sales", codes)
+        self.assertIn("price_to_fcf", codes)
+        self.assertIn("ev_to_ebit", codes)
+        self.assertTrue(view.data_quality.valuation_available)
+        self.assertTrue(
+            any(
+                "aday kaydındaki piyasa değeri" in limitation
+                for metric in view.valuation.metrics
+                for limitation in metric.limitations
+            )
+        )
+
+    def test_rate_limited_profile_metrics_propagate_to_ai_generation_context(self) -> None:
+        from services.ai_research_summary_valuation_semantics import derive_valuation_semantics
+        from services.unified_research_service import UnifiedResearchService
+
+        participation = build_company_report_participation(
+            _crm_candidate(),
+            sec_client=self._mock_sec_client(_crm_live_like_sec_financials()),
+            fmp_client=self._rate_limited_fmp(),
+            sec_ticker_lookup=CRM_SEC_LOOKUP,
+        )
+        assert participation.result is not None
+        fmp = self._rate_limited_fmp()
+        ci = CompanyIntelligenceCoreService(fmp).build_view(
+            "CRM",
+            research_eligibility=research_eligibility_pass_fixture("CRM"),
+            sec_financials=participation.result.sec_financials,
+            market_cap_fallback=_crm_candidate()["market_cap"],
+        )
+        thesis = InvestmentThesisService().build_view(
+            ci,
+            research_eligibility=research_eligibility_pass_fixture("CRM"),
+        )
+        unified = UnifiedResearchService().build_context(
+            symbol="CRM",
+            research_eligibility=research_eligibility_pass_fixture("CRM"),
+            company_intelligence_view=ci,
+            investment_thesis_view=thesis,
+            candidate=_crm_candidate(),
+        )
+        semantics = derive_valuation_semantics(unified)
+        self.assertTrue(semantics.current_metrics_available)
+        self.assertGreaterEqual(len(semantics.available_metrics), 3)
+        serialized = unified.company_intelligence or {}
+        self.assertGreaterEqual(len(serialized.get("valuation_metrics") or []), 3)
+
+
 class ValuationUiSmokeTests(unittest.TestCase):
     def test_hybrid_metric_contract_fields(self) -> None:
         bundle = CompanyProviderBundle(symbol="CRM")

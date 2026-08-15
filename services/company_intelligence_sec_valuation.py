@@ -58,6 +58,19 @@ def _hybrid_metric(
     )
 
 
+def resolve_hybrid_market_cap(bundle: CompanyProviderBundle) -> Optional[float]:
+    from services.company_intelligence_utils import safe_float
+
+    profile = bundle.profile or {}
+    market_cap = safe_float(profile.get("marketCap") or profile.get("mktCap"))
+    if market_cap is not None and market_cap > 0:
+        return market_cap
+    fallback = safe_float(bundle.market_cap_fallback)
+    if fallback is not None and fallback > 0:
+        return fallback
+    return None
+
+
 def build_sec_hybrid_valuation(
     bundle: CompanyProviderBundle,
 ) -> Optional[ValuationSection]:
@@ -66,7 +79,13 @@ def build_sec_hybrid_valuation(
         return None
 
     profile = bundle.profile or {}
-    market_cap = safe_float(profile.get("marketCap") or profile.get("mktCap"))
+    profile_market_cap = safe_float(profile.get("marketCap") or profile.get("mktCap"))
+    market_cap = resolve_hybrid_market_cap(bundle)
+    used_candidate_market_cap = (
+        (profile_market_cap is None or profile_market_cap <= 0)
+        and market_cap is not None
+        and safe_float(bundle.market_cap_fallback) == market_cap
+    )
     alignment = assess_sec_market_hybrid_alignment(
         sec_financials,
         market_cap=market_cap,
@@ -74,6 +93,12 @@ def build_sec_hybrid_valuation(
     )
     if not alignment_allows_hybrid_valuation(alignment):
         return None
+
+    fallback_limitations: Tuple[str, ...] = ()
+    if used_candidate_market_cap:
+        fallback_limitations = (
+            "FMP profil piyasa değeri alınamadı; aday kaydındaki piyasa değeri kullanıldı.",
+        )
 
     revenue = safe_float(sec_financials.get("revenue"))
     free_cash_flow = safe_float(sec_financials.get("free_cash_flow"))
@@ -95,6 +120,7 @@ def build_sec_hybrid_valuation(
                 ("revenue", revenue),
                 ("formula", "market_cap / revenue"),
             ),
+            extra_limitations=fallback_limitations,
         )
         if metric is not None:
             metrics.append(metric)
@@ -111,6 +137,7 @@ def build_sec_hybrid_valuation(
                 ("free_cash_flow", free_cash_flow),
                 ("formula", "market_cap / free_cash_flow"),
             ),
+            extra_limitations=fallback_limitations,
         )
         if metric is not None:
             metrics.append(metric)
@@ -136,6 +163,7 @@ def build_sec_hybrid_valuation(
                             ("operating_income", operating_income),
                             ("formula", "(market_cap + total_debt - cash) / operating_income"),
                         ),
+                        extra_limitations=fallback_limitations,
                     )
                     if metric is not None:
                         metrics.append(metric)

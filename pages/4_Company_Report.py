@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 import streamlit as st
 
 from repositories.candidate_repository import CandidateRepository
@@ -28,7 +29,26 @@ from components.investment_thesis_ui import (
     render_investment_thesis_section,
     render_investment_thesis_technical_details,
 )
+from components.ai_research_summary_ui import (
+    clear_ai_summary_cache,
+    load_cached_ai_summary,
+    render_ai_research_summary_section,
+    store_ai_summary,
+)
+from services.ai_research_summary_display import polish_ai_research_summary_view
+from services.ai_research_summary_trace import get_last_ai_summary_generation_trace
+from services.ai_research_summary_service import (
+    AIResearchSummaryService,
+    compute_context_semantic_identity,
+)
+from services.ai_research_summary_persistence_service import (
+    fetch_exact_ai_research_summary,
+    save_ai_research_summary_snapshot,
+    symbol_has_stale_persisted_summary,
+)
+from services.wealth_adviser_config import load_adviser_llm_config
 from repositories.investment_thesis_repository import InvestmentThesisRepository
+from repositories.ai_research_summary_repository import AIResearchSummaryRepository
 from services.investment_thesis_persistence_service import (
     fetch_investment_thesis_history,
     save_investment_thesis_snapshot,
@@ -441,6 +461,7 @@ if research_eligibility.research_allowed and symbol != "—":
                 if participation_view.result is not None
                 else None
             ),
+            market_cap_fallback=candidate.get("market_cap"),
         )
     except FMPError as exc:
         company_intel_error = str(exc)
@@ -534,6 +555,122 @@ if research_eligibility.research_allowed and company_intel_view is not None:
         st.session_state[thesis_save_failed_key] = thesis_save_result.persistence_failed
         if thesis_save_result.saved or thesis_save_result.skipped_duplicate:
             st.rerun()
+
+    ai_summary_config = load_adviser_llm_config()
+    ai_summary_service = AIResearchSummaryService(config=ai_summary_config)
+    ai_summary_repo = AIResearchSummaryRepository(client)
+
+    current_ai_identity = compute_context_semantic_identity(
+        symbol=participation_symbol,
+        participation_result=(
+            participation_view.result
+            if participation_view.result is not None
+            else None
+        ),
+        company_intelligence_view=company_intel_view,
+        investment_thesis_view=investment_thesis_view,
+    )
+    cached_ai_summary, cached_ai_identity = load_cached_ai_summary(participation_symbol)
+    if cached_ai_summary and cached_ai_identity and cached_ai_identity != current_ai_identity:
+        clear_ai_summary_cache(participation_symbol)
+        cached_ai_summary = None
+        cached_ai_identity = None
+
+    active_ai_summary = cached_ai_summary
+    if active_ai_summary is None:
+        persisted_exact = fetch_exact_ai_research_summary(
+            ai_summary_repo,
+            participation_symbol,
+            current_ai_identity,
+        )
+        if persisted_exact.view is not None:
+            active_ai_summary = persisted_exact.view
+
+    show_stale_ai_hint = False
+    if active_ai_summary is None:
+        show_stale_ai_hint = symbol_has_stale_persisted_summary(
+            ai_summary_repo,
+            participation_symbol,
+            current_ai_identity,
+        )
+
+    def _polish_ai_summary_for_display(summary_view):
+        if summary_view is None or summary_view.status != "AVAILABLE":
+            return summary_view
+        unified = ai_summary_service.build_unified_context(
+            symbol=participation_symbol,
+            research_eligibility=research_eligibility,
+            company_intelligence_view=company_intel_view,
+            investment_thesis_view=investment_thesis_view,
+            candidate=candidate,
+            participation_view=participation_view,
+            previous_thesis_snapshot=previous_snapshot,
+        )
+        return polish_ai_research_summary_view(summary_view, unified=unified)
+
+    if active_ai_summary is not None and active_ai_summary.status == "AVAILABLE":
+        active_ai_summary = _polish_ai_summary_for_display(active_ai_summary)
+        store_ai_summary(
+            participation_symbol,
+            active_ai_summary,
+            identity=current_ai_identity,
+        )
+
+    def _generate_ai_summary():
+        exact_match = fetch_exact_ai_research_summary(
+            ai_summary_repo,
+            participation_symbol,
+            current_ai_identity,
+        )
+        if exact_match.view is not None:
+            display_ready_summary = _polish_ai_summary_for_display(exact_match.view)
+            store_ai_summary(
+                participation_symbol,
+                display_ready_summary,
+                identity=current_ai_identity,
+            )
+            return display_ready_summary
+
+        session_view, session_identity = load_cached_ai_summary(participation_symbol)
+        generated_summary = ai_summary_service.generate(
+            symbol=participation_symbol,
+            research_eligibility=research_eligibility,
+            company_intelligence_view=company_intel_view,
+            investment_thesis_view=investment_thesis_view,
+            candidate=candidate,
+            participation_view=participation_view,
+            previous_thesis_snapshot=previous_snapshot,
+            cached_view=session_view,
+            cached_identity=session_identity,
+            force_refresh=False,
+        )
+        display_ready_summary = _polish_ai_summary_for_display(generated_summary)
+        if generated_summary.status == "AVAILABLE":
+            save_ai_research_summary_snapshot(
+                ai_summary_repo,
+                display_ready_summary,
+                semantic_identity=current_ai_identity,
+            )
+        store_ai_summary(
+            participation_symbol,
+            display_ready_summary,
+            identity=current_ai_identity,
+        )
+        return display_ready_summary
+
+    render_ai_research_summary_section(
+        view=active_ai_summary,
+        feature_enabled=ai_summary_config.is_usable,
+        symbol=participation_symbol,
+        generate_callback=_generate_ai_summary if ai_summary_config.is_usable else None,
+        display_polish_callback=_polish_ai_summary_for_display if ai_summary_config.is_usable else None,
+        stale_context_hint=show_stale_ai_hint,
+    )
+    if os.environ.get("NABI_AI_SUMMARY_TRACE", "").strip().lower() in {"1", "true", "yes"}:
+        trace = get_last_ai_summary_generation_trace()
+        if trace:
+            with st.expander("AI özet üretim izi (debug)", expanded=False):
+                st.json(trace)
 
 st.subheader("🔄 Son taramalarda ne değişti?")
 history_events = history.get("events") or []

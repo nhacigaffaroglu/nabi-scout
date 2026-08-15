@@ -32,6 +32,7 @@ class CompanyProviderBundle:
     earnings_surprises: List[Dict[str, Any]] = field(default_factory=list)
     earnings_calendar: List[Dict[str, Any]] = field(default_factory=list)
     sec_financials: Dict[str, Any] = field(default_factory=dict)
+    market_cap_fallback: Optional[float] = None
     peer_profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     peer_ratios_ttm: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     failures: List[str] = field(default_factory=list)
@@ -60,11 +61,18 @@ def load_company_provider_bundle(
     symbol: str,
     *,
     sec_financials: Optional[Dict[str, Any]] = None,
+    market_cap_fallback: Optional[float] = None,
 ) -> CompanyProviderBundle:
     normalized = symbol.strip().upper()
     bundle = CompanyProviderBundle(symbol=normalized)
     if sec_financials:
         bundle.sec_financials = dict(sec_financials)
+    if market_cap_fallback is not None:
+        from services.company_intelligence_utils import safe_float
+
+        fallback = safe_float(market_cap_fallback)
+        if fallback is not None and fallback > 0:
+            bundle.market_cap_fallback = fallback
 
     profile = _safe_fetch("profile", lambda: fmp.profile(normalized), bundle)
     if isinstance(profile, dict):
