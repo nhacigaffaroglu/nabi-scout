@@ -71,6 +71,50 @@ def _effective_txn_type(row: Dict[str, Any]) -> str:
     return txn_type
 
 
+def _rows_for_replay_as_of(
+    transactions: Iterable[Dict[str, Any]],
+    *,
+    as_of: str,
+) -> List[Dict[str, Any]]:
+    cutoff = str(as_of or "")
+    filtered: List[Dict[str, Any]] = []
+    for row in _rows_for_replay(transactions):
+        executed_at = str(row.get("executed_at") or "")
+        if executed_at and executed_at > cutoff:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def materialize_position_from_transactions_as_of(
+    transactions: Iterable[Dict[str, Any]],
+    *,
+    as_of: str,
+) -> Tuple[float, float]:
+    """Replay ledger rows up to and including ``as_of`` (ISO timestamp/date)."""
+    return materialize_position_from_transactions(
+        _rows_for_replay_as_of(transactions, as_of=as_of)
+    )
+
+
+def materialize_positions_by_asset_as_of(
+    transactions: Iterable[Dict[str, Any]],
+    *,
+    as_of: str,
+) -> Dict[str, Tuple[float, float]]:
+    """Return ``asset_id -> (quantity, average_cost)`` at ``as_of``."""
+    by_asset: Dict[str, List[Dict[str, Any]]] = {}
+    for row in _rows_for_replay_as_of(transactions, as_of=as_of):
+        asset_id = str(row.get("asset_id") or "")
+        if not asset_id:
+            continue
+        by_asset.setdefault(asset_id, []).append(row)
+    return {
+        asset_id: materialize_position_from_transactions(rows)
+        for asset_id, rows in by_asset.items()
+    }
+
+
 def materialize_position_from_transactions(
     transactions: Iterable[Dict[str, Any]],
 ) -> Tuple[float, float]:

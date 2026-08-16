@@ -38,8 +38,18 @@ from services.portfolio_intelligence_enrichment_service import (
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.daily_portfolio_brief_service import build_daily_portfolio_brief
 from services.monitor_intelligence_service import MonitorIntelligenceService
-from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
-from services.portfolio_research_context import build_portfolio_research_context
+from components.portfolio_wave3_ui import (
+    render_construction_section,
+    render_decisions_section,
+    render_decision_ai_section,
+    render_reference_limits_editor,
+    render_scenarios_section,
+)
+from services.portfolio_performance_intelligence_service import (
+    PortfolioPerformanceIntelligenceService,
+)
+from services.portfolio_reference_limits_service import PortfolioReferenceLimitsService
+from services.wave3_intelligence_service import Wave3IntelligenceService
 from services.ui import prepare_protected_page
 from services.wealth_core_service import WealthCoreService
 
@@ -69,6 +79,8 @@ performance_intel = PortfolioPerformanceIntelligenceService(
 )
 monitor_service = MonitorIntelligenceService(client, user_id)
 portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
+wave3_service = Wave3IntelligenceService(client, user_id, wealth)
+reference_limits_service = PortfolioReferenceLimitsService(client, user_id)
 
 st.title("📊 Portfolio Intelligence")
 st.caption(
@@ -103,6 +115,12 @@ with st.spinner("Portföy analizi yükleniyor…"):
         selected_account_id=selected_account_id,
     )
     v13 = performance_intel.build_view(portfolio, dashboard)
+    reference_limits = reference_limits_service.get_limits(str(portfolio["id"]))
+    wave3 = wave3_service.build_view(
+        portfolio=portfolio,
+        dashboard=dashboard,
+        reference_limits_row=reference_limits,
+    )
 
 st.caption(
     f"Fiyat kaynağı: {base_view.price_provider} · "
@@ -123,8 +141,8 @@ render_v13_kpi_row(v13)
 render_snapshot_controls(wealth, portfolio, intelligence)
 st.divider()
 
-tab_perf, tab_alloc, tab_intel, tab_plan, tab_hold = st.tabs(
-    ["Performans", "Dağılım", "Zeka", "Planlama", "Pozisyonlar"]
+tab_perf, tab_structure, tab_scenarios, tab_decisions, tab_intel, tab_plan, tab_hold = st.tabs(
+    ["Performans", "Yapı", "Senaryolar", "Kararlar", "Zeka", "Planlama", "Pozisyonlar"]
 )
 
 with tab_perf:
@@ -134,11 +152,74 @@ with tab_perf:
     st.divider()
     render_cash_flow_section(v13)
 
-with tab_alloc:
+with tab_structure:
+    render_reference_limits_editor(reference_limits_service, str(portfolio["id"]))
+    render_construction_section(wave3)
+    st.divider()
     render_portfolio_charts(dashboard)
 
+with tab_scenarios:
+    render_scenarios_section(wave3_service, dashboard)
+    if v13.goal_projections:
+        st.divider()
+        st.markdown("**Hedef senaryo etkisi (deterministik)**")
+        for goal in v13.goal_projections[:3]:
+            st.markdown(f"- **{goal.goal_title}**")
+            for scenario in goal.scenarios:
+                st.caption(
+                    f"{scenario.label}: {scenario.projected_value} "
+                    f"(ilerleme {scenario.progress_pct}%) — {scenario.assumptions_note}"
+                )
+
+with tab_decisions:
+    render_decisions_section(wave3)
+    st.divider()
+    portfolio_context = build_portfolio_research_context(dashboard, v13=v13)
+    brief = build_daily_portfolio_brief(
+        portfolio=portfolio,
+        dashboard=dashboard,
+        monitor=monitor_service,
+    )
+    decision_review_payload = wave3.to_dict()
+    decision_ai_payload = portfolio_ai_service.build_input_payload(
+        portfolio_context=portfolio_context,
+        brief=brief,
+        decision_review=decision_review_payload,
+    )
+    decision_ai_identity = portfolio_ai_service.compute_semantic_identity(decision_ai_payload)
+    decision_ai_persisted = portfolio_ai_service.fetch_persisted(
+        portfolio_id=str(portfolio["id"]),
+        semantic_identity=decision_ai_identity,
+    )
+
+    def _generate_decision_ai() -> None:
+        result = portfolio_ai_service.generate(
+            portfolio_id=str(portfolio["id"]),
+            portfolio_context=portfolio_context,
+            brief=brief,
+            decision_review=decision_review_payload,
+            force_refresh=True,
+        )
+        st.session_state["pi_decision_ai_view"] = result
+        st.rerun()
+
+    render_decision_ai_section(
+        portfolio_id=str(portfolio["id"]),
+        ai_service=portfolio_ai_service,
+        portfolio_context=portfolio_context,
+        brief=brief,
+        wave3=wave3,
+        on_generate=_generate_decision_ai,
+        response=decision_ai_persisted or st.session_state.get("pi_decision_ai_view"),
+        semantic_identity=decision_ai_identity,
+    )
+
 with tab_intel:
-    monitor_service.refresh_portfolio_events(portfolio=portfolio, dashboard=dashboard)
+    monitor_service.refresh_portfolio_events(
+        portfolio=portfolio,
+        dashboard=dashboard,
+        wave3_view=wave3,
+    )
     brief = build_daily_portfolio_brief(
         portfolio=portfolio,
         dashboard=dashboard,

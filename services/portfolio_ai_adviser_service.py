@@ -17,6 +17,7 @@ from services.portfolio_ai_adviser_persistence_service import (
     view_from_row,
 )
 from services.portfolio_ai_adviser_prompt import (
+    build_decision_review_messages,
     build_portfolio_ai_input_payload,
     build_portfolio_ai_messages,
     compute_portfolio_ai_semantic_identity,
@@ -41,11 +42,13 @@ class PortfolioAIAdviserService:
         portfolio_context: PortfolioResearchContext,
         brief: DailyPortfolioBriefContext,
         selected_events: Tuple[Dict[str, Any], ...] = (),
+        decision_review: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         return build_portfolio_ai_input_payload(
             portfolio_context=portfolio_context,
             brief=brief,
             selected_events=selected_events,
+            decision_review=decision_review,
         )
 
     def compute_semantic_identity(self, payload: Dict[str, Any]) -> str:
@@ -72,11 +75,13 @@ class PortfolioAIAdviserService:
         force_refresh: bool = False,
         cached_view: Optional[PortfolioAIAdviserResponse] = None,
         cached_identity: Optional[str] = None,
+        decision_review: Optional[Dict[str, Any]] = None,
     ) -> PortfolioAIAdviserResponse:
         payload = self.build_input_payload(
             portfolio_context=portfolio_context,
             brief=brief,
             selected_events=selected_events,
+            decision_review=decision_review,
         )
         identity = self.compute_semantic_identity(payload)
 
@@ -147,8 +152,13 @@ class PortfolioAIAdviserService:
             )
 
         started = time.perf_counter()
+        message_builder = (
+            build_decision_review_messages
+            if decision_review is not None
+            else build_portfolio_ai_messages
+        )
         try:
-            raw = self.llm.complete(build_portfolio_ai_messages(payload))
+            raw = self.llm.complete(message_builder(payload))
         except WealthAdviserLlmError:
             return PortfolioAIAdviserResponse.unavailable(
                 portfolio_id=portfolio_id,

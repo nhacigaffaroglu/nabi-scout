@@ -42,6 +42,13 @@ class WealthDecisionJournalService:
         key_risks: Optional[str] = None,
         invalidation_conditions: Optional[str] = None,
         expected_horizon: Optional[str] = None,
+        decision_type: Optional[str] = None,
+        key_assumptions: Optional[str] = None,
+        expected_catalysts: Optional[str] = None,
+        primary_risks: Optional[str] = None,
+        confidence_at_decision: Optional[str] = None,
+        research_reference: Optional[str] = None,
+        portfolio_context_snapshot: Optional[Dict[str, Any]] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -67,6 +74,15 @@ class WealthDecisionJournalService:
                     invalidation_conditions.strip() if invalidation_conditions else None
                 ),
                 "expected_horizon": expected_horizon.strip() if expected_horizon else None,
+                "decision_type": decision_type.strip() if decision_type else None,
+                "key_assumptions": key_assumptions.strip() if key_assumptions else None,
+                "expected_catalysts": expected_catalysts.strip() if expected_catalysts else None,
+                "primary_risks": primary_risks.strip() if primary_risks else None,
+                "confidence_at_decision": (
+                    confidence_at_decision.strip() if confidence_at_decision else None
+                ),
+                "research_reference": research_reference.strip() if research_reference else None,
+                "portfolio_context_snapshot": portfolio_context_snapshot,
                 "tags": tags or [],
                 "notes": notes.strip() if notes else None,
             }
@@ -81,6 +97,11 @@ class WealthDecisionJournalService:
         key_risks: Optional[str] = None,
         invalidation_conditions: Optional[str] = None,
         expected_horizon: Optional[str] = None,
+        key_assumptions: Optional[str] = None,
+        expected_catalysts: Optional[str] = None,
+        primary_risks: Optional[str] = None,
+        confidence_at_decision: Optional[str] = None,
+        research_reference: Optional[str] = None,
         tags: Optional[List[str]] = None,
         notes: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -98,6 +119,16 @@ class WealthDecisionJournalService:
             updates["invalidation_conditions"] = invalidation_conditions.strip() or None
         if expected_horizon is not None:
             updates["expected_horizon"] = expected_horizon.strip() or None
+        if key_assumptions is not None:
+            updates["key_assumptions"] = key_assumptions.strip() or None
+        if expected_catalysts is not None:
+            updates["expected_catalysts"] = expected_catalysts.strip() or None
+        if primary_risks is not None:
+            updates["primary_risks"] = primary_risks.strip() or None
+        if confidence_at_decision is not None:
+            updates["confidence_at_decision"] = confidence_at_decision.strip() or None
+        if research_reference is not None:
+            updates["research_reference"] = research_reference.strip() or None
         if tags is not None:
             updates["tags"] = tags
         if notes is not None:

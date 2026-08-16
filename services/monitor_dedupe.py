@@ -9,6 +9,7 @@ def build_dedupe_key(*parts: Any) -> str:
 
 
 def draft_to_row(draft, *, detected_at: str) -> Dict[str, Any]:
+    occurred_at = str(draft.occurred_at or "").strip() or detected_at
     return {
         "user_id": draft.user_id,
         "portfolio_id": draft.portfolio_id,
@@ -17,7 +18,7 @@ def draft_to_row(draft, *, detected_at: str) -> Dict[str, Any]:
         "event_category": draft.event_category,
         "severity": draft.severity,
         "materiality": draft.materiality,
-        "occurred_at": draft.occurred_at,
+        "occurred_at": occurred_at,
         "detected_at": detected_at,
         "dedupe_key": draft.dedupe_key,
         "title": draft.title,

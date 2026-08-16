@@ -367,9 +367,30 @@ if user_id and symbol and symbol != "—":
                         st.write(
                             f"- {(entry.get('created_at') or '')[:10]} · "
                             f"{entry.get('action_context')} · "
-                            f"{(entry.get('thesis') or '')[:120]}"
+                            f"{(entry.get('thesis') or '—')[:80]}"
                         )
-                else:
+                from services.symbol_decision_summary_service import (
+                    build_symbol_decision_summary,
+                )
+                from services.wave3_intelligence_service import Wave3IntelligenceService
+
+                wave3 = Wave3IntelligenceService(client, user_id, wealth).build_view(
+                    portfolio=pf,
+                    dashboard=dash,
+                )
+                summary = build_symbol_decision_summary(
+                    symbol=symbol,
+                    journal_entries=entries,
+                    outcomes=wave3.outcomes,
+                )
+                if summary["decision_count"]:
+                    st.caption(
+                        f"Karar kayıtları: {summary['decision_count']} · "
+                        f"Sonuç: {summary['outcome_status'] or '—'}"
+                    )
+                if summary["learning_flags"]:
+                    st.caption(f"Öğrenme bayrakları: {', '.join(summary['learning_flags'][:3])}")
+                elif not entries:
                     st.caption("Bu sembol için karar kaydı yok.")
                 price_service = CandidatePriceService(client)
                 intel = PortfolioIntelligenceService(

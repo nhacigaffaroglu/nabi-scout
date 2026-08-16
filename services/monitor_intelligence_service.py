@@ -47,6 +47,7 @@ class MonitorIntelligenceService:
         *,
         portfolio: Dict[str, Any],
         dashboard: PortfolioIntelligenceDashboardView,
+        wave3_view: Optional[Any] = None,
     ) -> Tuple[int, int]:
         from services.wealth_core_service import WealthCoreService
 
@@ -70,6 +71,36 @@ class MonitorIntelligenceService:
                     created += 1
                 else:
                     skipped += 1
+
+        if wave3_view is not None:
+            from services.wave3_monitor_detectors import (
+                detect_decision_evidence_gap_event,
+                detect_reference_limit_events,
+            )
+
+            now = self._now_iso()
+            for draft in detect_reference_limit_events(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                reference_gaps=wave3_view.reference_gaps,
+            ):
+                payload = draft_to_row(draft, detected_at=now)
+                _, inserted = self.events.upsert_draft(payload)
+                created += 1 if inserted else 0
+                skipped += 0 if inserted else 1
+            unavailable = sum(
+                1 for row in wave3_view.outcomes if row.outcome_status == "UNAVAILABLE"
+            )
+            for draft in detect_decision_evidence_gap_event(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                unavailable_count=unavailable,
+                total_count=len(wave3_view.outcomes),
+            ):
+                payload = draft_to_row(draft, detected_at=now)
+                _, inserted = self.events.upsert_draft(payload)
+                created += 1 if inserted else 0
+                skipped += 0 if inserted else 1
 
         held_symbols = self._held_symbols(dashboard)
         for symbol in held_symbols:

@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 PORTFOLIO_AI_CONTEXT_VERSION = "portfolio_ai_context_v1"
+PORTFOLIO_AI_DECISION_REVIEW_CONTEXT_VERSION = "portfolio_ai_context_v2"
 PORTFOLIO_AI_SUMMARY_VERSION = "portfolio_ai_summary_v1"
 PORTFOLIO_AI_DISPLAY_VERSION = "portfolio_ai_display_v1"
 PORTFOLIO_AI_VALIDATION_VERSION = "portfolio_ai_validator_v1"

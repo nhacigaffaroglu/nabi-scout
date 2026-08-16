@@ -5,11 +5,13 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Sequence, Tuple
 
+from services.decision_learning_engine import contains_psychological_inference
 from services.portfolio_ai_adviser_contract import PortfolioAIAdviserResponse
 from services.wealth_adviser_output_validator import (
     BUY_SELL_PATTERNS,
     FIDUCIARY_PATTERNS,
     REBALANCE_PATTERNS,
+    _is_negated,
     _pattern_matches_unnegated,
 )
 
@@ -17,6 +19,23 @@ TARGET_PRICE_PATTERNS = (
     re.compile(r"\bhedef fiyat\b", re.IGNORECASE),
     re.compile(r"\btarget price\b", re.IGNORECASE),
     re.compile(r"\b\d+\s*(usd|tl|try)\s*hedef\b", re.IGNORECASE),
+)
+
+BEHAVIORAL_PATTERNS = (
+    re.compile(r"\b(fomo|fear|greed|panik|korku|açgözlülük)\b", re.IGNORECASE),
+)
+
+FORECAST_PATTERNS = (
+    re.compile(r"\b(VaR|value at risk)\b"),
+    re.compile(r"\b\d+\s*%\s*(olasılık|probability|ihtimal)\b", re.IGNORECASE),
+    re.compile(r"\bkorelasyon\b", re.IGNORECASE),
+    re.compile(r"\bcorrelation\b", re.IGNORECASE),
+)
+
+INVESTOR_RANK_PATTERNS = (
+    re.compile(r"\b(iyi|kötü|başarılı|başarısız)\s+yatırımcı\b", re.IGNORECASE),
+    re.compile(r"\binvestor score\b", re.IGNORECASE),
+    re.compile(r"\b\d+\s*/\s*100\b"),
 )
 
 
@@ -52,6 +71,31 @@ def _participation_override(text: str) -> bool:
     return "kontrol et" in lowered and ("uygun" in lowered and "uygun değil" not in lowered)
 
 
+def _unsupported_risk_metric_claim(text: str, context_payload: Mapping[str, Any]) -> bool:
+    context_blob = json.dumps(context_payload, ensure_ascii=False).lower()
+    disclaimer_after = (
+        "yok",
+        "değil",
+        "hesaplanmad",
+        "üretilmedi",
+        "iddiası",
+        "forbidden",
+        "not forecast",
+    )
+    for pattern in FORECAST_PATTERNS:
+        for match in pattern.finditer(text):
+            token = match.group(0).lower()
+            if token and token in context_blob:
+                continue
+            if _is_negated(text, match.start()):
+                continue
+            after = text[match.end(): match.end() + 48].lower()
+            if any(marker in after for marker in disclaimer_after):
+                continue
+            return True
+    return False
+
+
 def validate_portfolio_ai_response(
     *,
     portfolio_id: str,
@@ -80,8 +124,21 @@ def validate_portfolio_ai_response(
         issues.append("target_price")
     if _participation_override(all_text):
         issues.append("participation_override")
+    if contains_psychological_inference(all_text) or any(
+        pattern.search(all_text) for pattern in BEHAVIORAL_PATTERNS
+    ):
+        issues.append("behavioral_inference")
+    if _unsupported_risk_metric_claim(all_text, context_payload):
+        issues.append("unsupported_risk_metric")
+    if any(pattern.search(all_text) for pattern in INVESTOR_RANK_PATTERNS):
+        issues.append("investor_ranking")
 
     context_blob = json.dumps(context_payload, ensure_ascii=False).lower()
+    if "decision_review" in context_payload:
+        for outcome_token in ("+%", "kazanç garanti", "guaranteed return"):
+            if outcome_token in all_text.lower() and outcome_token not in context_blob:
+                issues.append("fabricated_outcome")
+                break
     for metric_token in ("%20", "yüzde 20", "20% revenue", "gelir %20"):
         if metric_token in all_text.lower() and metric_token not in context_blob:
             issues.append("unsupported_metric_claim")
