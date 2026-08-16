@@ -5,6 +5,13 @@ from typing import Callable, Optional
 import pandas as pd
 import streamlit as st
 
+from services.portfolio_intelligence_charts import (
+    build_concentration_limit_chart,
+    build_decision_timeline_chart,
+    build_reference_gap_chart,
+    build_risk_budget_chart,
+    build_scenario_impact_chart,
+)
 from services.portfolio_ai_adviser_contract import PortfolioAIAdviserResponse
 from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
 from services.portfolio_reference_limits_service import PortfolioReferenceLimitsService
@@ -12,40 +19,36 @@ from services.wave3_intelligence_service import Wave3IntelligenceService, Wave3I
 
 
 def render_construction_section(wave3: Wave3IntelligenceView) -> None:
-    st.subheader("Portföy yapısı")
+    st.subheader("Portföy yapısı ve yapısal risk")
     conc = wave3.construction.concentration
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Top-1", f"{conc.top1_weight_pct:.1f}%" if conc.top1_weight_pct else "—")
+    top1 = conc.top1_weight_pct
+    c1.metric("Top-1", f"{top1:.1f}%" if top1 else "—", help=conc.top1_symbol or None)
     c2.metric("Top-3", f"{conc.top3_weight_pct:.1f}%" if conc.top3_weight_pct else "—")
     c3.metric("Top-5", f"{conc.top5_weight_pct:.1f}%" if conc.top5_weight_pct else "—")
     c4.metric("Nakit", f"{wave3.construction.cash_weight_pct:.1f}%" if wave3.construction.cash_weight_pct else "—")
 
-    st.markdown("**Risk bütçesi (yapısal — VaR değil)**")
-    risk_rows = [
-        {
-            "Boyut": row.dimension,
-            "Mevcut": f"{row.current_value:.1f}%" if row.current_value is not None else "—",
-            "Eşik": f"{row.threshold:.1f}%" if row.threshold is not None else "—",
-            "Durum": row.status,
-        }
-        for row in wave3.construction.risk_budget
-    ]
-    if risk_rows:
-        st.dataframe(pd.DataFrame(risk_rows), hide_index=True, use_container_width=True)
+    if conc.top1_weight_pct is not None:
+        st.altair_chart(
+            build_concentration_limit_chart(
+                current_pct=conc.top1_weight_pct,
+                limit_pct=12.0,
+                label=conc.top1_symbol or "Top-1",
+            ),
+            use_container_width=True,
+        )
 
-    st.markdown("**Referans limit karşılaştırması**")
-    gap_rows = [
-        {
-            "Boyut": gap.dimension,
-            "Mevcut": f"{gap.current_value:.1f}%" if gap.current_value is not None else "—",
-            "Limit": f"{gap.reference_limit:.1f}%" if gap.reference_limit is not None else "—",
-            "Gap": f"{gap.gap_pp:+.1f}pp" if gap.gap_pp is not None else "—",
-            "Durum": gap.status,
-        }
-        for gap in wave3.reference_gaps
-    ]
-    if gap_rows:
-        st.dataframe(pd.DataFrame(gap_rows), hide_index=True, use_container_width=True)
+    if wave3.construction.risk_budget:
+        st.altair_chart(
+            build_risk_budget_chart(wave3.construction.risk_budget),
+            use_container_width=True,
+        )
+
+    if wave3.reference_gaps:
+        st.altair_chart(
+            build_reference_gap_chart(wave3.reference_gaps),
+            use_container_width=True,
+        )
 
     st.markdown("**Maruziyet örtüşmesi**")
     for signal in wave3.construction.overlap_signals[:8]:
@@ -137,6 +140,10 @@ def render_scenarios_section(
         sector=None if sector == "—" else sector,
         symbol=None if symbol == "—" else symbol,
     )
+    st.altair_chart(
+        build_scenario_impact_chart(scenarios, currency=dashboard.base.base_currency),
+        use_container_width=True,
+    )
     for scenario in scenarios:
         st.markdown(f"**{scenario.scenario_label}**")
         if scenario.portfolio_impact_pct is not None:
@@ -193,6 +200,10 @@ def render_decisions_section(wave3: Wave3IntelligenceView) -> None:
             st.caption(insight.limitation)
 
     if wave3.timeline:
+        st.altair_chart(
+            build_decision_timeline_chart(wave3.timeline),
+            use_container_width=True,
+        )
         st.markdown("**Karar zaman çizelgesi**")
         for entry in wave3.timeline[:10]:
             outcome = (

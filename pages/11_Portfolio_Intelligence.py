@@ -2,7 +2,6 @@ import streamlit as st
 
 from components.portfolio_ai_adviser_ui import render_portfolio_ai_adviser_section
 from components.portfolio_advanced_ui import (
-    render_cash_event_form,
     render_cash_flow_section,
     render_change_section,
     render_data_quality_section,
@@ -12,8 +11,8 @@ from components.portfolio_advanced_ui import (
     render_opportunity_section,
     render_performance_section,
     render_snapshot_controls,
-    render_v13_kpi_row,
 )
+from components.portfolio_executive_ui import render_portfolio_executive_hero
 from components.portfolio_intelligence_ui import (
     render_attention_section,
     render_consolidated_exposure_table,
@@ -23,11 +22,17 @@ from components.portfolio_intelligence_ui import (
     render_position_table,
 )
 from components.portfolio_management_ui import (
-    render_account_management_panel,
     render_account_scope_filter,
-    render_add_holding_form,
-    render_create_account_form,
     render_position_management_panel,
+)
+from components.portfolio_overview_ui import render_portfolio_overview_tab
+from components.portfolio_visual_ui import render_portfolio_management_expander
+from components.portfolio_wave3_ui import (
+    render_construction_section,
+    render_decisions_section,
+    render_decision_ai_section,
+    render_reference_limits_editor,
+    render_scenarios_section,
 )
 from services.auth_service import get_current_user_id
 from services.candidate_price_service import CandidatePriceService
@@ -38,13 +43,6 @@ from services.portfolio_intelligence_enrichment_service import (
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.daily_portfolio_brief_service import build_daily_portfolio_brief
 from services.monitor_intelligence_service import MonitorIntelligenceService
-from components.portfolio_wave3_ui import (
-    render_construction_section,
-    render_decisions_section,
-    render_decision_ai_section,
-    render_reference_limits_editor,
-    render_scenarios_section,
-)
 from services.portfolio_performance_intelligence_service import (
     PortfolioPerformanceIntelligenceService,
 )
@@ -52,7 +50,6 @@ from services.portfolio_reference_limits_service import PortfolioReferenceLimits
 from services.wave3_intelligence_service import Wave3IntelligenceService
 from services.ui import prepare_protected_page
 from services.wealth_core_service import WealthCoreService
-from components.portfolio_wealth_os_ui import render_wealth_os_tabs
 from services.asset_capability_contract import route_report_page
 from services.fund_holdings_service import FundHoldingsService
 from services.fund_lookthrough_engine import build_portfolio_lookthrough
@@ -61,7 +58,7 @@ from services.portfolio_research_context import build_portfolio_research_context
 from services.total_wealth_service import compute_total_wealth_metrics
 
 
-client = prepare_protected_page("Portfolio Intelligence | NABI Scout", "📊")
+client = prepare_protected_page("Portföy Zekâsı | NABI Scout", "💼")
 
 user_id = get_current_user_id(client)
 if not user_id:
@@ -74,43 +71,37 @@ accounts = wealth.list_accounts()
 portfolio_accounts = accounts_for_portfolio(accounts, str(portfolio["id"]))
 accounts_by_id = {str(row["id"]): row for row in accounts}
 
-price_service = CandidatePriceService(client)
-intelligence = PortfolioIntelligenceService(
-    wealth,
-    price_service,
-    nabi_client=client,
-)
-performance_intel = PortfolioPerformanceIntelligenceService(
-    wealth,
-    nabi_client=client,
-)
-monitor_service = MonitorIntelligenceService(client, user_id)
-portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
-wave3_service = Wave3IntelligenceService(client, user_id, wealth)
-reference_limits_service = PortfolioReferenceLimitsService(client, user_id)
-
-st.title("💼 Portföy Zekâsı")
-st.caption(
-    "Wealth OS — portföy analitiği, performans, gelir, hedefler ve araştırma "
-    "farkındalığı. Sayfa yenilemesinde harici sağlayıcı veya LLM çağrısı yapılmaz."
-)
-
-action_col, scope_col = st.columns([2, 1])
-with action_col:
-    render_create_account_form(wealth, str(portfolio["id"]))
-with scope_col:
+scope_col1, scope_col2 = st.columns([3, 1])
+with scope_col1:
+    st.title("💼 Portföy Zekâsı")
+    st.caption(
+        "Wealth OS — authoritative portföy yüzeyi. Normal render: LLM/FMP/SEC/FX uzak çağrısı yok."
+    )
+with scope_col2:
     selected_account_id = (
         render_account_scope_filter(portfolio_accounts)
         if portfolio_accounts
         else None
     )
 
-render_add_holding_form(wealth, portfolio, accounts)
-render_cash_event_form(wealth, portfolio, accounts)
-render_account_management_panel(wealth, portfolio, accounts)
-st.divider()
+render_portfolio_management_expander(wealth, portfolio, accounts)
 
 with st.spinner("Portföy analizi yükleniyor…"):
+    price_service = CandidatePriceService(client)
+    intelligence = PortfolioIntelligenceService(
+        wealth,
+        price_service,
+        nabi_client=client,
+    )
+    performance_intel = PortfolioPerformanceIntelligenceService(
+        wealth,
+        nabi_client=client,
+    )
+    monitor_service = MonitorIntelligenceService(client, user_id)
+    portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
+    wave3_service = Wave3IntelligenceService(client, user_id, wealth)
+    reference_limits_service = PortfolioReferenceLimitsService(client, user_id)
+
     base_view = intelligence.build_view(
         portfolio,
         enrich_nabi=True,
@@ -128,11 +119,11 @@ with st.spinner("Portföy analizi yükleniyor…"):
         dashboard=dashboard,
         reference_limits_row=reference_limits,
     )
-
-st.caption(
-    f"Fiyat kaynağı: {base_view.price_provider} · "
-    f"Sağlayıcı çağrısı: {price_service.fetch_count}"
-)
+    wealth_metrics = compute_total_wealth_metrics(
+        base_view,
+        participation_covered_pct=dashboard.participation_eligible_weight_pct,
+        research_covered_pct=dashboard.research_coverage_weight_pct,
+    )
 
 if dashboard.base.total_position_count == 0:
     render_empty_portfolio_onboarding(wealth, portfolio, accounts)
@@ -144,42 +135,35 @@ if selected_account_id:
         f"{format_account_display(accounts_by_id.get(selected_account_id))}"
     )
 
-render_v13_kpi_row(v13)
-fund_service = FundHoldingsService(client)
-lookthrough_positions = [
-    {
-        "symbol": row.valuation.symbol,
-        "asset_class": row.valuation.asset_class,
-        "weight_pct": row.valuation.weight_pct,
-        "market_value": row.valuation.market_value,
-        "is_cash": row.valuation.is_cash,
-        "participation_status": row.participation_status,
-        "company_name": row.company_name,
-    }
-    for row in dashboard.enriched_positions
-]
-lookthrough = build_portfolio_lookthrough(
-    positions=lookthrough_positions,
-    fund_service=fund_service,
-    total_market_value=float(base_view.priced_total_market_value),
-)
-wealth_metrics = compute_total_wealth_metrics(
-    base_view,
-    participation_covered_pct=dashboard.participation_eligible_weight_pct,
-    research_covered_pct=dashboard.research_coverage_weight_pct,
-)
-render_wealth_os_tabs(
+render_portfolio_executive_hero(
     dashboard=dashboard,
-    metrics=wealth_metrics,
-    lookthrough=lookthrough,
+    v13=v13,
+    wealth_metrics=wealth_metrics,
+    wave3=wave3,
 )
-st.divider()
+
 render_snapshot_controls(wealth, portfolio, intelligence)
 st.divider()
 
-tab_perf, tab_structure, tab_scenarios, tab_decisions, tab_intel, tab_plan, tab_hold = st.tabs(
-    ["Performans", "Yapı", "Senaryolar", "Kararlar", "Zeka", "Planlama", "Pozisyonlar"]
+tab_overview, tab_perf, tab_structure, tab_scenarios, tab_decisions, tab_intel, tab_hold = st.tabs(
+    [
+        "Genel Bakış",
+        "Performans",
+        "Yapı",
+        "Senaryolar",
+        "Kararlar",
+        "Zeka",
+        "Pozisyonlar",
+    ]
 )
+
+with tab_overview:
+    render_portfolio_overview_tab(
+        dashboard=dashboard,
+        v13=v13,
+        wealth_metrics=wealth_metrics,
+        wave3=wave3,
+    )
 
 with tab_perf:
     render_performance_section(v13)
@@ -189,8 +173,9 @@ with tab_perf:
     render_cash_flow_section(v13)
 
 with tab_structure:
-    render_reference_limits_editor(reference_limits_service, str(portfolio["id"]))
     render_construction_section(wave3)
+    st.divider()
+    render_reference_limits_editor(reference_limits_service, str(portfolio["id"]))
     st.divider()
     render_portfolio_charts(dashboard)
 
@@ -209,6 +194,10 @@ with tab_scenarios:
 
 with tab_decisions:
     render_decisions_section(wave3)
+    st.divider()
+    render_goals_section(v13)
+    st.divider()
+    render_journal_section(client, user_id, str(portfolio["id"]), accounts)
     st.divider()
     portfolio_context = build_portfolio_research_context(dashboard, v13=v13)
     brief = build_daily_portfolio_brief(
@@ -251,11 +240,6 @@ with tab_decisions:
     )
 
 with tab_intel:
-    monitor_service.refresh_portfolio_events(
-        portfolio=portfolio,
-        dashboard=dashboard,
-        wave3_view=wave3,
-    )
     brief = build_daily_portfolio_brief(
         portfolio=portfolio,
         dashboard=dashboard,
@@ -312,11 +296,6 @@ with tab_intel:
         on_generate=_generate_pi_ai,
     )
 
-with tab_plan:
-    render_goals_section(v13)
-    st.divider()
-    render_journal_section(client, user_id, str(portfolio["id"]), accounts)
-
 with tab_hold:
     if not selected_account_id:
         render_consolidated_exposure_table(dashboard)
@@ -331,7 +310,8 @@ with tab_hold:
         participation_filter=filters[4],
         research_filter=filters[5],
     )
-    render_position_management_panel(wealth, portfolio, accounts, dashboard)
+    with st.expander("Pozisyon düzenle / kapat", expanded=False):
+        render_position_management_panel(wealth, portfolio, accounts, dashboard)
 
 st.divider()
 st.markdown("**Varlık raporuna git**")

@@ -4,8 +4,9 @@ from typing import Callable, Optional, Sequence
 
 import streamlit as st
 
+from components.nabi_design_system import render_status_badge
 from services.monitor_contract import MonitorEventView
-
+from services.portfolio_intelligence_charts import build_monitor_materiality_chart
 
 CATEGORY_LABELS = {
     "portfolio": "Portföy",
@@ -15,6 +16,20 @@ CATEGORY_LABELS = {
     "thesis": "Tez",
     "participation": "Katılım",
     "wealth": "Wealth",
+}
+
+MATERIALITY_LABELS = {
+    "critical": ("Kritik", "danger"),
+    "high": ("Yüksek", "warning"),
+    "medium": ("Orta", "info"),
+    "low": ("Düşük", "neutral"),
+    "info": ("Bilgi", "neutral"),
+}
+
+REVIEW_LABELS = {
+    "new": ("Yeni", "info"),
+    "reviewed": ("İncelendi", "success"),
+    "dismissed": ("Kapatıldı", "neutral"),
 }
 
 
@@ -34,7 +49,7 @@ def render_monitor_filters() -> tuple[Optional[str], Optional[str], bool]:
                 "Tümü": "Tümü",
                 "new": "Yeni",
                 "reviewed": "İncelendi",
-                "dismissed": "Reddedildi",
+                "dismissed": "Kapatıldı",
             }.get(value, value),
         )
     with col3:
@@ -46,6 +61,16 @@ def render_monitor_filters() -> tuple[Optional[str], Optional[str], bool]:
     )
 
 
+def _materiality_badge(materiality: str) -> str:
+    label, tone = MATERIALITY_LABELS.get(materiality, (materiality.upper(), "neutral"))
+    return render_status_badge(label, tone)
+
+
+def _review_badge(review_status: str) -> str:
+    label, tone = REVIEW_LABELS.get(review_status, (review_status, "neutral"))
+    return render_status_badge(label, tone)
+
+
 def render_monitor_event_card(
     event: MonitorEventView,
     *,
@@ -53,11 +78,15 @@ def render_monitor_event_card(
     on_dismiss: Optional[Callable[[str], None]] = None,
     on_ai: Optional[Callable[[str], None]] = None,
 ) -> None:
+    border = "2px solid #b42318" if event.materiality in {"critical", "high"} else "1px solid #e2e8f0"
     with st.container(border=True):
-        st.markdown(f"**{event.title}**")
+        header_cols = st.columns([3, 1, 1])
+        header_cols[0].markdown(f"**{event.title}**")
+        header_cols[1].markdown(_materiality_badge(event.materiality), unsafe_allow_html=True)
+        header_cols[2].markdown(_review_badge(event.review_status), unsafe_allow_html=True)
         st.caption(
             f"{CATEGORY_LABELS.get(event.event_category, event.event_category)} · "
-            f"{event.materiality.upper()} · {event.review_status}"
+            f"{event.occurred_at[:10] if event.occurred_at else '—'}"
         )
         st.write(event.summary)
         if event.portfolio_impact and event.portfolio_impact.held:
@@ -87,8 +116,9 @@ def render_monitor_event_card(
 
 def render_monitor_feed(events: Sequence[MonitorEventView], **callbacks) -> None:
     if not events:
-        st.info("Seçilen filtrelere uygun monitor olayı yok.")
+        st.info("Şu anda incelemen gereken yeni olay yok.")
         return
+    st.altair_chart(build_monitor_materiality_chart(events), use_container_width=True)
     for event in events:
         render_monitor_event_card(event, **callbacks)
 

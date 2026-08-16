@@ -3,6 +3,7 @@ from supabase import Client
 
 from services.auth_dev_config import is_dev_auto_login_enabled
 from services.auth_service import is_authenticated, sign_out
+from components.nabi_design_system import inject_nabi_theme
 
 
 def configure_page(title: str, icon: str) -> None:
@@ -12,6 +13,7 @@ def configure_page(title: str, icon: str) -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    inject_nabi_theme()
 
 
 def render_sidebar() -> None:

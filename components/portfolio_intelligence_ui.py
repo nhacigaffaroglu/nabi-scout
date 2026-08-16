@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 import streamlit as st
+
+if TYPE_CHECKING:
+    from services.wealth_core_service import WealthCoreService
 
 from services.participation_filter_service import (
     PARTICIPATION_FILTER_ALL,
@@ -76,52 +79,9 @@ def render_portfolio_kpi_cards(dashboard: PortfolioIntelligenceDashboardView) ->
 
 
 def render_portfolio_charts(dashboard: PortfolioIntelligenceDashboardView) -> None:
-    rows = list(dashboard.enriched_positions)
-    if not rows:
-        st.info("Görselleştirme için pozisyon bulunmuyor.")
-        return
+    from components.portfolio_visual_ui import render_allocation_dashboard
 
-    row1_a, row1_b = st.columns(2)
-    with row1_a:
-        st.altair_chart(build_position_allocation_chart(rows), use_container_width=True)
-    with row1_b:
-        st.altair_chart(
-            build_allocation_bar_chart(
-                dashboard.account_allocation,
-                title="Kurum dağılımı",
-            ),
-            use_container_width=True,
-        )
-
-    row2_a, row2_b = st.columns(2)
-    with row2_a:
-        st.altair_chart(
-            build_allocation_bar_chart(
-                dashboard.sector_allocation,
-                title="Sektör dağılımı",
-            ),
-            use_container_width=True,
-        )
-    with row2_b:
-        st.altair_chart(
-            build_allocation_bar_chart(
-                dashboard.participation_allocation,
-                title="Katılım / uygunluk dağılımı",
-            ),
-            use_container_width=True,
-        )
-
-    row3_a, row3_b = st.columns(2)
-    with row3_a:
-        st.altair_chart(
-            build_allocation_bar_chart(
-                dashboard.research_coverage_allocation,
-                title="Araştırma kapsamı",
-            ),
-            use_container_width=True,
-        )
-    with row3_b:
-        st.altair_chart(build_pl_by_position_chart(rows), use_container_width=True)
+    render_allocation_dashboard(dashboard)
 
 
 def _attention_badge(severity: str) -> str:

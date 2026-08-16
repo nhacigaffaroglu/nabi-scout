@@ -150,8 +150,16 @@ class CompanyReportWarningRenderRegressionTests(unittest.TestCase):
             self.assertGreater(len(limitation), 1, msg=f"character split detected: {limitation!r}")
 
     def test_crm_participation_semantics_unchanged(self) -> None:
-        email = os.environ.get("SEC_CONTACT_EMAIL", "test@example.com")
-        sec = SECFinancialClient(contact_email=email)
+        from tests.test_participation_assessment_service import MockSECClient, sample_sec_financials
+
+        sec = MockSECClient(
+            financials=sample_sec_financials(
+                revenue=500_000_000.0,
+                total_debt=10_000_000.0,
+                cash=5_000_000.0,
+                total_assets=50_000_000.0,
+            )
+        )
         view = build_company_report_participation(
             {
                 "symbol": "CRM",
@@ -160,6 +168,7 @@ class CompanyReportWarningRenderRegressionTests(unittest.TestCase):
                 "industry": "Software - Application",
                 "market_cap": 250_000_000_000,
                 "notes": "Salesforce CRM software.",
+                "cik": CRM_CIK,
             },
             sec_client=sec,
             sec_ticker_lookup=CRM_SEC_LOOKUP,

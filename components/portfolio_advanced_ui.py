@@ -8,6 +8,7 @@ import streamlit as st
 from services.portfolio_intelligence_charts import (
     build_income_timeline_chart,
     build_performance_vs_contributions_chart,
+    build_performance_waterfall_chart,
     build_portfolio_value_history_chart,
 )
 from services.portfolio_performance_intelligence_service import PortfolioIntelligenceV13View
@@ -21,10 +22,14 @@ def _money(value: Optional[float], currency: str) -> str:
     return f"{value:,.2f} {currency}"
 
 
+from components.nabi_design_system import render_chart_container, render_limitation_state
+
+
 def render_v13_kpi_row(v13: PortfolioIntelligenceV13View) -> None:
+    """Legacy compact KPI row — prefer executive hero on overview."""
     perf = v13.performance
     currency = v13.dashboard.base.base_currency
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Portföy değeri", _money(perf.current_value, currency))
     c2.metric("Toplam kazanç", _money(perf.total_gain, currency))
     c3.metric(
@@ -32,44 +37,53 @@ def render_v13_kpi_row(v13: PortfolioIntelligenceV13View) -> None:
         f"{perf.return_pct:.2f}%" if perf.return_pct is not None else "—",
     )
     c4.metric("Net katkı", _money(perf.net_contributions, currency))
-    c5.metric("Gelir (temettü)", _money(perf.dividend_income, currency))
-    c6.metric(
-        "Araştırma kapsamı",
-        f"%{v13.dashboard.research_coverage_weight_pct:.1f}",
-    )
 
 
 def render_performance_section(v13: PortfolioIntelligenceV13View) -> None:
-    st.subheader("Performans")
+    render_chart_container(
+        "Performans",
+        subtitle="Persisted snapshot ve işlem verilerinden — sahte geçmiş yok.",
+    )
     perf = v13.performance
     currency = v13.dashboard.base.base_currency
 
     if not perf.performance_available:
-        st.info(
+        render_limitation_state(
+            "Yeterli geçmiş yok",
             "Geçmiş performans için en az iki portföy görüntüsü gerekli. "
-            "Aşağıdaki düğümle güncel durumu kaydedin."
+            "Aşağıdaki düğümle güncel durumu kaydedin.",
         )
     else:
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Yatırım getirisi", _money(perf.investment_gain, currency))
         c2.metric("Net dış akış", _money(perf.net_external_flow, currency))
         c3.metric(
             "Bağlantılı getiri",
-            (
-                f"{perf.linked_return_pct:.2f}%"
-                if perf.linked_return_pct is not None
-                else "—"
-            ),
+            f"{perf.linked_return_pct:.2f}%" if perf.linked_return_pct is not None else "—",
         )
+        c4.metric("Temettü", _money(perf.dividend_income, currency))
         if perf.limitations:
             st.caption(" · ".join(perf.limitations))
 
     history = v13.performance_history.history_points
     if history:
         st.altair_chart(
-            build_portfolio_value_history_chart(history),
+            build_portfolio_value_history_chart(
+                history,
+                net_contributions=perf.net_contributions if perf.net_contributions else None,
+                currency=currency,
+            ),
             use_container_width=True,
         )
+    else:
+        st.info("Yeterli tarihsel snapshot bulunmuyor.")
+
+    if perf.latest_period and perf.latest_period.performance_comparable:
+        st.altair_chart(
+            build_performance_waterfall_chart(perf.latest_period, currency=currency),
+            use_container_width=True,
+        )
+
     if perf.investment_gain is not None or perf.net_contributions:
         st.altair_chart(
             build_performance_vs_contributions_chart(
@@ -78,6 +92,10 @@ def render_performance_section(v13: PortfolioIntelligenceV13View) -> None:
                 currency=currency,
             ),
             use_container_width=True,
+        )
+        st.caption(
+            "Net katkı: yatırma/çekme. Yatırım getirisi: portföy değişimi eksi net dış akış. "
+            "Transferler dış akışa dahil edilmez."
         )
 
 
