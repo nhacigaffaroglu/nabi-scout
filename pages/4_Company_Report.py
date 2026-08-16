@@ -315,6 +315,58 @@ if user_id and symbol and symbol != "—":
             label="Portfolio Intelligence",
             icon="📊",
         )
+        with st.expander("Karar günlüğü / fırsat", expanded=False):
+            try:
+                from services.wealth_decision_journal_service import WealthDecisionJournalService
+                from services.portfolio_opportunity_engine import build_portfolio_opportunities
+                from services.portfolio_intelligence_service import PortfolioIntelligenceService
+                from services.candidate_price_service import CandidatePriceService
+                from services.wealth_core_service import WealthCoreService
+                from services.portfolio_intelligence_enrichment_service import (
+                    build_portfolio_intelligence_dashboard,
+                )
+                from repositories.candidate_repository import CandidateRepository
+
+                wealth = WealthCoreService(client, user_id)
+                pf = wealth.ensure_default_portfolio()
+                entries = WealthDecisionJournalService(client, user_id).list_entries(
+                    symbol=symbol,
+                    portfolio_id=str(pf["id"]),
+                    limit=5,
+                )
+                if entries:
+                    for entry in entries:
+                        st.write(
+                            f"- {(entry.get('created_at') or '')[:10]} · "
+                            f"{entry.get('action_context')} · "
+                            f"{(entry.get('thesis') or '')[:120]}"
+                        )
+                else:
+                    st.caption("Bu sembol için karar kaydı yok.")
+                price_service = CandidatePriceService(client)
+                intel = PortfolioIntelligenceService(
+                    wealth, price_service, nabi_client=client
+                )
+                view = intel.build_view(pf, enrich_nabi=True)
+                dash = build_portfolio_intelligence_dashboard(
+                    view,
+                    accounts_by_id={str(a["id"]): a for a in wealth.list_accounts()},
+                )
+                held = any(
+                    row.valuation.symbol == symbol
+                    for row in dash.enriched_positions
+                )
+                if not held:
+                    candidates = CandidateRepository(client).get_all(limit=200)
+                    opps = build_portfolio_opportunities(
+                        dash.enriched_positions,
+                        candidates,
+                    )
+                    match = next((o for o in opps if o.symbol == symbol), None)
+                    if match:
+                        st.info(match.explanation)
+            except Exception:
+                st.caption("Karar günlüğü / fırsat bağlamı şu an yüklenemedi.")
 
 workflow = build_research_workflow(candidate)
 

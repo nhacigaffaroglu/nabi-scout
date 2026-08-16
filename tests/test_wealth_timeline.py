@@ -618,6 +618,42 @@ class WealthTimelineServiceTests(unittest.TestCase):
         self.assertEqual(payload["user_id"], "user-a")
         self.assertEqual(payload["priced_market_value"], 10000.0)
 
+    def test_save_snapshot_same_day_is_idempotent(self) -> None:
+        view = _sample_intelligence_view()
+        self.wealth.list_liabilities = MagicMock(return_value=[])
+        self.wealth.portfolios.list_for_user = MagicMock(
+            return_value=[{"id": "pf-1", "user_id": "user-a"}]
+        )
+        existing_row = {
+            "id": "snap-existing",
+            "user_id": "user-a",
+            "portfolio_id": "pf-1",
+            "captured_at": "2026-08-13T12:00:00+00:00",
+            "base_currency": "USD",
+            "priced_market_value": 10000.0,
+            "total_cost_basis": 9000.0,
+            "unrealized_pl": 1000.0,
+            "cash_value": 8900.0,
+            "invested_value": 1100.0,
+            "liabilities_total": 0,
+            "net_wealth_partial": 10000.0,
+            "priced_position_coverage_pct": 100.0,
+            "unpriced_position_count": 0,
+            "mixed_currency_warning": False,
+            "valuation_payload": {},
+            "created_at": "2026-08-13T12:00:00+00:00",
+        }
+        self.service.snapshots.find_for_portfolio_on_date = MagicMock(
+            return_value=existing_row
+        )
+        self.service.snapshots.insert = MagicMock()
+        saved = self.service.save_snapshot_from_view(
+            {"id": "pf-1", "name": "Main", "base_currency": "USD"},
+            view,
+        )
+        self.assertEqual(saved.id, "snap-existing")
+        self.service.snapshots.insert.assert_not_called()
+
     def test_save_snapshot_rejects_foreign_portfolio(self) -> None:
         view = _sample_intelligence_view()
         self.wealth.portfolios.list_for_user = MagicMock(return_value=[])

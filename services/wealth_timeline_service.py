@@ -87,10 +87,22 @@ class WealthTimelineService:
             portfolio_id,
             view.base_currency,
         )
+        captured_at = self._now_iso()
+        snapshot_date = WealthPortfolioSnapshotRepository.utc_date_from_captured_at(
+            captured_at
+        )
+        existing = self.snapshots.find_for_portfolio_on_date(
+            self.wealth.user_id,
+            portfolio_id,
+            snapshot_date,
+        )
+        if existing is not None:
+            return snapshot_view_from_row(existing)
+
         payload = snapshot_row_from_intelligence_view(
             user_id=self.wealth.user_id,
             portfolio_id=portfolio_id,
-            captured_at=self._now_iso(),
+            captured_at=captured_at,
             view=view,
             liabilities_total=liabilities_total,
         )

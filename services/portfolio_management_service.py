@@ -12,7 +12,10 @@ from services.wealth_contract import (
     ACCOUNT_TYPE_BROKERAGE,
     TXN_TYPE_BUY,
     TXN_TYPE_DEPOSIT,
+    TXN_TYPE_DIVIDEND,
+    TXN_TYPE_FEE,
     TXN_TYPE_SELL,
+    TXN_TYPE_WITHDRAW,
     WealthValidationError,
     normalize_symbol,
 )
@@ -312,3 +315,49 @@ class PortfolioManagementService:
 
     def deactivate_empty_account(self, account_id: str) -> Dict[str, Any]:
         return self.wealth.deactivate_account(account_id)
+
+    def record_cash_event(
+        self,
+        *,
+        account_id: str,
+        txn_type: str,
+        amount: float,
+        currency: str = "USD",
+        symbol: Optional[str] = None,
+        executed_at: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(txn_type or "").strip().lower()
+        if normalized not in {
+            TXN_TYPE_DIVIDEND,
+            TXN_TYPE_FEE,
+            TXN_TYPE_DEPOSIT,
+            TXN_TYPE_WITHDRAW,
+        }:
+            raise WealthValidationError("Desteklenmeyen nakit işlem türü.")
+        if amount <= 0:
+            raise WealthValidationError("Tutar sıfırdan büyük olmalı.")
+
+        asset = None
+        if normalized == TXN_TYPE_DIVIDEND and symbol:
+            sym = normalize_symbol(symbol)
+            asset = self.wealth.register_asset(
+                symbol=sym,
+                market="US",
+                asset_class=ASSET_CLASS_EQUITY,
+                currency=currency.strip().upper(),
+            )
+        elif normalized in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW, TXN_TYPE_FEE}:
+            asset = self.wealth.ensure_cash_asset(currency.strip().upper())
+
+        return self.wealth.post_transaction(
+            account_id=account_id,
+            txn_type=normalized,
+            quantity=amount if normalized == TXN_TYPE_DIVIDEND else 0.0,
+            amount=amount,
+            currency=currency.strip().upper(),
+            asset_id=str(asset["id"]) if asset else None,
+            price=1.0 if asset else None,
+            executed_at=_parse_executed_at(executed_at) if executed_at else None,
+            notes=notes,
+        )

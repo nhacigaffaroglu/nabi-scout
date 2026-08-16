@@ -92,6 +92,10 @@ class PortfolioAttentionItem:
     severity: str
     title: str
     detail: str
+    affected_symbols: Tuple[str, ...] = ()
+    metric_value: Optional[float] = None
+    threshold: Optional[float] = None
+    evidence_source: str = "portfolio_intelligence"
 
 
 @dataclass(frozen=True)

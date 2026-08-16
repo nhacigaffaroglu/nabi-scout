@@ -42,6 +42,12 @@ class PortfolioResearchContext:
     concentration: Dict[str, Any]
     attention_items: Tuple[Dict[str, Any], ...]
     data_quality: Dict[str, Any]
+    performance: Optional[Dict[str, Any]] = None
+    income: Optional[Dict[str, Any]] = None
+    cash_flow: Optional[Dict[str, Any]] = None
+    change_events: Tuple[Dict[str, Any], ...] = ()
+    goal_projections: Tuple[Dict[str, Any], ...] = ()
+    opportunity_candidates: Tuple[Dict[str, Any], ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -67,6 +73,8 @@ def _attention_to_dict(item: PortfolioAttentionItem) -> Dict[str, Any]:
 
 def build_portfolio_research_context(
     dashboard: PortfolioIntelligenceDashboardView,
+    *,
+    v13: Optional[Any] = None,
 ) -> PortfolioResearchContext:
     base = dashboard.base
     positions: List[Dict[str, Any]] = []
@@ -136,8 +144,81 @@ def build_portfolio_research_context(
         for slice_row in dashboard.account_allocation
     ]
 
+    schema_version = "portfolio_research_context_v2"
+    performance_payload = None
+    income_payload = None
+    cash_flow_payload = None
+    change_payload: Tuple[Dict[str, Any], ...] = ()
+    goals_payload: Tuple[Dict[str, Any], ...] = ()
+    opportunity_payload: Tuple[Dict[str, Any], ...] = ()
+
+    if v13 is not None:
+        schema_version = "portfolio_research_context_v3"
+        perf = v13.performance
+        performance_payload = {
+            "current_value": perf.current_value,
+            "invested_capital": perf.invested_capital,
+            "net_contributions": perf.net_contributions,
+            "investment_gain": perf.investment_gain,
+            "dividend_income": perf.dividend_income,
+            "fee_total": perf.fee_total,
+            "return_pct": perf.return_pct,
+            "linked_return_pct": perf.linked_return_pct,
+            "performance_available": perf.performance_available,
+            "limitations": list(perf.limitations),
+        }
+        income_payload = {
+            "total_dividends": v13.income.total_dividends,
+            "dividends_ytd": v13.income.dividends_ytd,
+            "trailing_twelve_months": v13.income.trailing_twelve_months,
+            "income_yield_pct": v13.income.income_yield_pct,
+        }
+        cash_flow_payload = {
+            "total_deposits": v13.cash_flow.total_deposits,
+            "total_withdrawals": v13.cash_flow.total_withdrawals,
+            "net_external_flow": v13.cash_flow.net_external_flow,
+        }
+        change_payload = tuple(
+            {
+                "code": event.code,
+                "severity": event.severity,
+                "title": event.title,
+                "detail": event.detail,
+                "metric_value": event.metric_value,
+                "previous_value": event.previous_value,
+                "affected_symbols": list(event.affected_symbols),
+            }
+            for event in v13.change_events
+        )
+        goals_payload = tuple(
+            {
+                "goal_title": goal.goal_title,
+                "target_value": goal.target_value,
+                "target_date": goal.target_date,
+                "scenarios": [
+                    {
+                        "label": scenario.label,
+                        "projected_value": scenario.projected_value,
+                        "funding_gap": scenario.funding_gap,
+                        "assumptions_note": scenario.assumptions_note,
+                    }
+                    for scenario in goal.scenarios
+                ],
+            }
+            for goal in v13.goal_projections
+        )
+        opportunity_payload = tuple(
+            {
+                "symbol": row.symbol,
+                "opportunity_label": row.opportunity_label,
+                "explanation": row.explanation,
+                "participation_status": row.participation_status,
+            }
+            for row in v13.opportunities
+        )
+
     return PortfolioResearchContext(
-        schema_version="portfolio_research_context_v2",
+        schema_version=schema_version,
         portfolio_id=base.portfolio_id,
         portfolio_name=base.portfolio_name,
         base_currency=base.base_currency,
@@ -188,7 +269,17 @@ def build_portfolio_research_context(
             "limitations": list(dashboard.coverage.limitations),
             "fx_supported": base.fx_supported,
             "mixed_currency_warning": base.mixed_currency_warning,
+            "snapshot_count": v13.data_quality.snapshot_count if v13 else None,
+            "performance_available": (
+                v13.data_quality.performance_available if v13 else None
+            ),
         },
+        performance=performance_payload,
+        income=income_payload,
+        cash_flow=cash_flow_payload,
+        change_events=change_payload,
+        goal_projections=goals_payload,
+        opportunity_candidates=opportunity_payload,
     )
 
 
