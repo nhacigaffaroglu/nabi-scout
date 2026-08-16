@@ -1,0 +1,63 @@
+name: Daily Monitor Refresh
+
+on:
+  schedule:
+    # 09:00 Europe/Istanbul (UTC+3, no DST) == 06:00 UTC
+    # Runs after daily scan (03:00 UTC) and universe expansion (05:00 UTC).
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      allow_second_run_today:
+        description: "Allow a second monitor refresh for today's date"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-daily-monitor
+  cancel-in-progress: false
+
+jobs:
+  daily-monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate required secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL"; exit 1; }
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY service role)"
+            exit 1
+          fi
+
+      - name: Run daily monitor refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GITHUB_STEP_SUMMARY: ${{ github.step_summary }}
+        run: |
+          set -eo pipefail
+          args=(--trigger-type "${{ github.event_name == 'workflow_dispatch' && 'workflow_dispatch' || 'scheduled' }}")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.allow_second_run_today }}" = "true" ]; then
+            args+=(--allow-second-run-today)
+          fi
+          python scripts/run_daily_monitor_refresh.py "${args[@]}"

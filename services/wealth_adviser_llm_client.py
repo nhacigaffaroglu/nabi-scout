@@ -43,7 +43,18 @@ class WealthAdviserLlmClient:
     def supports_temperature(cls, model: str) -> bool:
         return not cls.uses_max_completion_tokens(model)
 
-    def build_chat_completion_body(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    @classmethod
+    def effective_max_output_tokens(cls, model: str, configured: int) -> int:
+        """Reasoning models may consume the full completion budget before content."""
+        minimum = 2400 if cls.uses_max_completion_tokens(model) else configured
+        return max(minimum, configured)
+
+    def build_chat_completion_body(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        max_output_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         body: Dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
@@ -60,7 +71,8 @@ class WealthAdviserLlmClient:
             if self.uses_max_completion_tokens(self.config.model)
             else "max_tokens"
         )
-        body[token_param] = self.config.max_output_tokens
+        configured = max_output_tokens or self.config.max_output_tokens
+        body[token_param] = self.effective_max_output_tokens(self.config.model, configured)
         return body
 
     @staticmethod
@@ -126,47 +138,65 @@ class WealthAdviserLlmClient:
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
         }
-        body = self.build_chat_completion_body(messages)
-        try:
-            response = requests.post(
-                self.OPENAI_CHAT_URL,
-                headers=headers,
-                json=body,
-                timeout=self.config.timeout_seconds,
-            )
-        except requests.Timeout as exc:
-            raise WealthAdviserLlmError(
-                "Adviser LLM request timed out.",
-                error_class="timeout",
-            ) from exc
-        except requests.RequestException as exc:
-            raise WealthAdviserLlmError(
-                f"Adviser LLM request failed: {exc}",
-                error_class="network",
-            ) from exc
+        token_budget = self.effective_max_output_tokens(
+            self.config.model,
+            self.config.max_output_tokens,
+        )
+        max_budget = 4000
+        for attempt in range(2):
+            body = self.build_chat_completion_body(messages, max_output_tokens=token_budget)
+            try:
+                response = requests.post(
+                    self.OPENAI_CHAT_URL,
+                    headers=headers,
+                    json=body,
+                    timeout=self.config.timeout_seconds,
+                )
+            except requests.Timeout as exc:
+                raise WealthAdviserLlmError(
+                    "Adviser LLM request timed out.",
+                    error_class="timeout",
+                ) from exc
+            except requests.RequestException as exc:
+                raise WealthAdviserLlmError(
+                    f"Adviser LLM request failed: {exc}",
+                    error_class="network",
+                ) from exc
 
-        if response.status_code >= 400:
-            raise WealthAdviserLlmError(
-                f"Adviser LLM HTTP {response.status_code}",
-                error_class="provider",
-                status_code=response.status_code,
-            )
+            if response.status_code >= 400:
+                raise WealthAdviserLlmError(
+                    f"Adviser LLM HTTP {response.status_code}",
+                    error_class="provider",
+                    status_code=response.status_code,
+                )
 
-        try:
-            payload = response.json()
-            content = payload["choices"][0]["message"]["content"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise WealthAdviserLlmError(
-                "Adviser LLM returned malformed response.",
-                error_class="parse",
-            ) from exc
+            try:
+                payload = response.json()
+                content = payload["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise WealthAdviserLlmError(
+                    "Adviser LLM returned malformed response.",
+                    error_class="parse",
+                ) from exc
 
-        if not isinstance(content, str) or not content.strip():
-            raise WealthAdviserLlmError(
-                "Adviser LLM returned empty content.",
-                error_class="parse",
-            )
-        return content.strip()
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+
+            metadata = self.extract_completion_metadata(payload)
+            if (
+                attempt == 0
+                and self.uses_max_completion_tokens(self.config.model)
+                and metadata.get("finish_reason") == "length"
+                and token_budget < max_budget
+            ):
+                token_budget = min(max(token_budget * 2, 4000), max_budget)
+                continue
+            break
+
+        raise WealthAdviserLlmError(
+            "Adviser LLM returned empty content.",
+            error_class="parse",
+        )
 
     @classmethod
     def from_config(cls, config: AdviserLlmConfig) -> "WealthAdviserLlmClient":

@@ -1,5 +1,6 @@
 import streamlit as st
 
+from components.portfolio_ai_adviser_ui import render_portfolio_ai_adviser_section
 from components.portfolio_advanced_ui import (
     render_cash_event_form,
     render_cash_flow_section,
@@ -35,9 +36,10 @@ from services.portfolio_intelligence_enrichment_service import (
     build_portfolio_intelligence_dashboard,
 )
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
-from services.portfolio_performance_intelligence_service import (
-    PortfolioPerformanceIntelligenceService,
-)
+from services.daily_portfolio_brief_service import build_daily_portfolio_brief
+from services.monitor_intelligence_service import MonitorIntelligenceService
+from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
+from services.portfolio_research_context import build_portfolio_research_context
 from services.ui import prepare_protected_page
 from services.wealth_core_service import WealthCoreService
 
@@ -65,6 +67,8 @@ performance_intel = PortfolioPerformanceIntelligenceService(
     wealth,
     nabi_client=client,
 )
+monitor_service = MonitorIntelligenceService(client, user_id)
+portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
 
 st.title("📊 Portfolio Intelligence")
 st.caption(
@@ -134,6 +138,21 @@ with tab_alloc:
     render_portfolio_charts(dashboard)
 
 with tab_intel:
+    monitor_service.refresh_portfolio_events(portfolio=portfolio, dashboard=dashboard)
+    brief = build_daily_portfolio_brief(
+        portfolio=portfolio,
+        dashboard=dashboard,
+        monitor=monitor_service,
+    )
+    st.markdown("**Günlük portföy özeti (deterministik)**")
+    st.caption(
+        f"Toplam olay: {brief.event_counts.get('total', 0)} · "
+        f"Yüksek/Kritik: {brief.event_counts.get('high_critical', 0)}"
+    )
+    if brief.unresolved_attention:
+        for item in brief.unresolved_attention[:5]:
+            st.markdown(f"- {item}")
+    st.divider()
     render_change_section(v13)
     st.divider()
     render_attention_section(dashboard)
@@ -141,6 +160,40 @@ with tab_intel:
     render_opportunity_section(v13)
     st.divider()
     render_data_quality_section(v13)
+    st.divider()
+    portfolio_context = build_portfolio_research_context(dashboard, v13=v13)
+    ai_payload = portfolio_ai_service.build_input_payload(
+        portfolio_context=portfolio_context,
+        brief=brief,
+    )
+    ai_identity = portfolio_ai_service.compute_semantic_identity(ai_payload)
+    ai_cached = st.session_state.get("pi_ai_cached_view")
+    ai_cached_identity = st.session_state.get("pi_ai_cached_identity")
+    ai_persisted = portfolio_ai_service.fetch_persisted(
+        portfolio_id=str(portfolio["id"]),
+        semantic_identity=ai_identity,
+    )
+    ai_display = ai_persisted or (ai_cached if ai_cached_identity == ai_identity else None)
+
+    def _generate_pi_ai() -> None:
+        result = portfolio_ai_service.generate(
+            portfolio_id=str(portfolio["id"]),
+            portfolio_context=portfolio_context,
+            brief=brief,
+            cached_view=ai_cached,
+            cached_identity=ai_cached_identity,
+        )
+        st.session_state["pi_ai_cached_view"] = result
+        st.session_state["pi_ai_cached_identity"] = ai_identity
+        st.rerun()
+
+    render_portfolio_ai_adviser_section(
+        portfolio_id=str(portfolio["id"]),
+        response=ai_display,
+        semantic_identity=ai_identity,
+        stale=ai_persisted is not None and ai_cached_identity not in (None, ai_identity),
+        on_generate=_generate_pi_ai,
+    )
 
 with tab_plan:
     render_goals_section(v13)

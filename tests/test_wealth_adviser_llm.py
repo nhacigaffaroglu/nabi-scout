@@ -637,6 +637,37 @@ class WealthAdviserLlmClientRequestTests(unittest.TestCase):
         self.assertNotIn("max_tokens", body)
         self.assertNotIn("temperature", body)
         self.assertEqual(body["reasoning_effort"], "minimal")
+        self.assertEqual(body["max_completion_tokens"], 2400)
+
+    def test_complete_retries_gpt5_when_length_exhausts_reasoning_budget(self) -> None:
+        client = WealthAdviserLlmClient(
+            AdviserLlmConfig(
+                enabled=True,
+                provider="openai",
+                model="gpt-5-mini",
+                timeout_seconds=30,
+                max_output_tokens=1200,
+                temperature=0.2,
+                api_key="test-key",
+            )
+        )
+        empty = MagicMock()
+        empty.status_code = 200
+        empty.json.return_value = {
+            "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 2400, "completion_tokens_details": {"reasoning_tokens": 2400}},
+        }
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.json.return_value = {
+            "choices": [{"message": {"content": '{"answer":"ok"}'}, "finish_reason": "stop"}],
+        }
+        with patch("services.wealth_adviser_llm_client.requests.post", side_effect=[empty, ok]) as post:
+            content = client.complete([{"role": "user", "content": "hi"}])
+        self.assertEqual(content, '{"answer":"ok"}')
+        self.assertEqual(post.call_count, 2)
+        second_body = post.call_args_list[1].kwargs["json"]
+        self.assertEqual(second_body["max_completion_tokens"], 4000)
 
     def test_extract_completion_metadata_reports_empty_content_and_reasoning_tokens(self) -> None:
         payload = {

@@ -15,6 +15,7 @@ from services.participation_filter_service import (
     COMPANY_REPORT_PARTICIPATION_FILTERS,
     filter_candidates_by_participation,
 )
+from services.monitor_intelligence_service import MonitorIntelligenceService
 from services.portfolio_context_service import build_symbol_portfolio_context
 from services.company_intelligence_service import build_company_intelligence
 from repositories.participation_assessment_repository import (
@@ -315,6 +316,33 @@ if user_id and symbol and symbol != "—":
             label="Portfolio Intelligence",
             icon="📊",
         )
+        try:
+            monitor = MonitorIntelligenceService(client, user_id)
+            from services.portfolio_intelligence_service import PortfolioIntelligenceService
+            from services.candidate_price_service import CandidatePriceService
+            from services.portfolio_intelligence_enrichment_service import (
+                build_portfolio_intelligence_dashboard,
+            )
+            from services.wealth_core_service import WealthCoreService
+
+            wealth = WealthCoreService(client, user_id)
+            pf = wealth.ensure_default_portfolio()
+            price_service = CandidatePriceService(client)
+            intel = PortfolioIntelligenceService(wealth, price_service, nabi_client=client)
+            view = intel.build_view(pf, enrich_nabi=False)
+            dash = build_portfolio_intelligence_dashboard(view)
+            monitor_summary = monitor.symbol_summary(symbol, dashboard=dash)
+            if monitor_summary.get("event_count"):
+                st.markdown("**Monitor**")
+                st.caption(
+                    f"Olay: {monitor_summary['event_count']} · "
+                    f"Yüksek öncelik (yeni): {monitor_summary['unresolved_high_priority']}"
+                )
+                if monitor_summary.get("latest_title"):
+                    st.write(monitor_summary["latest_title"])
+                st.page_link("pages/12_Monitor.py", label="NABI Monitor", icon="📡")
+        except Exception:
+            pass
         with st.expander("Karar günlüğü / fırsat", expanded=False):
             try:
                 from services.wealth_decision_journal_service import WealthDecisionJournalService

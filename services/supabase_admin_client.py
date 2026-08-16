@@ -86,6 +86,22 @@ def apply_local_secrets_to_env() -> None:
     _set("FMP_API_KEY", str(fmp.get("api_key") or "").strip())
     _set("SEC_CONTACT_EMAIL", str(sec.get("contact_email") or "").strip())
 
+    wealth = secrets.get("wealth_adviser") or {}
+    adviser_key = str(wealth.get("api_key") or wealth.get("llm_api_key") or "").strip()
+    if adviser_key:
+        _set("WEALTH_ADVISER_LLM_API_KEY", adviser_key)
+        _set("WEALTH_ADVISER_LLM_ENABLED", "true")
+    _set("WEALTH_ADVISER_LLM_MODEL", str(wealth.get("model") or "").strip())
+    _set("WEALTH_ADVISER_LLM_PROVIDER", str(wealth.get("provider") or "openai").strip())
+    _set(
+        "WEALTH_ADVISER_LLM_MAX_OUTPUT_TOKENS",
+        str(wealth.get("max_output_tokens") or "").strip(),
+    )
+    _set(
+        "WEALTH_ADVISER_LLM_TIMEOUT_SECONDS",
+        str(wealth.get("timeout") or wealth.get("timeout_seconds") or "").strip(),
+    )
+
 
 def _dev_auth_from_secrets(secrets: Mapping[str, object]) -> DevAuthConfig:
     section = secrets.get("dev_auth")
