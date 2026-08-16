@@ -39,6 +39,7 @@ from services.wealth_adviser_conversation import (
 from services.wealth_adviser_interpretation_service import WealthAdviserInterpretationService
 from services.wealth_adviser_preference_engine import build_adviser_user_context
 from services.wealth_adviser_profile_contract import GoalType, InvestorProfile
+from services.wealth_adviser_service import WealthAdviserService
 from services.wealth_adviser_profile_service import (
     GOAL_TYPE_OPTIONS,
     PROFILE_ENUM_OPTIONS,

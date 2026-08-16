@@ -654,6 +654,14 @@ class WealthAdviserUiTests(unittest.TestCase):
         self.assertIn('"Danışman"', source)
         self.assertIn("tab_adviser", source)
 
+    def test_wealth_page_imports_wealth_adviser_service(self) -> None:
+        source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
+        if "WealthAdviserService" in source:
+            self.assertIn(
+                "from services.wealth_adviser_service import WealthAdviserService",
+                source,
+            )
+
     def test_deterministic_only_caption_visible(self) -> None:
         block = self._adviser_block()
         self.assertIn("deterministik wealth verileri kaynak gerçektir", block.lower())
