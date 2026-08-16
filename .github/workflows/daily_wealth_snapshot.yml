@@ -2,7 +2,8 @@ name: Daily Wealth Snapshot
 
 on:
   schedule:
-    - cron: "0 7 * * *"
+    # 09:30 Europe/Istanbul (UTC+3) == 06:30 UTC — after fund holdings (05:30 UTC).
+    - cron: "30 6 * * *"
   workflow_dispatch:
     inputs:
       user_id:

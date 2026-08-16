@@ -1,4 +1,27 @@
-# NABI Scout v1
+# NABI Scout 2.0
+
+Bağımsız yatırım işletim sistemi (Streamlit + Supabase). Keşfet → Araştır → Karar → Portföy → Monitör → Öğren.
+
+**Başlatma:** `streamlit run app.py`
+
+**Normal render maliyeti (Dashboard / Portföy Zekâsı / Monitör):** LLM=0, FMP=0, SEC=0, uzak FX=0, uzak fon=0
+
+**Günlük otomasyon (UTC / İstanbul UTC+3):**
+
+| Job | UTC | İstanbul |
+|-----|-----|----------|
+| Daily Scan | 03:00 | 06:00 |
+| FX Refresh | 04:00 | 07:00 |
+| Universe Expansion | 05:00 | 08:00 |
+| Fund Holdings | 05:30 | 08:30 |
+| Wealth Snapshot | 06:30 | 09:30 |
+| Monitor Refresh | 07:30 | 10:30 |
+
+Doğrulama: `python3 scripts/verify_nabi_v2_live.py`
+
+---
+
+# NABI Scout v1 (legacy notes)
 
 Bağımsız yatırım araştırma ve portföy analizi platformu (Streamlit + Supabase + FMP).
 

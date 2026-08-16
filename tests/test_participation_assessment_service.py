@@ -143,6 +143,8 @@ class SecFlowTests(unittest.TestCase):
             market_cap_evidence=None,
             provider_calls={},
             warnings=(),
+            revenue_attribution=None,
+            revenue_segments=(),
         )
         mock_resolver.return_value = MagicMock(
             inputs=ParticipationFinancialInputs(symbol="AAPL"),

@@ -2,9 +2,9 @@ name: Daily Monitor Refresh
 
 on:
   schedule:
-    # 09:00 Europe/Istanbul (UTC+3, no DST) == 06:00 UTC
-    # Runs after daily scan (03:00 UTC) and universe expansion (05:00 UTC).
-    - cron: "0 6 * * *"
+    # 10:30 Europe/Istanbul (UTC+3) == 07:30 UTC
+    # Runs after wealth snapshot (06:30 UTC) so portfolio snapshot deltas are available.
+    - cron: "30 7 * * *"
   workflow_dispatch:
     inputs:
       allow_second_run_today:

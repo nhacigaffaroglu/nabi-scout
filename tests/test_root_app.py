@@ -42,7 +42,8 @@ class SidebarReleaseClosureTests(unittest.TestCase):
     def test_sidebar_does_not_show_stale_v0_3_label(self) -> None:
         source = Path("services/ui.py").read_text(encoding="utf-8")
         self.assertNotIn("Candidate Intelligence v0.3", source)
-        self.assertIn("Research Platform", source)
+        self.assertIn("NABI Scout 2.0", source)
+        self.assertIn("Yatırım İşletim Sistemi", source)
 
 
 if __name__ == "__main__":

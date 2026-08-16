@@ -42,11 +42,16 @@ from services.sec_financial_client import SECFinancialClient
 from services.symbol_resolver_service import SymbolNotFoundError
 from services.ui_formatters import format_datetime_tr, format_research_status
 from services.research_workflow_service import normalize_research_status
+from components.nabi_home_dashboard import render_nabi_home_executive
 from services.ui import prepare_protected_page
 
 client = prepare_protected_page("Dashboard | NABI Scout", "📊")
 
-st.title("📊 Scout Dashboard")
+st.title("📊 NABI Scout 2.0 — Ana Sayfa")
+st.caption("Persisted özet — normal render LLM/FMP/SEC/FX uzak çağrısı yapmaz.")
+render_nabi_home_executive(client)
+st.divider()
+st.subheader("Scout Araçları")
 repo = CandidateRepository(client)
 scan_repo = ScanRepository(client)
 watchlist_repo = WatchlistRepository(client)

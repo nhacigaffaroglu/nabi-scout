@@ -186,8 +186,10 @@ class CompanyReportWarningRenderRegressionTests(unittest.TestCase):
             self.assertEqual(revenue_rule.outcome, RULE_OUTCOME_INSUFFICIENT_DATA)
 
     def test_aapl_production_path_regression(self) -> None:
-        email = os.environ.get("SEC_CONTACT_EMAIL", "test@example.com")
-        sec = SECFinancialClient(contact_email=email)
+        from tests.test_participation_aapl_forensic import _aapl_like_sec_financials
+        from tests.test_participation_assessment_service import MockSECClient
+
+        sec = MockSECClient(financials=_aapl_like_sec_financials())
         view = build_company_report_participation(
             {
                 "symbol": "AAPL",
@@ -195,6 +197,7 @@ class CompanyReportWarningRenderRegressionTests(unittest.TestCase):
                 "sector_theme": "Technology",
                 "industry": "Consumer Electronics",
                 "market_cap": 3_000_000_000_000,
+                "cik": 320193,
             },
             sec_client=sec,
             sec_ticker_lookup={"AAPL": {"symbol": "AAPL", "cik": "320193"}},

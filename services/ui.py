@@ -16,11 +16,24 @@ def configure_page(title: str, icon: str) -> None:
 
 def render_sidebar() -> None:
     with st.sidebar:
-        st.title("NABI Scout")
-        st.caption("Investment Intelligence")
+        st.title("NABI Scout 2.0")
+        st.caption("Yatırım İşletim Sistemi")
         st.divider()
-        st.caption("Research Platform")
-        st.write("Wealth OS verilerini değiştirmez.")
+        st.markdown("**Ana Sayfa**")
+        st.page_link("pages/1_Dashboard.py", label="Dashboard", icon="📊")
+        st.markdown("**Araştır**")
+        st.page_link("pages/2_Aday_Havuzu.py", label="Aday Havuzu", icon="🎯")
+        st.page_link("pages/2_Scout_Tarama.py", label="Scout Tarama", icon="🔭")
+        st.page_link("pages/3_Research_Monitor.py", label="Araştırma Monitörü", icon="🔬")
+        st.page_link("pages/6_Izleme_Listesi.py", label="İzleme Listesi", icon="⭐")
+        st.markdown("**Portföy**")
+        st.page_link("pages/11_Portfolio_Intelligence.py", label="Portföy Zekâsı", icon="💼")
+        st.page_link("pages/10_Wealth.py", label="Wealth (Danışman)", icon="🏦")
+        st.markdown("**Monitör & Kararlar**")
+        st.page_link("pages/12_Monitor.py", label="Monitör", icon="📡")
+        st.divider()
+        st.page_link("pages/7_Ayarlar.py", label="Ayarlar", icon="⚙️")
+        st.caption("Wealth OS verilerini değiştirmez.")
         if is_authenticated():
             email = st.session_state.get("nabi_auth_user_email")
             if email:

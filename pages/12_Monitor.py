@@ -31,21 +31,32 @@ intelligence = PortfolioIntelligenceService(wealth, price_service, nabi_client=c
 monitor = MonitorIntelligenceService(client, user_id)
 ai_service = PortfolioAIAdviserService(client, user_id)
 
-st.title("📡 NABI Monitor")
-st.caption("Bugün ne değişti? Deterministik olay akışı — sayfa yenilemesinde LLM/FMP/SEC çağrısı yok.")
+st.title("📡 Monitör")
+st.caption("Bugün ne değişti? Persisted olay akışı — sayfa yenilemesinde LLM/FMP/SEC çağrısı yok.")
 
-with st.spinner("Monitor olayları yükleniyor…"):
+with st.spinner("Monitör verileri yükleniyor…"):
     base_view = intelligence.build_view(portfolio, enrich_nabi=True)
     dashboard = build_portfolio_intelligence_dashboard(base_view)
-    created, skipped = monitor.refresh_portfolio_events(portfolio=portfolio, dashboard=dashboard)
     brief = build_daily_portfolio_brief(
         portfolio=portfolio,
         dashboard=dashboard,
         monitor=monitor,
     )
 
-if created or skipped:
-    st.caption(f"Olay taraması: {created} yeni, {skipped} mevcut (dedupe).")
+refresh_col, _ = st.columns([1, 3])
+with refresh_col:
+    if st.button("Olayları yenile", key="monitor_refresh_events", help="Portföy olaylarını deterministik olarak günceller."):
+        with st.spinner("Olay taraması çalışıyor…"):
+            created, skipped = monitor.refresh_portfolio_events(portfolio=portfolio, dashboard=dashboard)
+        st.session_state["monitor_last_refresh"] = {"created": created, "skipped": skipped}
+        st.rerun()
+
+last_refresh = st.session_state.get("monitor_last_refresh")
+if last_refresh:
+    st.caption(
+        f"Son tarama: {last_refresh.get('created', 0)} yeni, "
+        f"{last_refresh.get('skipped', 0)} mevcut (dedupe)."
+    )
 
 render_daily_brief_summary(brief)
 

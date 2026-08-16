@@ -48,7 +48,7 @@ class MonitorWorkflowContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", content)
         self.assertIn("SUPABASE_SERVICE_ROLE_KEY", content)
         self.assertIn("workflow_dispatch", content)
-        self.assertIn('cron: "0 6 * * *"', content)
+        self.assertIn('cron: "30 7 * * *"', content)
         self.assertIn("run_daily_monitor_refresh.py", content)
         self.assertNotIn("OPENAI", content)
         self.assertNotIn("sb_publishable_", content)

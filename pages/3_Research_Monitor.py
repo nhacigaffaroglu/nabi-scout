@@ -24,10 +24,10 @@ from services.ui import prepare_protected_page
 
 client = prepare_protected_page("Research Monitor | NABI Scout", "🔬")
 
-st.title("🔬 Research Monitor")
+st.title("🔬 Araştırma Monitörü")
 st.caption(
-    "Son taramalar arasındaki anlamlı değişiklikleri ve bugünkü araştırma "
-    "önceliklerini gösterir."
+    "Araştırma pipeline'ı — son taramalar arasındaki anlamlı değişiklikler ve "
+    "bugünkü araştırma öncelikleri. Portföy Monitörü'nden ayrıdır."
 )
 
 candidate_repo = CandidateRepository(client)

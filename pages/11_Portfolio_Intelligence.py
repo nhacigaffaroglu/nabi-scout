@@ -89,7 +89,7 @@ portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
 wave3_service = Wave3IntelligenceService(client, user_id, wealth)
 reference_limits_service = PortfolioReferenceLimitsService(client, user_id)
 
-st.title("📊 Portfolio Intelligence")
+st.title("💼 Portföy Zekâsı")
 st.caption(
     "Wealth OS — portföy analitiği, performans, gelir, hedefler ve araştırma "
     "farkındalığı. Sayfa yenilemesinde harici sağlayıcı veya LLM çağrısı yapılmaz."

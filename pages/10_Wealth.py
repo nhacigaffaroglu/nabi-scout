@@ -99,6 +99,15 @@ def _render_allocation(title: str, slices, currency: str) -> None:
 
 
 client = prepare_protected_page("Wealth | NABI Scout", "💰")
+
+st.info(
+    "**Portföy analitiği** için **Portföy Zekâsı** sayfasını kullanın. "
+    "Bu sayfa Wealth Danışman (AI) modülünü içerir."
+)
+if st.button("Portföy Zekâsı'na git", key="wealth_go_pi"):
+    st.switch_page("pages/11_Portfolio_Intelligence.py")
+st.divider()
+
 user_id = get_current_user_id(client)
 wealth = WealthCoreService(client, user_id)
 price_service = _load_price_service()
