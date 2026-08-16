@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, Tuple
 
 from repositories.candidate_repository import CandidateRepository
+from services.asset_capability_contract import capability_for_asset_class
 from services.portfolio_intelligence_contract import PriceQuote
 from services.wealth_price_service import is_cash_asset, normalize_currency
 
@@ -49,6 +50,16 @@ class CandidatePriceService:
                 currency=asset_currency,
                 available=True,
                 source="nominal_cash",
+            )
+
+        profile = capability_for_asset_class(asset_class)
+        if profile.pricing_method in {"manual", "unsupported"}:
+            return PriceQuote(
+                price=None,
+                currency=normalize_currency(currency),
+                available=False,
+                source=self.PROVIDER_NAME,
+                error="unsupported_pricing",
             )
 
         sym = str(symbol or "").strip().upper()

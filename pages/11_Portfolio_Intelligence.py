@@ -52,6 +52,13 @@ from services.portfolio_reference_limits_service import PortfolioReferenceLimits
 from services.wave3_intelligence_service import Wave3IntelligenceService
 from services.ui import prepare_protected_page
 from services.wealth_core_service import WealthCoreService
+from components.portfolio_wealth_os_ui import render_wealth_os_tabs
+from services.asset_capability_contract import route_report_page
+from services.fund_holdings_service import FundHoldingsService
+from services.fund_lookthrough_engine import build_portfolio_lookthrough
+from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
+from services.portfolio_research_context import build_portfolio_research_context
+from services.total_wealth_service import compute_total_wealth_metrics
 
 
 client = prepare_protected_page("Portfolio Intelligence | NABI Scout", "📊")
@@ -138,6 +145,35 @@ if selected_account_id:
     )
 
 render_v13_kpi_row(v13)
+fund_service = FundHoldingsService(client)
+lookthrough_positions = [
+    {
+        "symbol": row.valuation.symbol,
+        "asset_class": row.valuation.asset_class,
+        "weight_pct": row.valuation.weight_pct,
+        "market_value": row.valuation.market_value,
+        "is_cash": row.valuation.is_cash,
+        "participation_status": row.participation_status,
+        "company_name": row.company_name,
+    }
+    for row in dashboard.enriched_positions
+]
+lookthrough = build_portfolio_lookthrough(
+    positions=lookthrough_positions,
+    fund_service=fund_service,
+    total_market_value=float(base_view.priced_total_market_value),
+)
+wealth_metrics = compute_total_wealth_metrics(
+    base_view,
+    participation_covered_pct=dashboard.participation_eligible_weight_pct,
+    research_covered_pct=dashboard.research_coverage_weight_pct,
+)
+render_wealth_os_tabs(
+    dashboard=dashboard,
+    metrics=wealth_metrics,
+    lookthrough=lookthrough,
+)
+st.divider()
 render_snapshot_controls(wealth, portfolio, intelligence)
 st.divider()
 
@@ -289,27 +325,44 @@ with tab_hold:
     render_position_table(
         dashboard,
         symbol_search=filters[0],
-        sector_filter=filters[1],
-        participation_filter=filters[2],
-        research_filter=filters[3],
+        asset_type_filter=filters[1],
+        currency_filter=filters[2],
+        sector_filter=filters[3],
+        participation_filter=filters[4],
+        research_filter=filters[5],
     )
     render_position_management_panel(wealth, portfolio, accounts, dashboard)
 
 st.divider()
-st.markdown("**Şirket raporuna git**")
+st.markdown("**Varlık raporuna git**")
 symbols = sorted(
     {row.valuation.symbol for row in dashboard.enriched_positions if not row.valuation.is_cash}
 )
 if symbols:
+    symbol_rows = {
+        row.valuation.symbol: row.valuation.asset_class
+        for row in dashboard.enriched_positions
+        if not row.valuation.is_cash
+    }
     selected_symbol = st.selectbox("Sembol", symbols, key="pi_report_symbol")
-    if st.button("📄 Company Report", type="primary", key="pi_open_company_report"):
-        from repositories.candidate_repository import CandidateRepository
+    asset_class = symbol_rows.get(selected_symbol, "equity")
+    report_page = route_report_page(asset_class)
+    label = "📄 Fund Intelligence" if report_page == "fund_report" else "📄 Company Report"
+    if st.button(label, type="primary", key="pi_open_asset_report"):
+        if report_page == "fund_report":
+            st.session_state["fund_report_symbol"] = selected_symbol
+            st.query_params["symbol"] = selected_symbol
+            st.switch_page("pages/9_Fund_Report.py")
+        elif report_page == "company_report":
+            from repositories.candidate_repository import CandidateRepository
 
-        repo = CandidateRepository(client)
-        candidate = repo.get_by_symbol(selected_symbol)
-        if candidate:
-            st.session_state["company_report_candidate"] = candidate
+            repo = CandidateRepository(client)
+            candidate = repo.get_by_symbol(selected_symbol)
+            if candidate:
+                st.session_state["company_report_candidate"] = candidate
+            else:
+                st.session_state["company_report_candidate"] = {"symbol": selected_symbol}
+            st.query_params["symbol"] = selected_symbol
+            st.switch_page("pages/4_Company_Report.py")
         else:
-            st.session_state["company_report_candidate"] = {"symbol": selected_symbol}
-        st.query_params["symbol"] = selected_symbol
-        st.switch_page("pages/4_Company_Report.py")
+            st.info("Bu varlık türü için sınırlı detay görünümü; tam rapor yok.")

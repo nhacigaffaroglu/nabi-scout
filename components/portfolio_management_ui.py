@@ -84,6 +84,7 @@ def render_add_holding_form(
         )
         account_id = dict(account_labels)[account_choice]
         symbol = st.text_input("Yatırım aracı / Sembol", placeholder="CRM")
+        display_name = st.text_input("Görünen ad (opsiyonel)", placeholder="Salesforce Inc.")
         asset_class = st.selectbox(
             "Varlık türü",
             ASSET_CLASS_OPTIONS,
@@ -97,6 +98,7 @@ def render_add_holding_form(
             step=0.01,
         )
         currency = st.text_input("Para birimi", value="USD")
+        notes = st.text_area("Not (opsiyonel)", placeholder="Manuel ekleme notu")
         purchase_date = st.date_input("Alış tarihi (opsiyonel)", value=None)
         submitted = st.form_submit_button("Portföye Ekle", type="primary")
 
@@ -112,6 +114,8 @@ def render_add_holding_form(
                 currency=currency,
                 asset_class=asset_class,
                 executed_at=executed_at,
+                notes=notes.strip() or None,
+                name=display_name.strip() or None,
             )
             st.success(f"{symbol.strip().upper()} eklendi.")
             st.rerun()

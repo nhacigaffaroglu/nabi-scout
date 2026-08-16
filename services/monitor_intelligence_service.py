@@ -102,11 +102,100 @@ class MonitorIntelligenceService:
                 created += 1 if inserted else 0
                 skipped += 0 if inserted else 1
 
+        now = self._now_iso()
+        created_w4, skipped_w4 = self._refresh_wave4_events(
+            portfolio_id=portfolio_id,
+            dashboard=dashboard,
+            snapshots=snapshots,
+        )
+        created += created_w4
+        skipped += skipped_w4
+
         held_symbols = self._held_symbols(dashboard)
         for symbol in held_symbols:
             created_part, skipped_part = self._refresh_symbol_events(symbol)
             created += created_part
             skipped += skipped_part
+        return created, skipped
+
+    def _refresh_wave4_events(
+        self,
+        *,
+        portfolio_id: str,
+        dashboard: PortfolioIntelligenceDashboardView,
+        snapshots: Sequence[Any],
+    ) -> Tuple[int, int]:
+        from services.wave4_monitor_context import (
+            collect_fund_symbols,
+            collect_missing_price_symbols,
+            collect_stale_fund_symbols,
+            collect_stale_fx_pairs,
+            snapshot_allocation_flags,
+        )
+        from services.wave4_monitor_detectors import (
+            detect_allocation_change_events,
+            detect_fund_holdings_stale_events,
+            detect_fx_stale_events,
+            detect_missing_price_events,
+        )
+
+        created = skipped = 0
+        now = self._now_iso()
+        base = dashboard.base
+
+        valuation_currencies = {
+            row.valuation.valuation_currency
+            for row in dashboard.enriched_positions
+            if row.valuation.valuation_currency
+        }
+        stale_pairs = collect_stale_fx_pairs(
+            self.client,
+            base_currency=base.base_currency,
+            valuation_currencies=valuation_currencies,
+        )
+        missing_prices = collect_missing_price_symbols(dashboard)
+        fund_symbols = collect_fund_symbols(dashboard)
+        stale_funds = collect_stale_fund_symbols(self.client, fund_symbols)
+
+        asset_class_changed = currency_changed = False
+        if len(snapshots) >= 2:
+            asset_class_changed, currency_changed = snapshot_allocation_flags(
+                snapshots[1],
+                snapshots[0],
+            )
+
+        draft_batches = (
+            detect_fx_stale_events(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                stale_pairs=stale_pairs,
+            ),
+            detect_missing_price_events(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                symbols=missing_prices,
+            ),
+            detect_fund_holdings_stale_events(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                symbols=stale_funds,
+            ),
+            detect_allocation_change_events(
+                user_id=self.user_id,
+                portfolio_id=portfolio_id,
+                asset_class_changed=asset_class_changed,
+                currency_changed=currency_changed,
+            ),
+        )
+        for drafts in draft_batches:
+            for draft in drafts:
+                _, inserted = self.events.upsert_draft(
+                    draft_to_row(draft, detected_at=now)
+                )
+                if inserted:
+                    created += 1
+                else:
+                    skipped += 1
         return created, skipped
 
     def _held_symbols(self, dashboard: PortfolioIntelligenceDashboardView) -> Set[str]:

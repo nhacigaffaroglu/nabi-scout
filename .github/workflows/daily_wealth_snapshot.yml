@@ -1,0 +1,31 @@
+name: Daily Wealth Snapshot
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: Optional single-user scope for verification
+        required: false
+
+jobs:
+  wealth_snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run daily wealth snapshot
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.user_id }}" ]; then
+            python3 scripts/run_daily_wealth_snapshot.py --user-id "${{ github.event.inputs.user_id }}"
+          else
+            python3 scripts/run_daily_wealth_snapshot.py
+          fi

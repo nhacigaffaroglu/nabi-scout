@@ -23,14 +23,56 @@ class WealthPortfolioSnapshotRepository:
         portfolio_id: str,
         snapshot_date: date,
     ) -> Optional[Dict[str, Any]]:
-        rows = self.list_for_portfolio(user_id, portfolio_id, limit=100)
-        for row in rows:
+        response = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("portfolio_id", portfolio_id)
+            .eq("snapshot_date", snapshot_date.isoformat())
+            .order("captured_at", desc=True)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        if rows:
+            return rows[0]
+        # Pre-migration fallback: derive UTC date from captured_at when snapshot_date unset.
+        for row in self.list_for_portfolio(user_id, portfolio_id, limit=100):
             captured = str(row.get("captured_at") or "")
             if not captured:
                 continue
             if self.utc_date_from_captured_at(captured) == snapshot_date:
                 return row
         return None
+
+    def upsert_for_portfolio_date(
+        self,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        response = (
+            self.client.table(self.table)
+            .upsert(payload, on_conflict="portfolio_id,snapshot_date")
+            .execute()
+        )
+        rows = response.data or []
+        if rows:
+            return rows[0]
+        portfolio_id = str(payload.get("portfolio_id") or "")
+        snapshot_date = payload.get("snapshot_date")
+        if portfolio_id and snapshot_date:
+            existing = (
+                self.client.table(self.table)
+                .select("*")
+                .eq("portfolio_id", portfolio_id)
+                .eq("snapshot_date", snapshot_date)
+                .limit(1)
+                .execute()
+            )
+            rows = existing.data or []
+            if rows:
+                return rows[0]
+        raise RuntimeError("Portföy görüntüsü kaydedilemedi.")
 
     def insert(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = self.client.table(self.table).insert(payload).execute()

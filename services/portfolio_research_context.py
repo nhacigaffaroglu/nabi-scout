@@ -238,6 +238,12 @@ def build_portfolio_research_context(
             ),
             "participation_review_weight_pct": dashboard.participation_review_weight_pct,
             "participation_unknown_weight_pct": dashboard.participation_unknown_weight_pct,
+            "fx_supported": base.fx_supported,
+            "foreign_currency_position_count": base.foreign_currency_position_count,
+            "asset_class_allocation": [
+                _slice_to_dict(s) for s in base.asset_class_allocation
+            ],
+            "fx_attribution_status": "FX_ATTRIBUTION_UNAVAILABLE",
         },
         accounts=tuple(accounts),
         positions=tuple(positions),

@@ -8,7 +8,9 @@ from services.wealth_contract import (
     ASSET_CLASS_EQUITY,
     ASSET_CLASS_ETF,
     ASSET_CLASS_FUND,
+    ASSET_CLASS_GOLD,
     ASSET_CLASS_OTHER,
+    ASSET_CLASS_SUKUK,
     ACCOUNT_TYPE_BROKERAGE,
     TXN_TYPE_BUY,
     TXN_TYPE_DEPOSIT,
@@ -27,6 +29,8 @@ ASSET_CLASS_OPTIONS = (
     ASSET_CLASS_ETF,
     ASSET_CLASS_FUND,
     ASSET_CLASS_CASH,
+    ASSET_CLASS_GOLD,
+    ASSET_CLASS_SUKUK,
     ASSET_CLASS_OTHER,
 )
 
@@ -115,6 +119,7 @@ class PortfolioManagementService:
         market: str = "US",
         executed_at: Optional[str] = None,
         notes: Optional[str] = None,
+        name: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not str(account_id or "").strip():
             raise WealthValidationError("Kurum / hesap seçimi gerekli.")
@@ -150,6 +155,7 @@ class PortfolioManagementService:
             market=str(market or "US").strip().upper(),
             asset_class=normalized_class,
             currency=currency.strip().upper(),
+            name=str(name).strip() or None,
         )
         amount = quantity * average_cost
         return self.wealth.post_transaction(

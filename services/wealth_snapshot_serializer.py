@@ -94,6 +94,7 @@ def snapshot_row_from_intelligence_view(
         "user_id": user_id,
         "portfolio_id": portfolio_id,
         "captured_at": captured_at,
+        "snapshot_date": captured_at[:10],
         "base_currency": view.base_currency,
         "priced_market_value": view.priced_total_market_value,
         "total_cost_basis": view.priced_total_cost_basis,

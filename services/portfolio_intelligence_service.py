@@ -7,6 +7,8 @@ from services.nabi_intelligence_facade import (
     InvestmentIntelligenceView,
     get_investment_intelligence,
 )
+from services.fx_conversion_engine import apply_fx_to_portfolio_view
+from services.fx_rate_service import FxRateService
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.portfolio_intelligence_engine import (
     rollup_portfolio_intelligence,
@@ -109,7 +111,7 @@ class PortfolioIntelligenceService:
         if any(row.is_cash for row in rows):
             provider = f"{provider}+nominal_cash"
 
-        return rollup_portfolio_intelligence(
+        view = rollup_portfolio_intelligence(
             portfolio_id=str(portfolio.get("id") or ""),
             portfolio_name=str(portfolio.get("name") or ""),
             base_currency=str(portfolio.get("base_currency") or "USD"),
@@ -118,6 +120,10 @@ class PortfolioIntelligenceService:
             unique_price_symbols_fetched=self.price_service.fetch_count,
             valuation_errors=valuation_errors,
         )
+        if self.nabi_client is not None:
+            fx_service = FxRateService(self.nabi_client)
+            view, _fx_totals = apply_fx_to_portfolio_view(view, fx_service)
+        return view
 
     def _attach_nabi(
         self,

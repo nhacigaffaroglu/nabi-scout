@@ -26,6 +26,7 @@ def build_daily_portfolio_brief(
         "total": len(events),
         "high_critical": 0,
         "portfolio": 0,
+        "wealth": 0,
         "thesis": 0,
         "participation": 0,
         "research": 0,
@@ -70,7 +71,12 @@ def build_daily_portfolio_brief(
     data_quality = {
         "priced_position_count": base.priced_position_count,
         "unpriced_position_count": base.unpriced_position_count,
+        "foreign_currency_position_count": base.foreign_currency_position_count,
+        "fx_supported": base.fx_supported,
+        "mixed_currency_warning": base.mixed_currency_warning,
         "priced_coverage_pct": dashboard.coverage.priced_market_value_coverage_pct,
+        "participation_covered_pct": dashboard.participation_eligible_weight_pct,
+        "research_covered_pct": dashboard.research_coverage_weight_pct,
         "limitations": list(dashboard.coverage.limitations),
     }
     source_freshness = {
@@ -79,6 +85,13 @@ def build_daily_portfolio_brief(
         "latest_detected_at": events[0].detected_at if events else None,
     }
     limitations = tuple(dashboard.coverage.limitations)
+    if base.unpriced_position_count:
+        limitations = (
+            *limitations,
+            f"{base.unpriced_position_count} fiyatlanmamış pozisyon.",
+        )
+    if base.foreign_currency_position_count and not base.fx_supported:
+        limitations = (*limitations, "Bazı döviz pozisyonları dönüştürülemedi.")
     if not events:
         limitations = (*limitations, "Bugün için kayıtlı monitor olayı yok.")
 

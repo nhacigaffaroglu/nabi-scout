@@ -94,7 +94,7 @@ def build_exposure_overlap_signals(
                 ),
                 symbols=tuple(row.valuation.symbol for row in fund_rows),
                 look_through_status="LOOK_THROUGH_UNAVAILABLE",
-                limitation="Fon içeriği verisi yok; bileşen icat edilmedi.",
+                limitation="Fon look-through yalnızca persisted holdings kanıtı ile yapılır.",
             )
         )
 

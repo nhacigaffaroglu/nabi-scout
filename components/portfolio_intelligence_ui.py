@@ -153,6 +153,8 @@ def render_position_table(
     dashboard: PortfolioIntelligenceDashboardView,
     *,
     symbol_search: str,
+    asset_type_filter: str,
+    currency_filter: str,
     sector_filter: str,
     participation_filter: str,
     research_filter: str,
@@ -165,6 +167,20 @@ def render_position_table(
             for row in rows
             if needle in row.valuation.symbol.upper()
             or needle in (row.company_name or "").upper()
+        ]
+
+    if asset_type_filter and asset_type_filter != "Tümü":
+        rows = [
+            row
+            for row in rows
+            if (row.valuation.asset_class or "other") == asset_type_filter
+        ]
+
+    if currency_filter and currency_filter != "Tümü":
+        rows = [
+            row
+            for row in rows
+            if (row.valuation.valuation_currency or "Bilinmiyor") == currency_filter
         ]
 
     if sector_filter and sector_filter != "Tümü":
@@ -292,7 +308,7 @@ def render_empty_portfolio_onboarding(
 
 def render_position_filters(
     dashboard: PortfolioIntelligenceDashboardView,
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str, str, str, str]:
     sectors = sorted(
         {
             row.sector or "Bilinmiyor"
@@ -305,24 +321,51 @@ def render_position_filters(
             for row in dashboard.enriched_positions
         }
     )
+    asset_classes = sorted(
+        {
+            row.valuation.asset_class or "other"
+            for row in dashboard.enriched_positions
+        }
+    )
+    currencies = sorted(
+        {
+            row.valuation.valuation_currency or "Bilinmiyor"
+            for row in dashboard.enriched_positions
+        }
+    )
 
-    c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1])
+    c1, c2, c3, c4, c5, c6 = st.columns([2, 1, 1, 1, 1, 1])
     symbol_search = c1.text_input("Sembol / şirket ara", value="", key="pi_symbol_search")
-    sector_filter = c2.selectbox(
+    asset_type_filter = c2.selectbox(
+        "Varlık türü",
+        ["Tümü", *asset_classes],
+        key="pi_asset_type_filter",
+    )
+    currency_filter = c3.selectbox(
+        "Para birimi",
+        ["Tümü", *currencies],
+        key="pi_currency_filter",
+    )
+    sector_filter = c4.selectbox(
         "Sektör",
         ["Tümü", *sectors],
         key="pi_sector_filter",
     )
-    participation_filter = c3.selectbox(
+    participation_filter = c5.selectbox(
         "Katılım",
         list(PORTFOLIO_PARTICIPATION_FILTERS),
         key="pi_participation_filter",
     )
-    research_filter = c4.selectbox(
+    research_filter = c6.selectbox(
         "Araştırma kapsamı",
         ["Tümü", *research_labels],
         key="pi_research_filter",
     )
-    if participation_filter == PARTICIPATION_FILTER_ALL:
-        c5.caption("Tüm katılım durumları")
-    return symbol_search, sector_filter, participation_filter, research_filter
+    return (
+        symbol_search,
+        asset_type_filter,
+        currency_filter,
+        sector_filter,
+        participation_filter,
+        research_filter,
+    )

@@ -37,6 +37,12 @@ class PositionValuationRow:
     is_cash: bool
     included_in_base_totals: bool
     nabi: Optional[InvestmentIntelligenceView] = None
+    native_market_value: Optional[float] = None
+    fx_converted: bool = False
+    fx_rate_used: Optional[float] = None
+    fx_rate_date: Optional[str] = None
+    fx_stale: bool = False
+    fx_unavailable: bool = False
 
 
 @dataclass(frozen=True)

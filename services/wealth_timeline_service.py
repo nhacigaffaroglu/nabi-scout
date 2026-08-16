@@ -91,14 +91,6 @@ class WealthTimelineService:
         snapshot_date = WealthPortfolioSnapshotRepository.utc_date_from_captured_at(
             captured_at
         )
-        existing = self.snapshots.find_for_portfolio_on_date(
-            self.wealth.user_id,
-            portfolio_id,
-            snapshot_date,
-        )
-        if existing is not None:
-            return snapshot_view_from_row(existing)
-
         payload = snapshot_row_from_intelligence_view(
             user_id=self.wealth.user_id,
             portfolio_id=portfolio_id,
@@ -106,7 +98,8 @@ class WealthTimelineService:
             view=view,
             liabilities_total=liabilities_total,
         )
-        inserted = self.snapshots.insert(payload)
+        payload["snapshot_date"] = snapshot_date.isoformat()
+        inserted = self.snapshots.upsert_for_portfolio_date(payload)
         return snapshot_view_from_row(inserted)
 
     def list_snapshots(self, portfolio_id: str, *, limit: int = 50) -> List[PortfolioSnapshotView]:
