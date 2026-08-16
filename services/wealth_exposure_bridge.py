@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
+from services.portfolio_intelligence_helpers import iter_all_position_rows
 from services.unified_research_contract import WealthExposureContext
 
 
@@ -29,7 +30,7 @@ def build_wealth_exposure_context(
 
     matches = [
         row
-        for row in portfolio_view.positions
+        for row in iter_all_position_rows(portfolio_view)
         if str(row.symbol or "").strip().upper() == normalized and not row.is_cash
     ]
     if not matches:

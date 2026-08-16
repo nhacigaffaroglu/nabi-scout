@@ -37,6 +37,23 @@ class WealthAccountRepository:
         rows = response.data or []
         return rows[0] if rows else None
 
+    def update_active(
+        self,
+        user_id: str,
+        account_id: str,
+        *,
+        is_active: bool,
+    ) -> Optional[Dict[str, Any]]:
+        response = (
+            self.client.table(self.table)
+            .update({"is_active": is_active, "updated_at": self._now_iso()})
+            .eq("user_id", user_id)
+            .eq("id", account_id)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+
     def create(
         self,
         *,

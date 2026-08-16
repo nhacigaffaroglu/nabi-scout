@@ -6,10 +6,16 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.tracked_fund_repository import TrackedFundRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.auth_service import get_current_user_id
 from services.candidate_surface_service import (
     enrich_candidate_classification_from_db,
     is_equity_candidate_surface_eligible,
 )
+from services.participation_filter_service import (
+    COMPANY_REPORT_PARTICIPATION_FILTERS,
+    filter_candidates_by_participation,
+)
+from services.portfolio_context_service import build_symbol_portfolio_context
 from services.company_intelligence_service import build_company_intelligence
 from repositories.participation_assessment_repository import (
     ParticipationAssessmentRepository,
@@ -113,6 +119,15 @@ if candidate is None:
         if is_equity_candidate_surface_eligible(row)
     ]
 
+    participation_filter = st.selectbox(
+        "Katılım filtresi",
+        list(COMPANY_REPORT_PARTICIPATION_FILTERS),
+        index=0,
+        key="company_report_participation_filter",
+        help="Yalnızca listede görünen adayları filtreler; katılım kararını değiştirmez.",
+    )
+    rows = filter_candidates_by_participation(rows, participation_filter)
+
     query_symbol = st.query_params.get("symbol")
     if query_symbol:
         direct = repo.get_by_symbol(query_symbol)
@@ -122,8 +137,8 @@ if candidate is None:
     if candidate is None:
         if not rows:
             st.info(
-                "Henüz raporlanacak şirket bulunmuyor. "
-                "Önce Scout Scanner ekranında tarama yapın."
+                "Seçilen katılım filtresine uyan veya raporlanacak şirket bulunmuyor. "
+                "Filtreyi değiştirin veya Scout Scanner ekranında tarama yapın."
             )
             st.stop()
 
@@ -261,6 +276,45 @@ c5.metric(
     "Yatırım Notu",
     candidate.get("investment_grade") or "—",
 )
+
+user_id = get_current_user_id(client)
+if user_id and symbol and symbol != "—":
+    portfolio_ctx = build_symbol_portfolio_context(client, user_id, symbol)
+    if portfolio_ctx is not None:
+        st.markdown("**Portföy bağlamı**")
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        pc1.metric("Portföyde", "Evet")
+        pc2.metric("Adet", f"{portfolio_ctx.quantity:,.2f}" if portfolio_ctx.quantity else "—")
+        pc3.metric(
+            "Ağırlık",
+            f"%{portfolio_ctx.portfolio_weight_pct:.1f}"
+            if portfolio_ctx.portfolio_weight_pct is not None
+            else "—",
+        )
+        pc4.metric(
+            "Gerçekleşmemiş K/Z",
+            f"{portfolio_ctx.unrealized_pl:,.2f}"
+            if portfolio_ctx.unrealized_pl is not None
+            else "—",
+        )
+        if portfolio_ctx.limitations:
+            st.caption(" · ".join(portfolio_ctx.limitations))
+        if portfolio_ctx.account_breakdown:
+            st.markdown("**Kurum bazında**")
+            for part in portfolio_ctx.account_breakdown:
+                st.write(
+                    f"- {part.account_label}: {part.quantity:g} adet"
+                    + (
+                        f" · maliyet {part.cost_basis:,.2f}"
+                        if part.cost_basis is not None
+                        else ""
+                    )
+                )
+        st.page_link(
+            "pages/11_Portfolio_Intelligence.py",
+            label="Portfolio Intelligence",
+            icon="📊",
+        )
 
 workflow = build_research_workflow(candidate)
 

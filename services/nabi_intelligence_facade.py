@@ -25,6 +25,9 @@ class InvestmentIntelligenceView:
     participation_status: Optional[str]
     participation_score: Optional[int]
     research_status: Optional[str]
+    sector_theme: Optional[str]
+    industry: Optional[str]
+    country: Optional[str]
     candidate_id: Optional[str]
     has_candidate: bool
     has_participation_snapshot: bool
@@ -62,6 +65,9 @@ def get_investment_intelligence(
         participation_status=snapshot_status or candidate_participation_status,
         participation_score=snapshot_score or candidate_participation_score,
         research_status=(candidate or {}).get("research_status"),
+        sector_theme=(candidate or {}).get("sector_theme"),
+        industry=(candidate or {}).get("industry"),
+        country=(candidate or {}).get("country"),
         candidate_id=(candidate or {}).get("id"),
         has_candidate=candidate is not None,
         has_participation_snapshot=participation is not None,
@@ -78,6 +84,9 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
         "participation_status": view.participation_status,
         "participation_score": view.participation_score,
         "research_status": view.research_status,
+        "sector_theme": view.sector_theme,
+        "industry": view.industry,
+        "country": view.country,
         "candidate_id": view.candidate_id,
         "has_candidate": view.has_candidate,
         "has_participation_snapshot": view.has_participation_snapshot,

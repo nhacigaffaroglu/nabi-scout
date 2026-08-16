@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -18,10 +19,13 @@ from services.wealth_contract import (
     TXN_TYPE_DIVIDEND,
     TXN_TYPE_FEE,
     TXN_TYPE_SELL,
+    TXN_TYPE_TRANSFER_IN,
+    TXN_TYPE_TRANSFER_OUT,
     TXN_TYPE_WITHDRAW,
     WealthMaterializationError,
     WealthValidationError,
     normalize_trade_amount,
+    normalize_transfer_amount,
     validate_txn_type,
 )
 from services.wealth_position_engine import (
@@ -209,6 +213,8 @@ class WealthCoreService:
             TXN_TYPE_DEPOSIT,
             TXN_TYPE_WITHDRAW,
             TXN_TYPE_FEE,
+            TXN_TYPE_TRANSFER_OUT,
+            TXN_TYPE_TRANSFER_IN,
         } and not asset_id:
             raise WealthValidationError("Bu işlem türü için varlık gerekli.")
 
@@ -227,6 +233,12 @@ class WealthCoreService:
                 raise WealthValidationError("Alış/satış için miktar sıfırdan büyük olmalı.")
             if price is None or price <= 0:
                 raise WealthValidationError("Alış/satış için birim fiyat gerekli.")
+
+        if normalized_type in {TXN_TYPE_TRANSFER_OUT, TXN_TYPE_TRANSFER_IN}:
+            if quantity <= 0:
+                raise WealthValidationError("Transfer için miktar sıfırdan büyük olmalı.")
+            if price is None or price <= 0:
+                raise WealthValidationError("Transfer için maliyet bazı (birim fiyat) gerekli.")
 
         if normalized_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW, TXN_TYPE_FEE}:
             if quantity <= 0 and amount <= 0:
@@ -323,6 +335,12 @@ class WealthCoreService:
             price=price,
             amount=amount,
         )
+        if normalized_type in {TXN_TYPE_TRANSFER_OUT, TXN_TYPE_TRANSFER_IN}:
+            normalized_amount = normalize_transfer_amount(
+                quantity=quantity,
+                price=price,
+                amount=amount,
+            )
 
         if reversal_of_id:
             self._validate_reversal_before_insert(
@@ -383,6 +401,140 @@ class WealthCoreService:
                 ) from exc
 
         return inserted
+
+    def post_transfer(
+        self,
+        *,
+        from_account_id: str,
+        to_account_id: str,
+        asset_id: str,
+        quantity: float,
+        price: float,
+        currency: str = "USD",
+        executed_at: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Account-to-account asset transfer preserving cost basis (no fake buy/sell)."""
+        if from_account_id == to_account_id:
+            raise WealthValidationError("Kaynak ve hedef hesap aynı olamaz.")
+        if quantity <= 0:
+            raise WealthValidationError("Transfer miktarı sıfırdan büyük olmalı.")
+        if price <= 0:
+            raise WealthValidationError("Transfer için maliyet bazı gerekli.")
+
+        source_account = self.accounts.get_by_id(self.user_id, from_account_id)
+        dest_account = self.accounts.get_by_id(self.user_id, to_account_id)
+        if source_account is None or dest_account is None:
+            raise WealthValidationError("Kaynak veya hedef hesap bulunamadı.")
+
+        asset = self.assets.get_by_id(self.user_id, asset_id)
+        if asset is None:
+            raise WealthValidationError("Varlık bulunamadı.")
+
+        amount = normalize_transfer_amount(
+            quantity=quantity,
+            price=price,
+            amount=quantity * price,
+        )
+        cost_currency = str(asset.get("currency") or source_account.get("currency") or currency)
+        executed_value = executed_at or self._now_iso()
+        transfer_link_id = str(uuid.uuid4())
+        transfer_note = notes.strip() if notes else "Kurumlar arası transfer"
+
+        out_proposed = {
+            "txn_type": TXN_TYPE_TRANSFER_OUT,
+            "quantity": quantity,
+            "price": price,
+            "amount": amount,
+            "executed_at": executed_value,
+        }
+        self._validate_ledger_acceptance(
+            account_id=from_account_id,
+            asset_id=asset_id,
+            proposed_row=out_proposed,
+        )
+
+        in_proposed = {
+            "txn_type": TXN_TYPE_TRANSFER_IN,
+            "quantity": quantity,
+            "price": price,
+            "amount": amount,
+            "executed_at": executed_value,
+        }
+        self._validate_ledger_acceptance(
+            account_id=to_account_id,
+            asset_id=asset_id,
+            proposed_row=in_proposed,
+        )
+
+        out_payload = {
+            "user_id": self.user_id,
+            "account_id": from_account_id,
+            "asset_id": asset_id,
+            "txn_type": TXN_TYPE_TRANSFER_OUT,
+            "quantity": quantity,
+            "price": price,
+            "amount": amount,
+            "currency": currency.strip().upper(),
+            "executed_at": executed_value,
+            "notes": f"{transfer_note} — çıkış",
+            "transfer_link_id": transfer_link_id,
+            "counterparty_account_id": to_account_id,
+        }
+        in_payload = {
+            "user_id": self.user_id,
+            "account_id": to_account_id,
+            "asset_id": asset_id,
+            "txn_type": TXN_TYPE_TRANSFER_IN,
+            "quantity": quantity,
+            "price": price,
+            "amount": amount,
+            "currency": currency.strip().upper(),
+            "executed_at": executed_value,
+            "notes": f"{transfer_note} — giriş",
+            "transfer_link_id": transfer_link_id,
+            "counterparty_account_id": from_account_id,
+        }
+
+        self.transactions.insert(out_payload)
+        inserted_in = self.transactions.insert(in_payload)
+
+        try:
+            self._rebuild_position(from_account_id, asset_id, cost_currency)
+            self._rebuild_position(to_account_id, asset_id, cost_currency)
+        except Exception as exc:
+            raise WealthMaterializationError(
+                "Transfer deftere yazıldı ancak pozisyon güncellenemedi."
+            ) from exc
+
+        return inserted_in
+
+    def deactivate_account(self, account_id: str) -> Dict[str, Any]:
+        account = self.accounts.get_by_id(self.user_id, account_id)
+        if account is None:
+            raise WealthValidationError("Hesap bulunamadı.")
+        open_positions = [
+            row
+            for row in self.list_positions()
+            if str(row.get("account_id") or "") == str(account_id)
+        ]
+        if open_positions:
+            raise WealthValidationError(
+                "Açık pozisyonu olan hesap pasifleştirilemez."
+            )
+        txns = [
+            row
+            for row in self.list_transactions(limit=1000)
+            if str(row.get("account_id") or "") == str(account_id)
+        ]
+        if txns:
+            raise WealthValidationError(
+                "İşlem geçmişi olan hesap pasifleştirilemez."
+            )
+        updated = self.accounts.update_active(self.user_id, account_id, is_active=False)
+        if updated is None:
+            raise WealthValidationError("Hesap güncellenemedi.")
+        return updated
 
     def list_positions(self) -> List[Dict[str, Any]]:
         return self.positions.list_for_user(self.user_id)

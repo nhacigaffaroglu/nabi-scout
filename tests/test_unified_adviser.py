@@ -42,7 +42,9 @@ class WealthExposureBridgeTests(unittest.TestCase):
         row.cost_basis = 800.0
         row.weight_pct = 20.0
         row.account_name = "Broker"
-        portfolio.positions = [row]
+        portfolio.priced_positions = [row]
+        portfolio.unpriced_positions = []
+        portfolio.foreign_currency_positions = []
         exposure = build_wealth_exposure_context(portfolio, "AAPL")
         self.assertTrue(exposure.held)
         self.assertEqual(exposure.portfolio_weight_pct, 20.0)

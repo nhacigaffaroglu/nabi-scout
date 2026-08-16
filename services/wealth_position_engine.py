@@ -10,6 +10,8 @@ from services.wealth_contract import (
     TXN_TYPE_DIVIDEND,
     TXN_TYPE_FEE,
     TXN_TYPE_SELL,
+    TXN_TYPE_TRANSFER_IN,
+    TXN_TYPE_TRANSFER_OUT,
     TXN_TYPE_WITHDRAW,
     WealthValidationError,
 )
@@ -58,6 +60,10 @@ def _effective_txn_type(row: Dict[str, Any]) -> str:
             return TXN_TYPE_SELL if txn_type == TXN_TYPE_BUY else TXN_TYPE_BUY
         if txn_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW}:
             return TXN_TYPE_WITHDRAW if txn_type == TXN_TYPE_DEPOSIT else TXN_TYPE_DEPOSIT
+        if txn_type == TXN_TYPE_TRANSFER_OUT:
+            return TXN_TYPE_TRANSFER_IN
+        if txn_type == TXN_TYPE_TRANSFER_IN:
+            return TXN_TYPE_TRANSFER_OUT
         if txn_type == TXN_TYPE_DIVIDEND:
             return TXN_TYPE_FEE
         if txn_type == TXN_TYPE_FEE:
@@ -99,6 +105,24 @@ def materialize_position_from_transactions(
             quantity -= qty
             if quantity == 0:
                 average_cost = 0.0
+            continue
+
+        if txn_type == TXN_TYPE_TRANSFER_OUT:
+            if qty <= 0:
+                raise WealthValidationError("Transfer çıkışında miktar sıfırdan büyük olmalı.")
+            if qty > quantity:
+                raise WealthValidationError("Transfer miktarı mevcut pozisyonu aşıyor.")
+            quantity -= qty
+            if quantity == 0:
+                average_cost = 0.0
+            continue
+
+        if txn_type == TXN_TYPE_TRANSFER_IN:
+            if qty <= 0:
+                raise WealthValidationError("Transfer girişinde miktar sıfırdan büyük olmalı.")
+            total_cost = (quantity * average_cost) + amount
+            quantity += qty
+            average_cost = total_cost / quantity if quantity > 0 else 0.0
             continue
 
         if txn_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_DIVIDEND}:

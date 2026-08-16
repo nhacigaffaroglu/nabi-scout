@@ -9,6 +9,8 @@ TXN_TYPE_DIVIDEND = "dividend"
 TXN_TYPE_DEPOSIT = "deposit"
 TXN_TYPE_WITHDRAW = "withdraw"
 TXN_TYPE_FEE = "fee"
+TXN_TYPE_TRANSFER_OUT = "transfer_out"
+TXN_TYPE_TRANSFER_IN = "transfer_in"
 
 TXN_TYPES: Tuple[str, ...] = (
     TXN_TYPE_BUY,
@@ -17,7 +19,11 @@ TXN_TYPES: Tuple[str, ...] = (
     TXN_TYPE_DEPOSIT,
     TXN_TYPE_WITHDRAW,
     TXN_TYPE_FEE,
+    TXN_TYPE_TRANSFER_OUT,
+    TXN_TYPE_TRANSFER_IN,
 )
+
+TRANSFER_TXN_TYPES = frozenset({TXN_TYPE_TRANSFER_OUT, TXN_TYPE_TRANSFER_IN})
 
 ACCOUNT_TYPE_CASH = "cash"
 ACCOUNT_TYPE_BROKERAGE = "brokerage"
@@ -167,4 +173,21 @@ def normalize_trade_amount(
     computed = quantity * price
     if amount > 0 and abs(amount - computed) > 1e-6:
         raise WealthValidationError("Tutar miktar × birim fiyat ile uyuşmalı.")
+    return computed
+
+
+def normalize_transfer_amount(
+    *,
+    quantity: float,
+    price: Optional[float],
+    amount: float,
+) -> float:
+    """Derive cost-basis amount for transfer rows (not cash economics)."""
+    if quantity <= 0:
+        raise WealthValidationError("Transfer miktarı sıfırdan büyük olmalı.")
+    if price is None or price <= 0:
+        raise WealthValidationError("Transfer için maliyet bazı (birim fiyat) gerekli.")
+    computed = quantity * price
+    if amount > 0 and abs(amount - computed) > 1e-6:
+        raise WealthValidationError("Transfer tutarı miktar × maliyet ile uyuşmalı.")
     return computed

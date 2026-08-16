@@ -240,6 +240,54 @@ class WealthPositionEngineTests(unittest.TestCase):
         self.assertEqual(qty, 6)
         self.assertAlmostEqual(avg, 100.0)
 
+    def test_transfer_preserves_total_quantity_and_cost_basis(self) -> None:
+        source_qty, source_avg = materialize_position_from_transactions(
+            [
+                _txn("buy", quantity=10, amount=2500),
+                _txn("transfer_out", quantity=4, amount=1000),
+            ]
+        )
+        dest_qty, dest_avg = materialize_position_from_transactions(
+            [
+                _txn("transfer_in", quantity=4, amount=1000),
+            ]
+        )
+        self.assertEqual(source_qty, 6)
+        self.assertAlmostEqual(source_avg, 250.0)
+        self.assertEqual(dest_qty, 4)
+        self.assertAlmostEqual(dest_avg, 250.0)
+        total_qty = source_qty + dest_qty
+        total_basis = (source_qty * source_avg) + (dest_qty * dest_avg)
+        self.assertEqual(total_qty, 10)
+        self.assertAlmostEqual(total_basis, 2500.0)
+
+    def test_transfer_out_beyond_quantity_raises(self) -> None:
+        with self.assertRaises(WealthValidationError):
+            materialize_position_from_transactions(
+                [
+                    _txn("buy", quantity=10, amount=2500),
+                    _txn("transfer_out", quantity=11, amount=2750),
+                ]
+            )
+
+    def test_transfer_different_avg_cost_accounts(self) -> None:
+        midas_qty, midas_avg = materialize_position_from_transactions(
+            [
+                _txn("buy", quantity=10, amount=2500),
+                _txn("transfer_out", quantity=4, amount=1000),
+            ]
+        )
+        ykb_qty, ykb_avg = materialize_position_from_transactions(
+            [
+                _txn("buy", quantity=5, amount=1100),
+                _txn("transfer_in", quantity=4, amount=1000),
+            ]
+        )
+        self.assertEqual(midas_qty, 6)
+        self.assertAlmostEqual(midas_avg, 250.0)
+        self.assertEqual(ykb_qty, 9)
+        self.assertAlmostEqual(ykb_avg, (1100 + 1000) / 9)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
 
+from services.portfolio_account_helpers import format_account_display
 from services.nabi_intelligence_facade import (
     InvestmentIntelligenceView,
     get_investment_intelligence,
@@ -38,8 +39,15 @@ class PortfolioIntelligenceService:
         portfolio: Dict[str, Any],
         *,
         enrich_nabi: bool = False,
+        account_id: Optional[str] = None,
     ) -> PortfolioIntelligenceView:
         positions = self.wealth.list_positions()
+        if account_id:
+            positions = [
+                row
+                for row in positions
+                if str(row.get("account_id") or "") == str(account_id)
+            ]
         accounts = self.wealth.list_accounts()
         assets = self.wealth.list_assets()
 
@@ -75,7 +83,10 @@ class PortfolioIntelligenceService:
             row = value_position(
                 position=position,
                 asset=asset,
-                account=account,
+                account={
+                    **account,
+                    "name": format_account_display(account),
+                },
                 base_currency=str(portfolio.get("base_currency") or "USD"),
                 quote=quote,
             )
