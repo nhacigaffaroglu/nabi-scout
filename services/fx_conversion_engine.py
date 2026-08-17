@@ -60,6 +60,17 @@ def apply_fx_to_position_rows(
             if fx.stale:
                 stale_count += 1
             converted_total += fx.converted_amount
+            fx_cost = fx_service.convert_amount(
+                amount=row.cost_basis,
+                from_currency=native_currency,
+                to_currency=base,
+            )
+            converted_cost = (
+                fx_cost.converted_amount
+                if fx_cost.converted and fx_cost.converted_amount is not None
+                else row.cost_basis
+            )
+            converted_pl = fx.converted_amount - converted_cost
             adjusted.append(
                 PositionValuationRow(
                     position_id=row.position_id,
@@ -74,8 +85,8 @@ def apply_fx_to_position_rows(
                     price=row.price,
                     price_available=True,
                     market_value=fx.converted_amount,
-                    cost_basis=row.cost_basis,
-                    unrealized_pl=row.unrealized_pl,
+                    cost_basis=converted_cost,
+                    unrealized_pl=converted_pl,
                     weight_pct=row.weight_pct,
                     is_cash=row.is_cash,
                     included_in_base_totals=True,

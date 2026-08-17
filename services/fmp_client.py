@@ -354,6 +354,10 @@ class FMPClient:
         rows = self._get("quote", {"symbol": symbol})
         return rows[0] if rows else {}
 
+    def search_symbol(self, query: str):
+        rows = self._get("search-symbol", {"query": query})
+        return rows if isinstance(rows, list) else []
+
     def etf_info(self, symbol: str):
         rows = self._get("etf/info", {"symbol": symbol})
         return rows[0] if rows else {}

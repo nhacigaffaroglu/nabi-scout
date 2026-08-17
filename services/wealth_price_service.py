@@ -14,8 +14,13 @@ def is_cash_asset(symbol: str, asset_class: str) -> bool:
     )
 
 
+# Domain storage/FX code is ISO TRY. Live Wealth rows may still say TL.
+CURRENCY_ALIASES = {"TL": "TRY"}
+
+
 def normalize_currency(code: str | None) -> str:
-    return str(code or "USD").strip().upper()
+    raw = str(code or "USD").strip().upper()
+    return CURRENCY_ALIASES.get(raw, raw)
 
 
 class WealthPriceService:

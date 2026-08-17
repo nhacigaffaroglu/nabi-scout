@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.portfolio_intelligence_contract import (
@@ -189,28 +190,7 @@ def rollup_portfolio_intelligence(
             if total_mv > 0 and row.market_value is not None
             else None
         )
-        weighted_rows.append(
-            PositionValuationRow(
-                position_id=row.position_id,
-                account_id=row.account_id,
-                asset_id=row.asset_id,
-                symbol=row.symbol,
-                asset_class=row.asset_class,
-                account_name=row.account_name,
-                quantity=row.quantity,
-                average_cost=row.average_cost,
-                valuation_currency=row.valuation_currency,
-                price=row.price,
-                price_available=row.price_available,
-                market_value=row.market_value,
-                cost_basis=row.cost_basis,
-                unrealized_pl=row.unrealized_pl,
-                weight_pct=weight,
-                is_cash=row.is_cash,
-                included_in_base_totals=row.included_in_base_totals,
-                nabi=row.nabi,
-            )
-        )
+        weighted_rows.append(replace(row, weight_pct=weight))
 
     asset_class_allocation = _allocation_slices(
         weighted_rows,

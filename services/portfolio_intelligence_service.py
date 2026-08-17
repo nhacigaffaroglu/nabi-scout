@@ -74,11 +74,19 @@ class PortfolioIntelligenceService:
         for position in positions:
             asset = asset_by_id.get(position.get("asset_id"), {})
             account = account_by_id.get(position.get("account_id"), {})
-            quote = self.price_service.get_quote_for_asset(
-                str(asset.get("symbol") or ""),
-                str(asset.get("asset_class") or ""),
-                str(asset.get("currency") or "USD"),
-            )
+            try:
+                quote = self.price_service.get_quote_for_asset(
+                    str(asset.get("symbol") or ""),
+                    str(asset.get("asset_class") or ""),
+                    str(asset.get("currency") or "USD"),
+                    market=asset.get("market"),
+                )
+            except TypeError:
+                quote = self.price_service.get_quote_for_asset(
+                    str(asset.get("symbol") or ""),
+                    str(asset.get("asset_class") or ""),
+                    str(asset.get("currency") or "USD"),
+                )
             if quote.error and quote.error not in {"missing_price"}:
                 valuation_errors.append(f"{asset.get('symbol')}: {quote.error}")
 

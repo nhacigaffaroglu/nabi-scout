@@ -6,6 +6,10 @@ MARKET_ALIASES = {
     "US": frozenset({"US", "USA", "ABD"}),
     "USA": frozenset({"US", "USA", "ABD"}),
     "ABD": frozenset({"US", "USA", "ABD"}),
+    "TR": frozenset({"TR", "BIST", "IST", "TURKEY"}),
+    "BIST": frozenset({"TR", "BIST", "IST", "TURKEY"}),
+    "IST": frozenset({"TR", "BIST", "IST", "TURKEY"}),
+    "TURKEY": frozenset({"TR", "BIST", "IST", "TURKEY"}),
 }
 
 EXPANSION_DATA_SOURCE = "universe_expansion"

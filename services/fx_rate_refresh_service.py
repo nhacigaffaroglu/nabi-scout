@@ -79,10 +79,9 @@ class FxRateRefreshService:
             updated += 1
         return updated
 
-    def _fetch_rate(self, base: str, quote: str) -> Optional[float]:
+    def _quote_price(self, symbol: str) -> Optional[float]:
         if self._fmp is None:
             return None
-        symbol = f"{quote}{base}"
         try:
             self.provider_calls += 1
             payload = self._fmp.quote(symbol)
@@ -92,21 +91,34 @@ class FxRateRefreshService:
                 price = payload.get("price")
             else:
                 price = None
-            if price is None:
-                inverse_symbol = f"{base}{quote}"
-                self.provider_calls += 1
-                inv = self._fmp.quote(inverse_symbol)
-                inv_price = None
-                if isinstance(inv, list) and inv:
-                    inv_price = inv[0].get("price")
-                elif isinstance(inv, dict):
-                    inv_price = inv.get("price")
-                if inv_price and float(inv_price) != 0:
-                    return 1.0 / float(inv_price)
+            if price is None or price == "":
                 return None
-            return float(price)
+            value = float(price)
+            if value <= 0 or value != value:
+                return None
+            return value
         except Exception:
             return None
+
+    def _fetch_rate(self, base: str, quote: str) -> Optional[float]:
+        """Return quote-currency units per 1 base-currency unit.
+
+        Stored pair (USD, TRY) therefore means TRY per 1 USD. Conversion
+        of a TRY amount into USD is amount / rate.
+        """
+        if self._fmp is None:
+            return None
+        base_code = normalize_currency(base)
+        quote_code = normalize_currency(quote)
+        direct_symbol = f"{base_code}{quote_code}"
+        inverse_symbol = f"{quote_code}{base_code}"
+        direct = self._quote_price(direct_symbol)
+        if direct is not None:
+            return direct
+        inverse = self._quote_price(inverse_symbol)
+        if inverse is not None:
+            return 1.0 / inverse
+        return None
 
     def finish(
         self,
