@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 
@@ -52,8 +52,30 @@ def invested_value_from_view(view: PortfolioIntelligenceView) -> float:
     return float(view.priced_total_market_value) - cash_value_from_view(view)
 
 
+def valuation_is_complete(view: PortfolioIntelligenceView) -> bool:
+    return (
+        view.unpriced_position_count == 0
+        and view.foreign_currency_position_count == 0
+        and not view.mixed_currency_warning
+        and float(view.health.priced_position_coverage_pct) >= 100.0
+    )
+
+
+def unpriced_symbols_from_view(view: PortfolioIntelligenceView) -> Tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for row in list(view.unpriced_positions) + list(view.foreign_currency_positions):
+        symbol = str(row.symbol or "").strip().upper()
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        ordered.append(symbol)
+    return tuple(ordered)
+
+
 def build_valuation_payload(view: PortfolioIntelligenceView) -> Dict[str, Any]:
     """Audit summary from PortfolioIntelligenceView — no provider or NABI data."""
+    unpriced_symbols = list(unpriced_symbols_from_view(view))
     return {
         "portfolio_id": view.portfolio_id,
         "portfolio_name": view.portfolio_name,
@@ -71,8 +93,9 @@ def build_valuation_payload(view: PortfolioIntelligenceView) -> Dict[str, Any]:
         "priced_positions": _position_payload(view),
         "asset_class_allocation": _allocation_payload(view.asset_class_allocation),
         "account_allocation": _allocation_payload(view.account_allocation),
-        "unpriced_symbols": [row.symbol for row in view.unpriced_positions],
+        "unpriced_symbols": unpriced_symbols,
         "foreign_currency_symbols": [row.symbol for row in view.foreign_currency_positions],
+        "valuation_complete": valuation_is_complete(view),
     }
 
 
@@ -83,6 +106,7 @@ def snapshot_row_from_intelligence_view(
     captured_at: str,
     view: PortfolioIntelligenceView,
     liabilities_total: float | None,
+    snapshot_date: Optional[str] = None,
 ) -> Dict[str, Any]:
     cash_value = cash_value_from_view(view)
     invested_value = invested_value_from_view(view)
@@ -94,7 +118,7 @@ def snapshot_row_from_intelligence_view(
         "user_id": user_id,
         "portfolio_id": portfolio_id,
         "captured_at": captured_at,
-        "snapshot_date": captured_at[:10],
+        "snapshot_date": snapshot_date or captured_at[:10],
         "base_currency": view.base_currency,
         "priced_market_value": view.priced_total_market_value,
         "total_cost_basis": view.priced_total_cost_basis,

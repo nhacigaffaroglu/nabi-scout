@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+ISTANBUL_TZ = ZoneInfo("Europe/Istanbul")
 
 
 class WealthPortfolioSnapshotRepository:
@@ -16,6 +19,21 @@ class WealthPortfolioSnapshotRepository:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc).date()
+
+    @staticmethod
+    def istanbul_calendar_date(at: Optional[datetime] = None) -> date:
+        moment = at or datetime.now(timezone.utc)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.astimezone(ISTANBUL_TZ).date()
+
+    @staticmethod
+    def istanbul_date_from_captured_at(captured_at: str) -> date:
+        normalized = str(captured_at or "").strip().replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(ISTANBUL_TZ).date()
 
     def find_for_portfolio_on_date(
         self,

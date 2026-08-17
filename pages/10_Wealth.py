@@ -67,6 +67,8 @@ from services.wealth_timeline_service import WealthTimelineService
 
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
 from components.wealth_goal_center_ui import render_wealth_goal_center
+from components.wealth_history_ui import render_wealth_history
+from services.wealth_history_service import build_wealth_history
 
 
 def _format_money(value, currency: str) -> str:
@@ -737,39 +739,14 @@ with tab_history:
 
     timeline_view = timeline.build_timeline_view(portfolio)
     performance_view = timeline.build_performance_view(portfolio)
+    history_view = build_wealth_history(
+        timeline_view.snapshots,
+        transactions=wealth.list_transactions(limit=2000),
+        account_ids=[str(row.get("id") or "") for row in accounts],
+    )
+    render_wealth_history(history_view)
 
-    if performance_view.history_points:
-        st.divider()
-        st.markdown("**Kayıtlı görüntü geçmişi**")
-        st.caption(
-            "Grafik yalnızca kaydedilmiş anlık görüntülerin fiyatlı baz para birimi "
-            "değerini gösterir; yeni değerleme veya sağlayıcı çağrısı yapılmaz."
-        )
-        history_df = pd.DataFrame(
-            {
-                "priced_market_value": [
-                    point.priced_market_value for point in performance_view.history_points
-                ],
-            },
-            index=[point.captured_at for point in performance_view.history_points],
-        )
-        st.line_chart(history_df)
-        partial_points = [
-            point for point in performance_view.history_points if point.is_partial
-        ]
-        if partial_points:
-            st.warning(
-                "Bazı görüntüler kısmi: fiyatlanmamış pozisyon, karışık para birimi "
-                "veya %100 altı kapsam."
-            )
-            for point in partial_points:
-                st.write(
-                    f"- {format_date_dmy(point.captured_at)}: {', '.join(point.partial_reasons)}"
-                )
-
-    if not timeline_view.snapshots:
-        st.info("Henüz kayıtlı görüntü yok. Mevcut değerlendirmeyi kaydetmek için düğmeyi kullanın.")
-    else:
+    if timeline_view.snapshots:
         st.markdown("**Son görüntüler**")
         for snap in timeline_view.snapshots[:10]:
             partial_note = ""
@@ -780,61 +757,6 @@ with tab_history:
                 f"{_format_money(snap.priced_market_value, snap.base_currency)} · "
                 f"kapsam {snap.priced_position_coverage_pct:.0f}%"
                 f"{partial_note}"
-            )
-
-    period = timeline_view.latest_period
-    if period is None:
-        st.info("Performans karşılaştırması için en az iki görüntü gerekir.")
-    else:
-        st.divider()
-        st.markdown("**Son dönem karşılaştırması**")
-        st.write(
-            f"{format_date_dmy(period.period_start_at)} → {format_date_dmy(period.period_end_at)}"
-        )
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric(
-            "Değer değişimi",
-            _format_money(period.portfolio_value_change, period.base_currency),
-        )
-        p2.metric(
-            "Net dış akış",
-            _format_money(period.net_external_flow, period.base_currency),
-        )
-        p3.metric(
-            "Yatırım kazancı/kaybı",
-            _format_money(period.investment_gain, period.base_currency),
-        )
-        p4.metric(
-            "Temettü / ücret",
-            f"{period.dividend_income:.2f} / {period.fee_cost:.2f} {period.base_currency}",
-        )
-
-        st.caption(
-            f"Başlangıç: {_format_money(period.start_priced_value, period.base_currency)} · "
-            f"Bitiş: {_format_money(period.end_priced_value, period.base_currency)} · "
-            f"Giriş: {_format_money(period.external_inflows, period.base_currency)} · "
-            f"Çıkış: {_format_money(period.external_outflows, period.base_currency)}"
-        )
-        st.caption(
-            f"Kapsam başlangıç/bitiş: {period.start_coverage_pct:.0f}% / "
-            f"{period.end_coverage_pct:.0f}%"
-        )
-
-        if not period.performance_comparable:
-            st.warning(
-                "Bu dönem performansı tam karşılaştırılabilir değil. "
-                "Kazanç/kayıp bilgilendirme amaçlıdır; yatırım getirisi olarak yorumlamayın."
-            )
-            for warning in period.warnings:
-                st.write(f"- {warning}")
-        elif period.simple_period_return_pct is not None:
-            st.caption(
-                f"Dönem değişimi (dış akış yok): {period.simple_period_return_pct:.2f}%"
-            )
-        else:
-            st.caption(
-                "Basit dönem yüzdesi gösterilmedi; dış nakit akışı veya veri kalitesi "
-                "nedeniyle yatırım getirisi iddiası yok."
             )
 
     linked = performance_view.linked_performance

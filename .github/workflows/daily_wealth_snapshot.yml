@@ -9,6 +9,10 @@ on:
       user_id:
         description: Optional single-user scope for verification
         required: false
+      dry_run:
+        description: Read-only capture preview (no writes)
+        required: false
+        default: "false"
 
 jobs:
   wealth_snapshot:
@@ -25,8 +29,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
+          EXTRA=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            EXTRA="$EXTRA --dry-run"
+          fi
           if [ -n "${{ github.event.inputs.user_id }}" ]; then
-            python3 scripts/run_daily_wealth_snapshot.py --user-id "${{ github.event.inputs.user_id }}"
+            python3 scripts/run_daily_wealth_snapshot.py --user-id "${{ github.event.inputs.user_id }}" $EXTRA
           else
-            python3 scripts/run_daily_wealth_snapshot.py
+            python3 scripts/run_daily_wealth_snapshot.py $EXTRA
           fi

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Daily wealth snapshot automation — multi-user, 0 LLM, persisted prices/FX."""
+"""Daily wealth snapshot — Istanbul calendar day, persisted prices only, 0 LLM."""
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import sys
-from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,57 +14,69 @@ if str(ROOT) not in sys.path:
 
 from repositories.wealth_automation_run_repository import WealthAutomationRunRepository
 from repositories.wealth_portfolio_admin_repository import WealthPortfolioAdminRepository
-from services.candidate_price_service import CandidatePriceService
-from services.portfolio_intelligence_service import PortfolioIntelligenceService
+from repositories.wealth_portfolio_snapshot_repository import (
+    WealthPortfolioSnapshotRepository,
+)
 from services.supabase_admin_client import apply_local_secrets_to_env, create_admin_supabase_client
 from services.wealth_core_service import WealthCoreService
-from services.wealth_timeline_service import WealthTimelineService
+from services.wealth_snapshot_capture_service import (
+    SnapshotCaptureStatus,
+    capture_portfolio_snapshot,
+)
 
 
 JOB_NAME = "daily_wealth_snapshot"
 
 
-def _snapshot_portfolio(client, *, user_id: str, portfolio: dict) -> dict:
-    wealth = WealthCoreService(client, user_id)
-    price_service = CandidatePriceService(client)
-    intelligence = PortfolioIntelligenceService(wealth, price_service, nabi_client=client)
-    view = intelligence.build_view(portfolio, enrich_nabi=False)
-    timeline = WealthTimelineService(wealth)
-    saved = timeline.save_snapshot_from_view(portfolio, view)
+def _result_public(item) -> dict:
     return {
-        "portfolio_id": str(portfolio.get("id") or ""),
-        "user_id": user_id,
-        "snapshot_id": saved.id,
-        "price_lookups": price_service.fetch_count,
-        "fx_supported": view.fx_supported,
-        "unpriced_position_count": view.unpriced_position_count,
+        "status": item.status.value,
+        "dry_run": item.dry_run,
+        "written": item.written,
+        "snapshot_date": item.snapshot_date,
+        "valuation_complete": item.valuation_complete,
+        "priced_market_value": item.priced_market_value,
+        "unpriced_symbols": list(item.unpriced_symbols),
+        "unpriced_position_count": item.unpriced_position_count,
+        "base_currency": item.base_currency,
+        "error": item.error,
     }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Daily wealth snapshot")
-    parser.add_argument("--user-id", help="Optional single-user scope for verification")
+    parser.add_argument("--user-id", help="Optional single-user scope")
     parser.add_argument("--portfolio-id", help="Optional portfolio scope with --user-id")
     parser.add_argument("--trigger-type", default="scheduled")
-    parser.add_argument("--allow-second-run-today", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--allow-second-run-today",
+        action="store_true",
+        help="Bypass job-run lock only; per-portfolio Istanbul-day skip still applies.",
+    )
     args = parser.parse_args()
 
     apply_local_secrets_to_env()
     client = create_admin_supabase_client()
-    runs = WealthAutomationRunRepository(client)
-    admin = WealthPortfolioAdminRepository(client)
-    today = date.today()
-    existing = runs.get_run(job_name=JOB_NAME, run_date=today, trigger_type=args.trigger_type)
-    if existing and not args.allow_second_run_today:
-        if str(existing.get("status") or "") in {"COMPLETED", "RUNNING"}:
-            print(json.dumps({"status": "skipped", "reason": "already_run"}, default=str))
+    today = WealthPortfolioSnapshotRepository.istanbul_calendar_date()
+    runs = None
+    run_id = None
+    if not args.dry_run:
+        runs = WealthAutomationRunRepository(client)
+        existing = runs.get_run(
+            job_name=JOB_NAME, run_date=today, trigger_type=args.trigger_type
+        )
+        if existing and not args.allow_second_run_today:
+            if str(existing.get("status") or "") in {"COMPLETED", "RUNNING"}:
+                print(json.dumps({"status": "skipped", "reason": "already_run"}, default=str))
+                return 0
+        started = runs.try_start_run(
+            job_name=JOB_NAME, run_date=today, trigger_type=args.trigger_type
+        )
+        if started is None and not args.allow_second_run_today:
+            print(json.dumps({"status": "skipped", "reason": "duplicate"}, default=str))
             return 0
-
-    started = runs.try_start_run(job_name=JOB_NAME, run_date=today, trigger_type=args.trigger_type)
-    if started is None and not args.allow_second_run_today:
-        print(json.dumps({"status": "skipped", "reason": "duplicate"}, default=str))
-        return 0
-    run_id = str((started or existing or {}).get("id"))
+        run_id = str((started or existing or {}).get("id") or "")
 
     if args.user_id:
         wealth = WealthCoreService(client, args.user_id)
@@ -76,53 +87,69 @@ def main() -> int:
                 if str(row.get("id") or "") == str(args.portfolio_id)
             ]
         else:
-            portfolios = [wealth.ensure_default_portfolio()]
+            default = wealth.portfolios.get_default_for_user(args.user_id)
+            portfolios = [default] if default else []
     else:
-        portfolios = admin.list_active_portfolios_for_snapshot()
+        portfolios = WealthPortfolioAdminRepository(client).list_active_portfolios_for_snapshot()
 
     results = []
-    total_price_lookups = 0
     failures = 0
+    created = 0
+    skipped = 0
     for portfolio in portfolios:
-        user_id = str(portfolio.get("user_id") or "")
+        user_id = str(portfolio.get("user_id") or args.user_id or "")
         if not user_id:
             failures += 1
             continue
-        try:
-            item = _snapshot_portfolio(client, user_id=user_id, portfolio=portfolio)
-            total_price_lookups += int(item.get("price_lookups") or 0)
-            results.append(item)
-        except Exception as exc:
+        wealth = WealthCoreService(client, user_id)
+        item = capture_portfolio_snapshot(
+            wealth,
+            portfolio,
+            dry_run=args.dry_run,
+        )
+        results.append(_result_public(item))
+        if item.status == SnapshotCaptureStatus.CREATED and item.written:
+            created += 1
+        elif item.status == SnapshotCaptureStatus.ALREADY_CAPTURED:
+            skipped += 1
+        elif item.status in {
+            SnapshotCaptureStatus.ERROR,
+            SnapshotCaptureStatus.VALUATION_UNAVAILABLE,
+            SnapshotCaptureStatus.NO_PORTFOLIO,
+        }:
             failures += 1
-            results.append(
-                {
-                    "portfolio_id": str(portfolio.get("id") or ""),
-                    "user_id": user_id,
-                    "error": str(exc),
-                }
-            )
+        elif item.status == SnapshotCaptureStatus.CREATED and args.dry_run:
+            created += 1
 
-    runs.finish_run(
-        run_id,
-        status="COMPLETED" if failures == 0 else "FAILED",
-        records_updated=len(results),
-        provider_calls=total_price_lookups,
-        report_payload={
-            "portfolio_count": len(portfolios),
-            "snapshot_count": sum(1 for row in results if row.get("snapshot_id")),
-            "failure_count": failures,
-        },
-    )
-    result = {
-        "status": "completed" if failures == 0 else "partial",
-        "run_id": run_id,
+    if runs is not None and run_id:
+        runs.finish_run(
+            run_id,
+            status="COMPLETED" if failures == 0 else "FAILED",
+            records_updated=created,
+            provider_calls=0,
+            report_payload={
+                "portfolio_count": len(portfolios),
+                "created": created,
+                "already_captured": skipped,
+                "failure_count": failures,
+                "dry_run": False,
+                "snapshot_date": today.isoformat(),
+            },
+        )
+
+    payload = {
+        "status": "dry_run" if args.dry_run else ("completed" if failures == 0 else "partial"),
+        "snapshot_date": today.isoformat(),
+        "timezone": "Europe/Istanbul",
         "portfolio_count": len(portfolios),
-        "snapshot_count": sum(1 for row in results if row.get("snapshot_id")),
+        "created": created,
+        "already_captured": skipped,
         "failure_count": failures,
-        "price_lookups": total_price_lookups,
+        "provider_calls": 0,
         "llm_calls": 0,
+        "results": results,
     }
-    print(json.dumps(result, default=str))
+    print(json.dumps(payload, default=str))
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
         Path(summary_path).write_text(
@@ -130,11 +157,14 @@ def main() -> int:
                 [
                     "## Daily Wealth Snapshot",
                     "",
-                    f"- Portfolios processed: {len(portfolios)}",
-                    f"- Snapshots written: {result['snapshot_count']}",
+                    f"- Istanbul date: {today.isoformat()}",
+                    f"- Portfolios: {len(portfolios)}",
+                    f"- Created: {created}",
+                    f"- Already captured: {skipped}",
                     f"- Failures: {failures}",
-                    f"- Price lookups: {total_price_lookups}",
+                    "- Provider calls: 0",
                     "- LLM calls: 0",
+                    f"- Dry-run: {args.dry_run}",
                 ]
             )
             + "\n",
