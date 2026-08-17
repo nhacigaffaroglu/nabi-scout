@@ -62,6 +62,36 @@ class CandidateRepository:
         response = query.limit(1).execute()
         return response.data[0] if response.data else None
 
+    def list_by_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+        normalized = str(symbol or "").strip().upper()
+        if not normalized:
+            return []
+        response = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("symbol", normalized)
+            .execute()
+        )
+        return response.data or []
+
+    def upsert_expansion_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Reuse the canonical symbol row; never insert a second stub."""
+        from services.candidate_identity import (
+            merge_preserving_enriched,
+            select_canonical_candidate,
+        )
+
+        cleaned = prepare_candidate_payload(payload)
+        symbol = str(cleaned.get("symbol") or "").strip().upper()
+        existing = self.list_by_symbol(symbol) if symbol else []
+        canonical = select_canonical_candidate(existing)
+        if canonical and canonical.get("id"):
+            patch = merge_preserving_enriched(canonical, cleaned)
+            if not patch:
+                return canonical
+            return self.update(canonical["id"], patch)
+        return self.upsert_by_symbol(cleaned)
+
     def get_all(self, limit=None, order_by="created_at", descending=True):
         query = self.client.table(self.table).select("*").order(
             order_by, desc=descending

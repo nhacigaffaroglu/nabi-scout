@@ -18,12 +18,28 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def is_missing_runs_table_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "universe_expansion_runs" in message and (
+        "pgrst205" in message
+        or "could not find the table" in message
+        or "schema cache" in message
+    )
+
+
 class UniverseExpansionRunRepository:
     TABLE = "universe_expansion_runs"
 
     def __init__(self, client=None) -> None:
         self.client = client
         self._memory: List[Dict[str, Any]] = []
+        self.ledger_available = True
+
+    def _disable_ledger(self, exc: BaseException) -> None:
+        if is_missing_runs_table_error(exc):
+            self.ledger_available = False
+            return
+        raise exc
 
     def start_run(
         self,
@@ -49,7 +65,15 @@ class UniverseExpansionRunRepository:
         if self.client is None:
             self._memory.append(dict(payload))
             return payload
-        response = self.client.table(self.TABLE).insert(payload).execute()
+        if not self.ledger_available:
+            self._memory.append(dict(payload))
+            return payload
+        try:
+            response = self.client.table(self.TABLE).insert(payload).execute()
+        except Exception as exc:
+            self._disable_ledger(exc)
+            self._memory.append(dict(payload))
+            return payload
         return response.data[0] if response.data else payload
 
     def finalize_run(
@@ -83,25 +107,40 @@ class UniverseExpansionRunRepository:
                     self._memory[index] = merged
                     return merged
             return None
-        response = (
-            self.client.table(self.TABLE)
-            .update(payload)
-            .eq("run_id", run_id)
-            .execute()
-        )
+        if not self.ledger_available:
+            for index, row in enumerate(self._memory):
+                if row.get("run_id") == run_id:
+                    merged = {**row, **payload}
+                    self._memory[index] = merged
+                    return merged
+            return None
+        try:
+            response = (
+                self.client.table(self.TABLE)
+                .update(payload)
+                .eq("run_id", run_id)
+                .execute()
+            )
+        except Exception as exc:
+            self._disable_ledger(exc)
+            return None
         return response.data[0] if response.data else None
 
     def list_for_date(self, run_date: date) -> List[Dict[str, Any]]:
-        if self.client is None:
+        if self.client is None or not self.ledger_available:
             target = run_date.isoformat()
             return [row for row in self._memory if row.get("run_date") == target]
-        response = (
-            self.client.table(self.TABLE)
-            .select("*")
-            .eq("run_date", run_date.isoformat())
-            .order("started_at", desc=True)
-            .execute()
-        )
+        try:
+            response = (
+                self.client.table(self.TABLE)
+                .select("*")
+                .eq("run_date", run_date.isoformat())
+                .order("started_at", desc=True)
+                .execute()
+            )
+        except Exception as exc:
+            self._disable_ledger(exc)
+            return []
         return response.data or []
 
     def get_latest_completed_paid_run(self, run_date: date) -> Optional[Dict[str, Any]]:

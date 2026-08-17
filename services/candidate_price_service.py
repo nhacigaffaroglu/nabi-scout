@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 from repositories.candidate_repository import CandidateRepository
 from services.asset_capability_contract import capability_for_asset_class
+from services.candidate_identity import (
+    MARKET_ALIASES,
+    numeric_current_price,
+    select_persisted_price_candidate,
+)
 from services.portfolio_intelligence_contract import PriceQuote
 from services.wealth_price_service import is_cash_asset, normalize_currency
+
+__all__ = (
+    "MARKET_ALIASES",
+    "CandidatePriceService",
+    "numeric_current_price",
+    "select_persisted_price_candidate",
+)
 
 
 class CandidatePriceService:
@@ -42,6 +54,8 @@ class CandidatePriceService:
         symbol: str,
         asset_class: str,
         currency: str,
+        *,
+        market: Optional[str] = None,
     ) -> PriceQuote:
         if is_cash_asset(symbol, asset_class):
             asset_currency = normalize_currency(currency)
@@ -67,8 +81,20 @@ class CandidatePriceService:
             return self._cache[sym]
 
         self._fetch_count += 1
-        candidate = self._repo.get_by_symbol(sym)
-        price_raw = (candidate or {}).get("current_price")
+        listed = (
+            self._repo.list_by_symbol(sym)
+            if hasattr(self._repo, "list_by_symbol")
+            else None
+        )
+        rows = listed if isinstance(listed, list) else []
+        if not rows:
+            legacy = self._repo.get_by_symbol(sym)
+            rows = [legacy] if isinstance(legacy, dict) else []
+        candidate = select_persisted_price_candidate(
+            rows,
+            preferred_market=market,
+        )
+        price_raw = numeric_current_price(candidate)
         asset_currency = normalize_currency(
             (candidate or {}).get("currency") or currency
         )
@@ -82,7 +108,7 @@ class CandidatePriceService:
             )
         else:
             quote = PriceQuote(
-                price=float(price_raw),
+                price=price_raw,
                 currency=asset_currency,
                 available=True,
                 source=self.PROVIDER_NAME,

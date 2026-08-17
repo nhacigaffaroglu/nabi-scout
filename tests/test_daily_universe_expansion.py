@@ -24,6 +24,7 @@ from services.universe_expansion_contract import (
     PROVIDER_SEC,
     STOP_REASON_BUDGET_EXHAUSTED,
     STOP_REASON_RATE_LIMIT,
+    STOP_REASON_SAFETY_CAP,
 )
 from services.universe_expansion_cost_model import estimate_participation_minimum_cost
 from services.universe_expansion_onboarding_service import (
@@ -231,6 +232,38 @@ class DailyExpansionServiceTests(unittest.TestCase):
         assert detail.result is not None
         self.assertEqual(detail.result.company_intelligence_calls, 0)
 
+    def test_safety_cap_stops_and_leaves_remaining_pending(self) -> None:
+        repo = UniverseExpansionRepository()
+        repo.upsert_pending("AAA", source_universe="pilot", priority=1)
+        repo.upsert_pending("BBB", source_universe="pilot", priority=2)
+        repo.upsert_pending("CCC", source_universe="pilot", priority=3)
+        service = DailyUniverseExpansionService(
+            queue_repo=repo,
+            onboarding_runner=lambda symbol, **kwargs: _completed_onboarding(symbol),
+        )
+        report = service.run_once(max_symbols=2, now=_now(), seed_if_empty=False)
+        self.assertEqual(report.stop_reason, STOP_REASON_SAFETY_CAP)
+        self.assertEqual(report.symbols_completed, 2)
+        self.assertEqual(repo.get_by_symbol("CCC")["status"], EXPANSION_STATUS_PENDING)
+
+    def test_later_run_resumes_remaining_pending(self) -> None:
+        repo = UniverseExpansionRepository()
+        repo.upsert_pending("AAA", source_universe="pilot", priority=1)
+        repo.upsert_pending("BBB", source_universe="pilot", priority=2)
+        repo.upsert_pending("CCC", source_universe="pilot", priority=3)
+        service = DailyUniverseExpansionService(
+            queue_repo=repo,
+            onboarding_runner=lambda symbol, **kwargs: _completed_onboarding(symbol),
+        )
+        first = service.run_once(max_symbols=2, now=_now(), seed_if_empty=False)
+        self.assertEqual(first.stop_reason, STOP_REASON_SAFETY_CAP)
+        second = service.run_once(max_symbols=2, now=_now(), seed_if_empty=False)
+        self.assertEqual(repo.get_by_symbol("AAA")["status"], EXPANSION_STATUS_COMPLETED)
+        self.assertEqual(repo.get_by_symbol("BBB")["status"], EXPANSION_STATUS_COMPLETED)
+        self.assertEqual(repo.get_by_symbol("CCC")["status"], EXPANSION_STATUS_COMPLETED)
+        self.assertEqual(second.symbols_completed, 1)
+        self.assertNotEqual(second.stop_reason, STOP_REASON_SAFETY_CAP)
+
 
 class SourceUniverseTests(unittest.TestCase):
     def test_duplicate_source_universe_symbol_deduped(self) -> None:
@@ -298,7 +331,7 @@ class OnboardingPersistenceTests(unittest.TestCase):
 
         self.assertTrue(onboarding.success)
         self.assertTrue(onboarding.candidate_upserted)
-        payload = candidate_repo.upsert_by_symbol.call_args.args[0]
+        payload = candidate_repo.upsert_expansion_candidate.call_args.args[0]
         self.assertEqual(payload["symbol"], "XYZ")
         self.assertEqual(payload["company_name"], "XYZ")
 

@@ -125,7 +125,11 @@ def run_participation_onboarding(
     if candidate_repo is not None:
         payload = build_expansion_candidate_payload(result, normalized)
         try:
-            candidate_repo.upsert_by_symbol(payload)
+            writer = getattr(candidate_repo, "upsert_expansion_candidate", None)
+            if callable(writer):
+                writer(payload)
+            else:
+                candidate_repo.upsert_by_symbol(payload)
             candidate_upserted = True
         except Exception:
             candidate_upserted = False
