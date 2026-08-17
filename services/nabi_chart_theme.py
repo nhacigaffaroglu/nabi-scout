@@ -7,6 +7,7 @@ import altair as alt
 CHART_WIDTH = "container"
 CHART_HEIGHT_DEFAULT = 280
 CHART_HEIGHT_COMPACT = 220
+CHART_HEIGHT_HERO = 380
 
 # Semantic palette — consistent meaning across all charts
 NABI_PRIMARY = "#1a365d"

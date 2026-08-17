@@ -14,6 +14,7 @@ from services.portfolio_intelligence_charts import (
 from services.portfolio_performance_intelligence_service import PortfolioIntelligenceV13View
 from services.wealth_decision_journal_service import WealthDecisionJournalService
 from services.wealth_timeline_service import WealthTimelineService
+from services.ui_formatters import format_date_dmy
 
 
 def _money(value: Optional[float], currency: str) -> str:
@@ -47,24 +48,6 @@ def render_performance_section(v13: PortfolioIntelligenceV13View) -> None:
     perf = v13.performance
     currency = v13.dashboard.base.base_currency
 
-    if not perf.performance_available:
-        render_limitation_state(
-            "Yeterli geçmiş yok",
-            "Geçmiş performans için en az iki portföy görüntüsü gerekli. "
-            "Aşağıdaki düğümle güncel durumu kaydedin.",
-        )
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Yatırım getirisi", _money(perf.investment_gain, currency))
-        c2.metric("Net dış akış", _money(perf.net_external_flow, currency))
-        c3.metric(
-            "Bağlantılı getiri",
-            f"{perf.linked_return_pct:.2f}%" if perf.linked_return_pct is not None else "—",
-        )
-        c4.metric("Temettü", _money(perf.dividend_income, currency))
-        if perf.limitations:
-            st.caption(" · ".join(perf.limitations))
-
     history = v13.performance_history.history_points
     if history:
         st.altair_chart(
@@ -75,8 +58,30 @@ def render_performance_section(v13: PortfolioIntelligenceV13View) -> None:
             ),
             use_container_width=True,
         )
+        if perf.net_contributions:
+            st.caption(
+                "Kesikli çizgi: ömür boyu net katkı (skaler referans — geçmiş serisi değil)."
+            )
+    elif not perf.performance_available:
+        render_limitation_state(
+            "Yeterli geçmiş yok",
+            "Geçmiş performans için en az iki portföy görüntüsü gerekli. "
+            "Aşağıdaki düğümle güncel durumu kaydedin.",
+        )
     else:
         st.info("Yeterli tarihsel snapshot bulunmuyor.")
+
+    if perf.performance_available:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Yatırım getirisi", _money(perf.investment_gain, currency))
+        c2.metric("Net dış akış", _money(perf.net_external_flow, currency))
+        c3.metric(
+            "Bağlantılı getiri",
+            f"{perf.linked_return_pct:.2f}%" if perf.linked_return_pct is not None else "—",
+        )
+        c4.metric("Temettü", _money(perf.dividend_income, currency))
+        if perf.limitations:
+            st.caption(" · ".join(perf.limitations))
 
     if perf.latest_period and perf.latest_period.performance_comparable:
         st.altair_chart(
@@ -237,7 +242,7 @@ def render_journal_section(
     if entries:
         rows = [
             {
-                "Tarih": (row.get("created_at") or "")[:10],
+                "Tarih": format_date_dmy(row.get("created_at")),
                 "Sembol": row.get("symbol"),
                 "Bağlam": row.get("action_context"),
                 "Tez": (row.get("thesis") or "")[:80],

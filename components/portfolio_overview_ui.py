@@ -6,10 +6,9 @@ from components.nabi_design_system import render_chart_container, render_section
 from components.portfolio_intelligence_ui import render_attention_section
 from services.portfolio_intelligence_charts import (
     build_allocation_bar_chart,
-    build_pl_by_position_chart,
+    build_coverage_status_chart,
     build_portfolio_value_history_chart,
-    build_position_allocation_chart,
-    build_position_weight_chart,
+    build_top_concentration_chart,
 )
 from services.portfolio_intelligence_enrichment_contract import PortfolioIntelligenceDashboardView
 from services.portfolio_performance_intelligence_service import PortfolioIntelligenceV13View
@@ -24,15 +23,15 @@ def render_portfolio_overview_tab(
     wealth_metrics: TotalWealthMetrics,
     wave3: Wave3IntelligenceView,
 ) -> None:
-    rows = list(dashboard.enriched_positions)
+    """Dominant wealth curve, then structure vs attention split."""
     perf = v13.performance
     currency = dashboard.base.base_currency
+    conc = wave3.construction.concentration
 
     render_section_title(
-        "Portföy Nabzı",
-        description="Dağılım, yoğunlaşma ve güncel performans özeti.",
+        "Portföy / servet eğrisi",
+        description="Persisted snapshot geçmişi — sahte katkı zaman serisi yok.",
     )
-
     history = v13.performance_history.history_points
     if history:
         st.altair_chart(
@@ -43,40 +42,54 @@ def render_portfolio_overview_tab(
             ),
             use_container_width=True,
         )
+        if perf.net_contributions:
+            st.caption(
+                "Kesikli çizgi: ömür boyu net katkı (skaler referans — geçmiş serisi değil)."
+            )
     else:
         st.info("Yeterli tarihsel snapshot bulunmuyor. Performans sekmesinden görüntü kaydedin.")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        if rows:
-            st.altair_chart(build_position_allocation_chart(rows), use_container_width=True)
-    with c2:
+    left, right = st.columns([3, 2])
+    with left:
+        render_chart_container(
+            "Portföy yapısı",
+            subtitle="Varlık sınıfı dağılımı — kısmi değerleme kapsamı korunur",
+        )
+        allocation = dashboard.base.asset_class_allocation
+        if allocation:
+            st.altair_chart(
+                build_allocation_bar_chart(allocation, title="Varlık sınıfı"),
+                use_container_width=True,
+            )
+            coverage = dashboard.base.health.priced_position_coverage_pct
+            if coverage < 99.9:
+                st.caption(f"Değerleme kapsamı: %{coverage:.0f} — grafik fiyatlı pozisyonları yansıtır.")
+        else:
+            st.info("Dağılım için yeterli fiyatlı pozisyon yok.")
+
         st.altair_chart(
-            build_allocation_bar_chart(
-                dashboard.base.asset_class_allocation,
-                title="Varlık sınıfı",
+            build_top_concentration_chart(
+                top1_pct=conc.top1_weight_pct,
+                top3_pct=conc.top3_weight_pct,
+                top5_pct=conc.top5_weight_pct,
+                top1_limit=12.0,
+                top3_limit=40.0,
             ),
             use_container_width=True,
         )
 
-    conc = wave3.construction.concentration
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Top-1", f"{conc.top1_weight_pct:.1f}%" if conc.top1_weight_pct else "—")
-    m2.metric("Top-3", f"{conc.top3_weight_pct:.1f}%" if conc.top3_weight_pct else "—")
-    m3.metric(
-        "Katılım kapsamı",
-        f"%{dashboard.participation_eligible_weight_pct:.0f}",
-    )
-    m4.metric(
-        "Araştırma kapsamı",
-        f"%{dashboard.research_coverage_weight_pct:.0f}",
-    )
-
-    render_chart_container("Pozisyon görünümü", subtitle="En büyük pozisyonlar ve K/Z katkısı")
-    p1, p2 = st.columns(2)
-    with p1:
-        st.altair_chart(build_position_weight_chart(rows), use_container_width=True)
-    with p2:
-        st.altair_chart(build_pl_by_position_chart(rows), use_container_width=True)
-
-    render_attention_section(dashboard)
+    with right:
+        render_chart_container(
+            "Dikkat / ne değişti",
+            subtitle="Yoğunlaşma, fiyat boşlukları ve izleme sinyalleri",
+        )
+        st.altair_chart(
+            build_coverage_status_chart(
+                participation_pct=dashboard.participation_eligible_weight_pct,
+                research_pct=dashboard.research_coverage_weight_pct,
+                unknown_participation_pct=dashboard.participation_unknown_weight_pct,
+                unresearched_pct=dashboard.unresearched_weight_pct,
+            ),
+            use_container_width=True,
+        )
+        render_attention_section(dashboard)

@@ -11,8 +11,8 @@ from components.portfolio_management_ui import (
 from components.portfolio_advanced_ui import render_cash_event_form
 from services.portfolio_intelligence_charts import (
     build_allocation_bar_chart,
+    build_coverage_status_chart,
     build_pl_by_position_chart,
-    build_position_allocation_chart,
 )
 from services.portfolio_intelligence_enrichment_contract import PortfolioIntelligenceDashboardView
 
@@ -30,66 +30,68 @@ def render_portfolio_management_expander(
         render_account_management_panel(wealth, portfolio, accounts)
 
 
+_SECONDARY_ALLOCATION_OPTIONS = {
+    "Kurum": "account_allocation",
+    "Sektör": "sector_allocation",
+    "Ülke": "country_allocation",
+    "Para birimi": "currency_allocation",
+}
+
+
 def render_allocation_dashboard(
     dashboard: PortfolioIntelligenceDashboardView,
     *,
     compact: bool = False,
 ) -> None:
     rows = list(dashboard.enriched_positions)
-    if not rows:
+    if not rows and not dashboard.base.asset_class_allocation:
         st.info("Görselleştirme için pozisyon bulunmuyor.")
         return
 
-    if compact:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.altair_chart(build_position_allocation_chart(rows), use_container_width=True)
-        with c2:
-            st.altair_chart(
-                build_allocation_bar_chart(
-                    dashboard.sector_allocation,
-                    title="Sektör dağılımı",
-                ),
-                use_container_width=True,
-            )
-        return
+    render_chart_container(
+        "Dağılım hiyerarşisi",
+        subtitle="Birincil: varlık sınıfı · İkincil: seçilebilir boyutlar",
+    )
 
-    render_chart_container("Dağılım analizi", subtitle="Fiyatlı pozisyonlar üzerinden")
-    r1a, r1b = st.columns(2)
-    with r1a:
-        st.altair_chart(build_position_allocation_chart(rows), use_container_width=True)
-    with r1b:
+    primary = dashboard.base.asset_class_allocation
+    if primary:
         st.altair_chart(
-            build_allocation_bar_chart(dashboard.account_allocation, title="Kurum dağılımı"),
+            build_allocation_bar_chart(primary, title="Varlık sınıfı (birincil)"),
             use_container_width=True,
         )
+        coverage = dashboard.base.health.priced_position_coverage_pct
+        if coverage < 99.9:
+            st.caption(
+                f"Kısmi değerleme: %{coverage:.0f} fiyatlı — grafik tam portföyü temsil etmez."
+            )
+    else:
+        st.info("Varlık sınıfı dağılımı için fiyatlı pozisyon gerekli.")
 
-    with st.expander("Detaylı dağılım", expanded=False):
-        r2a, r2b = st.columns(2)
-        with r2a:
-            st.altair_chart(
-                build_allocation_bar_chart(dashboard.sector_allocation, title="Sektör"),
-                use_container_width=True,
-            )
-            st.altair_chart(
-                build_allocation_bar_chart(dashboard.currency_allocation, title="Para birimi"),
-                use_container_width=True,
-            )
-        with r2b:
-            st.altair_chart(
-                build_allocation_bar_chart(
-                    dashboard.participation_allocation,
-                    title="Katılım uygunluğu",
-                    color_field="participation",
-                ),
-                use_container_width=True,
-            )
-            st.altair_chart(
-                build_allocation_bar_chart(
-                    dashboard.research_coverage_allocation,
-                    title="Araştırma kapsamı",
-                ),
-                use_container_width=True,
-            )
+    if compact:
+        return
 
-    st.altair_chart(build_pl_by_position_chart(rows), use_container_width=True)
+    choice = st.radio(
+        "İkincil dağılım",
+        list(_SECONDARY_ALLOCATION_OPTIONS.keys()),
+        horizontal=True,
+        key="pi_secondary_allocation",
+    )
+    field = _SECONDARY_ALLOCATION_OPTIONS[choice]
+    secondary = getattr(dashboard, field, ())
+    st.altair_chart(
+        build_allocation_bar_chart(secondary, title=choice),
+        use_container_width=True,
+    )
+
+    st.altair_chart(
+        build_coverage_status_chart(
+            participation_pct=dashboard.participation_eligible_weight_pct,
+            research_pct=dashboard.research_coverage_weight_pct,
+            unknown_participation_pct=dashboard.participation_unknown_weight_pct,
+            unresearched_pct=dashboard.unresearched_weight_pct,
+        ),
+        use_container_width=True,
+    )
+
+    if rows:
+        st.altair_chart(build_pl_by_position_chart(rows), use_container_width=True)

@@ -11,24 +11,31 @@ from services.portfolio_intelligence_charts import (
     build_reference_gap_chart,
     build_risk_budget_chart,
     build_scenario_impact_chart,
+    build_top_concentration_chart,
 )
 from services.portfolio_ai_adviser_contract import PortfolioAIAdviserResponse
 from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
 from services.portfolio_reference_limits_service import PortfolioReferenceLimitsService
 from services.wave3_intelligence_service import Wave3IntelligenceService, Wave3IntelligenceView
+from services.ui_formatters import format_date_dmy
 
 
 def render_construction_section(wave3: Wave3IntelligenceView) -> None:
     st.subheader("Portföy yapısı ve yapısal risk")
     conc = wave3.construction.concentration
-    c1, c2, c3, c4 = st.columns(4)
-    top1 = conc.top1_weight_pct
-    c1.metric("Top-1", f"{top1:.1f}%" if top1 else "—", help=conc.top1_symbol or None)
-    c2.metric("Top-3", f"{conc.top3_weight_pct:.1f}%" if conc.top3_weight_pct else "—")
-    c3.metric("Top-5", f"{conc.top5_weight_pct:.1f}%" if conc.top5_weight_pct else "—")
-    c4.metric("Nakit", f"{wave3.construction.cash_weight_pct:.1f}%" if wave3.construction.cash_weight_pct else "—")
 
-    if conc.top1_weight_pct is not None:
+    st.altair_chart(
+        build_top_concentration_chart(
+            top1_pct=conc.top1_weight_pct,
+            top3_pct=conc.top3_weight_pct,
+            top5_pct=conc.top5_weight_pct,
+            top1_limit=12.0,
+            top3_limit=40.0,
+        ),
+        use_container_width=True,
+    )
+
+    if conc.top1_weight_pct is not None and conc.top1_symbol:
         st.altair_chart(
             build_concentration_limit_chart(
                 current_pct=conc.top1_weight_pct,
@@ -162,7 +169,29 @@ def render_scenarios_section(
 
 
 def render_decisions_section(wave3: Wave3IntelligenceView) -> None:
-    st.subheader("Karar skor kartı")
+    st.subheader("Karar zaman çizelgesi")
+    if wave3.timeline:
+        st.altair_chart(
+            build_decision_timeline_chart(wave3.timeline),
+            use_container_width=True,
+        )
+        for entry in wave3.timeline[:8]:
+            outcome = (
+                f"{entry.outcome_pct:+.1f}%"
+                if entry.outcome_pct is not None
+                else entry.outcome_status or "—"
+            )
+            st.markdown(
+                f"**{format_date_dmy(entry.decision_date)}** · {entry.symbol} ({entry.decision_type}) "
+                f"→ {outcome}"
+            )
+            if entry.title:
+                st.caption(entry.title)
+    else:
+        st.info("Henüz karar geçmişi yok.")
+
+    st.divider()
+    st.markdown("**Karar skor kartı**")
     sc = wave3.scorecard
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Değerlendirilen", sc.total_evaluated)
@@ -176,7 +205,7 @@ def render_decisions_section(wave3: Wave3IntelligenceView) -> None:
     if wave3.outcomes:
         rows = [
             {
-                "Tarih": row.decision_date[:10],
+                "Tarih": format_date_dmy(row.decision_date),
                 "Sembol": row.symbol,
                 "Tür": row.decision_type,
                 "Sonuç %": (
@@ -188,7 +217,8 @@ def render_decisions_section(wave3: Wave3IntelligenceView) -> None:
             }
             for row in wave3.outcomes[:20]
         ]
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        with st.expander("Detay tablo", expanded=False):
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
     if wave3.learning_insights:
         st.markdown("**Öğrenme içgörüleri (deterministik)**")
@@ -198,23 +228,6 @@ def render_decisions_section(wave3: Wave3IntelligenceView) -> None:
                 f"{insight.description}"
             )
             st.caption(insight.limitation)
-
-    if wave3.timeline:
-        st.altair_chart(
-            build_decision_timeline_chart(wave3.timeline),
-            use_container_width=True,
-        )
-        st.markdown("**Karar zaman çizelgesi**")
-        for entry in wave3.timeline[:10]:
-            outcome = (
-                f"{entry.outcome_pct:+.1f}%"
-                if entry.outcome_pct is not None
-                else entry.outcome_status or "—"
-            )
-            st.markdown(
-                f"- {entry.decision_date[:10]} **{entry.symbol}** "
-                f"({entry.decision_type}) → {outcome}"
-            )
 
 
 def render_decision_ai_section(

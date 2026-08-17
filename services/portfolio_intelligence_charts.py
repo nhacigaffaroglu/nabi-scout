@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Optional, Sequence
 
 import altair as alt
 import pandas as pd
@@ -9,6 +10,7 @@ from services.nabi_chart_theme import (
     CASH,
     CHART_HEIGHT_COMPACT,
     CHART_HEIGHT_DEFAULT,
+    CHART_HEIGHT_HERO,
     CHART_WIDTH,
     CONTRIBUTION,
     INVESTMENT_GAIN,
@@ -18,6 +20,7 @@ from services.nabi_chart_theme import (
     NEGATIVE,
     PARTICIPATION_COLORS,
     POSITIVE,
+    WARNING,
     empty_bar_chart,
 )
 from services.nabi_chart_theme import _ensure_theme
@@ -25,6 +28,68 @@ from services.portfolio_intelligence_enrichment_contract import EnrichedPosition
 from services.portfolio_intelligence_contract import AllocationSlice
 from services.portfolio_construction_contract import ReferenceLimitGap, RiskBudgetDimension
 from services.wealth_timeline_contract import PortfolioPerformancePeriod
+
+
+PL_CHART_COLUMNS = ("symbol", "unrealized_pl", "pl_pct")
+WEIGHT_CHART_COLUMNS = ("symbol", "weight_pct", "market_value", "pl")
+PL_UNAVAILABLE_MESSAGE = "K/Z grafiği için güncel fiyat verisi mevcut değil."
+
+
+@dataclass(frozen=True)
+class HoldingsChartRow:
+    symbol: str
+    weight_pct: Optional[float]
+    market_value: Optional[float]
+    unrealized_pl: Optional[float]
+    pl_pct: Optional[float]
+    price_available: bool
+
+
+def _holding_get(row: Any, name: str, default: Any = None) -> Any:
+    if isinstance(row, dict):
+        return row.get(name, default)
+    return getattr(row, name, default)
+
+
+def _optional_number(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _holding_from_valuation(val: Any) -> HoldingsChartRow:
+    pl = _optional_number(_holding_get(val, "unrealized_pl"))
+    cost_basis = _optional_number(_holding_get(val, "cost_basis"))
+    pl_pct = (pl / cost_basis) * 100.0 if pl is not None and cost_basis else None
+    return HoldingsChartRow(
+        symbol=str(_holding_get(val, "symbol") or ""),
+        weight_pct=_optional_number(_holding_get(val, "weight_pct")),
+        market_value=_optional_number(_holding_get(val, "market_value")),
+        unrealized_pl=pl,
+        pl_pct=pl_pct,
+        price_available=bool(_holding_get(val, "price_available", False)),
+    )
+
+
+def normalize_enriched_holdings(rows) -> list[HoldingsChartRow]:
+    normalized: list[HoldingsChartRow] = []
+    for row in rows:
+        if isinstance(row, HoldingsChartRow):
+            normalized.append(row)
+            continue
+        val = _holding_get(row, "valuation", None)
+        normalized.append(_holding_from_valuation(val if val is not None else row))
+    return normalized
+
+
+def normalize_valuation_holdings(rows) -> list[HoldingsChartRow]:
+    return [
+        row if isinstance(row, HoldingsChartRow) else _holding_from_valuation(row)
+        for row in rows
+    ]
 
 
 def _allocation_frame(slices: Sequence[AllocationSlice]) -> pd.DataFrame:
@@ -126,37 +191,38 @@ def build_allocation_bar_chart(
 
 
 def build_position_weight_chart(rows: Sequence[EnrichedPositionRow]) -> alt.Chart:
-    _ensure_theme()
-    priced = [
-        row
-        for row in rows
-        if row.valuation.price_available and row.valuation.market_value is not None
-    ]
-    frame = pd.DataFrame(
-        [
-            {
-                "symbol": row.valuation.symbol,
-                "weight_pct": float(row.valuation.weight_pct or 0.0),
-                "market_value": float(row.valuation.market_value or 0.0),
-                "pl": float(row.valuation.unrealized_pl or 0.0),
-            }
-            for row in priced
-        ]
-    ).sort_values("weight_pct", ascending=True)
-    if frame.empty:
-        return empty_bar_chart("Fiyatlı pozisyon yok")
+    return build_holdings_weight_chart(normalize_enriched_holdings(rows))
 
+
+def build_holdings_weight_chart(holdings: Sequence[HoldingsChartRow]) -> alt.Chart:
+    _ensure_theme()
+    records = []
+    for row in holdings:
+        price_available = bool(_holding_get(row, "price_available", False))
+        market_value = _optional_number(_holding_get(row, "market_value"))
+        if not price_available or market_value is None:
+            continue
+        records.append(
+            {
+                "symbol": str(_holding_get(row, "symbol") or ""),
+                "weight_pct": float(_optional_number(_holding_get(row, "weight_pct")) or 0.0),
+                "market_value": market_value,
+                "pl": _optional_number(_holding_get(row, "unrealized_pl")),
+            }
+        )
+    frame = pd.DataFrame(records, columns=list(WEIGHT_CHART_COLUMNS))
+    if frame.empty:
+        return empty_bar_chart("Fiyatlı pozisyon yok — ağırlık grafiği çizilemedi")
+    frame = frame.sort_values("weight_pct", ascending=True)
+
+    display = frame.tail(12)
     return (
-        alt.Chart(frame)
+        alt.Chart(display)
         .mark_bar(cornerRadiusTopRight=3)
         .encode(
-            y=alt.Y("symbol:N", title=None),
+            y=alt.Y("symbol:N", title=None, sort="-x"),
             x=alt.X("weight_pct:Q", title="Portföy ağırlığı %"),
-            color=alt.condition(
-                alt.datum.pl >= 0,
-                alt.value(POSITIVE),
-                alt.value(NEGATIVE),
-            ),
+            color=alt.value(NABI_PRIMARY),
             tooltip=[
                 alt.Tooltip("symbol:N", title="Sembol"),
                 alt.Tooltip("weight_pct:Q", title="Ağırlık %", format=".1f"),
@@ -164,35 +230,53 @@ def build_position_weight_chart(rows: Sequence[EnrichedPositionRow]) -> alt.Char
                 alt.Tooltip("pl:Q", title="K/Z", format=",.2f"),
             ],
         )
-        .properties(width=CHART_WIDTH, height=max(240, 28 * len(frame.head(12))), title="Pozisyon ağırlığı")
+        .properties(
+            width=CHART_WIDTH,
+            height=max(260, 32 * len(display)),
+            title="Pozisyon büyüklüğü / ağırlık",
+        )
     )
 
 
 def build_pl_by_position_chart(rows: Sequence[EnrichedPositionRow]) -> alt.Chart:
-    _ensure_theme()
-    priced = [
-        row
-        for row in rows
-        if row.valuation.unrealized_pl is not None and row.valuation.price_available
-    ]
-    frame = pd.DataFrame(
-        [
-            {
-                "symbol": row.valuation.symbol,
-                "unrealized_pl": float(row.valuation.unrealized_pl or 0.0),
-            }
-            for row in priced
-        ]
-    ).sort_values("unrealized_pl", ascending=True)
-    if frame.empty:
-        return empty_bar_chart("K/Z verisi yok")
+    return build_holdings_pl_chart(normalize_enriched_holdings(rows))
 
+
+def build_holdings_pl_chart(holdings: Sequence[HoldingsChartRow]) -> alt.Chart:
+    _ensure_theme()
+    records = []
+    excluded = 0
+    for row in holdings:
+        pl = _optional_number(_holding_get(row, "unrealized_pl"))
+        if pl is None:
+            excluded += 1
+            continue
+        records.append(
+            {
+                "symbol": str(_holding_get(row, "symbol") or ""),
+                "unrealized_pl": pl,
+                "pl_pct": _optional_number(_holding_get(row, "pl_pct")),
+            }
+        )
+    frame = pd.DataFrame(records, columns=list(PL_CHART_COLUMNS))
+    if frame.empty:
+        return empty_bar_chart(PL_UNAVAILABLE_MESSAGE)
+
+    display = frame.sort_values("unrealized_pl", ascending=True).tail(12)
+    max_abs = max(abs(display["unrealized_pl"].max()), abs(display["unrealized_pl"].min()), 1.0)
+    title = "Pozisyon K/Z (sıfır merkezli)"
+    if excluded > 0:
+        title = f"{title} · {excluded} fiyatsız hariç"
     return (
-        alt.Chart(frame)
+        alt.Chart(display)
         .mark_bar(cornerRadiusTopRight=3)
         .encode(
             y=alt.Y("symbol:N", title=None),
-            x=alt.X("unrealized_pl:Q", title="Gerçekleşmemiş K/Z"),
+            x=alt.X(
+                "unrealized_pl:Q",
+                title="Gerçekleşmemiş K/Z",
+                scale=alt.Scale(domain=[-max_abs * 1.1, max_abs * 1.1]),
+            ),
             color=alt.condition(
                 alt.datum.unrealized_pl >= 0,
                 alt.value(POSITIVE),
@@ -201,10 +285,19 @@ def build_pl_by_position_chart(rows: Sequence[EnrichedPositionRow]) -> alt.Chart
             tooltip=[
                 alt.Tooltip("symbol:N", title="Sembol"),
                 alt.Tooltip("unrealized_pl:Q", title="K/Z", format=",.2f"),
+                alt.Tooltip("pl_pct:Q", title="K/Z %", format=".1f"),
             ],
         )
-        .properties(width=CHART_WIDTH, height=max(240, 28 * len(frame.head(12))), title="Pozisyon K/Z katkısı")
+        .properties(
+            width=CHART_WIDTH,
+            height=max(260, 32 * len(display)),
+            title=title,
+        )
     )
+
+
+def count_unpriced_holdings(holdings: Sequence[HoldingsChartRow]) -> int:
+    return sum(1 for row in holdings if not row.price_available)
 
 
 def build_portfolio_value_history_chart(
@@ -262,7 +355,7 @@ def build_portfolio_value_history_chart(
         alt.layer(*layers)
         .properties(
             width=CHART_WIDTH,
-            height=CHART_HEIGHT_DEFAULT,
+            height=CHART_HEIGHT_HERO,
             title=f"Portföy değeri (zaman){partial_note}",
         )
     )
@@ -343,6 +436,96 @@ def build_performance_waterfall_chart(
             ],
         )
         .properties(width=CHART_WIDTH, height=CHART_HEIGHT_DEFAULT, title="Değer değişimi köprüsü")
+    )
+
+
+def build_top_concentration_chart(
+    *,
+    top1_pct: Optional[float],
+    top3_pct: Optional[float],
+    top5_pct: Optional[float],
+    top1_limit: Optional[float] = None,
+    top3_limit: Optional[float] = None,
+) -> alt.Chart:
+    _ensure_theme()
+    rows = []
+    if top1_pct is not None:
+        rows.append(
+            {"bucket": "Top-1", "current": float(top1_pct), "limit": float(top1_limit or 100.0)}
+        )
+    if top3_pct is not None:
+        rows.append(
+            {"bucket": "Top-3", "current": float(top3_pct), "limit": float(top3_limit or 100.0)}
+        )
+    if top5_pct is not None:
+        rows.append({"bucket": "Top-5", "current": float(top5_pct), "limit": 100.0})
+    if not rows:
+        return empty_bar_chart("Yoğunlaşma verisi yok")
+    frame = pd.DataFrame(rows)
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(color=NABI_ACCENT, cornerRadiusTopRight=3)
+        .encode(
+            x=alt.X("current:Q", title="Ağırlık %"),
+            y=alt.Y("bucket:N", sort=["Top-1", "Top-3", "Top-5"], title=None),
+            tooltip=[
+                alt.Tooltip("bucket:N", title="Kova"),
+                alt.Tooltip("current:Q", title="Mevcut %", format=".1f"),
+                alt.Tooltip("limit:Q", title="Limit %", format=".0f"),
+            ],
+        )
+    )
+    rule = (
+        alt.Chart(frame)
+        .mark_tick(color=NEGATIVE, thickness=3)
+        .encode(x="limit:Q", y="bucket:N")
+    )
+    return alt.layer(bars, rule).properties(
+        width=CHART_WIDTH,
+        height=140,
+        title="Yapısal yoğunlaşma (Top-1 / Top-3 / Top-5)",
+    )
+
+
+def build_coverage_status_chart(
+    *,
+    participation_pct: float,
+    research_pct: float,
+    unknown_participation_pct: float = 0.0,
+    unresearched_pct: float = 0.0,
+) -> alt.Chart:
+    _ensure_theme()
+    from services.nabi_chart_theme import NEUTRAL
+
+    frame = pd.DataFrame(
+        [
+            {"dimension": "Katılım uygun", "pct": float(participation_pct), "kind": "eligible"},
+            {
+                "dimension": "Katılım bilinmiyor",
+                "pct": float(unknown_participation_pct),
+                "kind": "unknown",
+            },
+            {"dimension": "Araştırma kapsamı", "pct": float(research_pct), "kind": "research"},
+            {"dimension": "Araştırma dışı", "pct": float(unresearched_pct), "kind": "gap"},
+        ]
+    )
+    color_scale = alt.Scale(
+        domain=["eligible", "unknown", "research", "gap"],
+        range=[POSITIVE, WARNING, NABI_ACCENT, NEUTRAL],
+    )
+    return (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=3)
+        .encode(
+            y=alt.Y("dimension:N", title=None),
+            x=alt.X("pct:Q", title="Ağırlık %", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("kind:N", scale=color_scale, legend=None),
+            tooltip=[
+                alt.Tooltip("dimension:N", title="Boyut"),
+                alt.Tooltip("pct:Q", title="%", format=".1f"),
+            ],
+        )
+        .properties(width=CHART_WIDTH, height=CHART_HEIGHT_COMPACT, title="Katılım / araştırma kapsamı")
     )
 
 

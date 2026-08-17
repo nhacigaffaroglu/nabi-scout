@@ -57,12 +57,24 @@ def render_portfolio_executive_hero(
             f"%{base.health.priced_position_coverage_pct:.0f}."
         )
 
+    delta_lines: list[tuple[str, str]] = []
+    if perf.investment_gain is not None:
+        tone = "success" if perf.investment_gain >= 0 else "danger"
+        sign = "+" if perf.investment_gain >= 0 else ""
+        delta_lines.append(
+            (f"{sign}{_money(perf.investment_gain, currency)} yatırım sonucu", tone)
+        )
+    if perf.return_pct is not None:
+        tone = "success" if perf.return_pct >= 0 else "danger"
+        delta_lines.append((_pct(perf.return_pct), tone))
+
     render_executive_hero(
-        primary_label="Toplam Servet / Portföy Değeri",
+        primary_label="Portföy Değeri",
         primary_value=primary_value.replace(f" {currency}", "").replace("*", ""),
         subtitle=f"Baz para: {currency} · Fiyat kaynağı: {base.price_provider or 'persisted'}",
         partial=partial,
         partial_note=partial_note,
+        delta_lines=delta_lines or None,
     )
 
     coverage_pct = base.health.priced_position_coverage_pct

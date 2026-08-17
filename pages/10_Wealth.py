@@ -6,6 +6,7 @@ from services.fmp_client import FMPClient, FMPError
 from services.nabi_intelligence_facade import get_investment_intelligence
 from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.ui import prepare_protected_page
+from services.ui_formatters import format_date_dmy
 from services.wealth_benchmark_service import WealthBenchmarkService
 from services.wealth_comparison_chart import (
     build_benchmark_comparison_altair_chart,
@@ -62,6 +63,9 @@ from services.wealth_diagnostics_engine import effective_position_count
 from services.wealth_diagnostics_service import WealthDiagnosticsService
 from services.wealth_price_service import WealthPriceService
 from services.wealth_timeline_service import WealthTimelineService
+
+
+from components.portfolio_holdings_ui import render_valuation_holdings_analysis
 
 
 def _format_money(value, currency: str) -> str:
@@ -579,7 +583,7 @@ with tab_txn:
             account = account_by_id.get(row.get("account_id"), {})
             txn_id = str(row.get("id") or "")
             label = (
-                f"{row.get('executed_at')} · {row.get('txn_type')} · "
+                f"{format_date_dmy(row.get('executed_at'))} · {row.get('txn_type')} · "
                 f"{asset.get('symbol', '?')} @ {account.get('name', '?')} · "
                 f"qty={row.get('quantity')} amount={row.get('amount')}"
             )
@@ -611,6 +615,14 @@ with tab_positions:
                 "Baz para birimi dışı pozisyonlar yerel para biriminde gösterilir; "
                 "portföy toplamlarına dahil değildir."
             )
+
+        all_positions = (
+            list(portfolio_view.priced_positions)
+            + list(portfolio_view.unpriced_positions)
+            + list(portfolio_view.foreign_currency_positions)
+        )
+        render_valuation_holdings_analysis(all_positions, currency=base_ccy)
+        st.divider()
 
         st.markdown("**Fiyatlı pozisyonlar**")
         if not portfolio_view.priced_positions:
@@ -708,7 +720,7 @@ with tab_history:
             saved = timeline.save_snapshot_from_view(portfolio, portfolio_view)
             st.success(
                 f"Görüntü kaydedildi: {_format_money(saved.priced_market_value, saved.base_currency)} "
-                f"@ {saved.captured_at}"
+                f"@ {format_date_dmy(saved.captured_at)}"
             )
             st.rerun()
         except Exception as exc:
@@ -743,7 +755,7 @@ with tab_history:
             )
             for point in partial_points:
                 st.write(
-                    f"- {point.captured_at}: {', '.join(point.partial_reasons)}"
+                    f"- {format_date_dmy(point.captured_at)}: {', '.join(point.partial_reasons)}"
                 )
 
     if not timeline_view.snapshots:
@@ -755,7 +767,7 @@ with tab_history:
             if snap.unpriced_position_count or snap.mixed_currency_warning:
                 partial_note = " · kısmi"
             st.write(
-                f"- {snap.captured_at} · "
+                f"- {format_date_dmy(snap.captured_at)} · "
                 f"{_format_money(snap.priced_market_value, snap.base_currency)} · "
                 f"kapsam {snap.priced_position_coverage_pct:.0f}%"
                 f"{partial_note}"
@@ -767,7 +779,9 @@ with tab_history:
     else:
         st.divider()
         st.markdown("**Son dönem karşılaştırması**")
-        st.write(f"{period.period_start_at} → {period.period_end_at}")
+        st.write(
+            f"{format_date_dmy(period.period_start_at)} → {format_date_dmy(period.period_end_at)}"
+        )
         p1, p2, p3, p4 = st.columns(4)
         p1.metric(
             "Değer değişimi",
@@ -822,7 +836,9 @@ with tab_history:
             "Fiyatlı baz para birimi portföyü; dış akışlar (yatırım/çekim) ayıklanmış "
             "alt dönem getirilerinin Modified Dietz ile zincirlenmesi."
         )
-        st.write(f"{linked.period_start_at} → {linked.period_end_at}")
+        st.write(
+            f"{format_date_dmy(linked.period_start_at)} → {format_date_dmy(linked.period_end_at)}"
+        )
         if linked.performance_comparable and linked.linked_return_pct is not None:
             st.metric(
                 "Portföy dönem getirisi",

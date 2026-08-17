@@ -13,6 +13,7 @@ from components.portfolio_advanced_ui import (
     render_snapshot_controls,
 )
 from components.portfolio_executive_ui import render_portfolio_executive_hero
+from components.portfolio_holdings_ui import render_enriched_holdings_analysis
 from components.portfolio_intelligence_ui import (
     render_attention_section,
     render_consolidated_exposure_table,
@@ -84,8 +85,6 @@ with scope_col2:
         else None
     )
 
-render_portfolio_management_expander(wealth, portfolio, accounts)
-
 with st.spinner("Portföy analizi yükleniyor…"):
     price_service = CandidatePriceService(client)
     intelligence = PortfolioIntelligenceService(
@@ -142,6 +141,7 @@ render_portfolio_executive_hero(
     wave3=wave3,
 )
 
+render_portfolio_management_expander(wealth, portfolio, accounts)
 render_snapshot_controls(wealth, portfolio, intelligence)
 st.divider()
 
@@ -300,6 +300,11 @@ with tab_hold:
     if not selected_account_id:
         render_consolidated_exposure_table(dashboard)
         st.divider()
+    render_enriched_holdings_analysis(
+        list(dashboard.enriched_positions),
+        currency=dashboard.base.base_currency,
+    )
+    st.divider()
     filters = render_position_filters(dashboard)
     render_position_table(
         dashboard,
