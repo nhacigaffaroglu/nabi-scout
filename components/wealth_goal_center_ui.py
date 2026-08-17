@@ -37,6 +37,16 @@ from services.wealth_goal_planning import (
     projected_surplus,
     solve_required_starting_monthly,
 )
+from services.wealth_contribution_intelligence import (
+    ContributionEvidenceQuality,
+    ContributionIntelligenceView,
+    PERFORMANCE_UNAVAILABLE_COPY,
+    PerformanceEvidenceQuality,
+    PlanAttributionStatus,
+    build_contribution_intelligence,
+    planning_end_snapshot,
+    select_period_start_snapshot,
+)
 from services.wealth_projection_engine import project_wealth_goal_scenarios
 
 GOAL_STATUS_LABELS = {
@@ -141,11 +151,30 @@ def render_wealth_goal_center(
         contribution_plan=plan,
     )
     status = _primary_status(bands)
-    _render_goal_hero(goal, snapshot, status, bands)
-    _render_scenario_table(bands, goal.currency)
-    _render_contribution_plan(plan, as_of_date, goal.target_date.year)
     txns = wealth.list_transactions(limit=2000)
     account_ids = [str(row.get("id") or "") for row in accounts]
+    raw_fx = st.session_state.get("wealth_os_2031_usdtry")
+    conversion = planning_conversion(
+        Decimal(str(raw_fx)) if raw_fx else None,
+        contribution_currency=plan.currency,
+        goal_currency=goal.currency,
+    )
+    intelligence = build_contribution_intelligence(
+        as_of_date=as_of_date,
+        current=snapshot,
+        transactions=txns,
+        account_ids=account_ids,
+        plan=plan,
+        goal=goal,
+        conversion=conversion,
+        start_snapshot=_period_start_snapshot(wealth, view.portfolio_id, as_of_date),
+        end_snapshot=planning_end_snapshot(as_of=as_of_date, current=snapshot),
+    )
+    _render_goal_hero(goal, snapshot, status, bands)
+    _render_this_month(intelligence)
+    _render_plan_and_performance(intelligence)
+    _render_scenario_table(bands, goal.currency)
+    _render_contribution_plan(plan, as_of_date, goal.target_date.year)
     comparison = plan_vs_actual_for_year(
         plan,
         as_of=as_of_date,
@@ -219,6 +248,116 @@ def _render_goal_hero(
         f"Hedefe kalan ölçülebilir fark: {_money(base.measurable_gap, goal.currency)}"
     )
     st.caption("Değerleme ayrıntısı için Portföy Zekâsı sayfasına bakın.")
+
+
+def _render_this_month(view: ContributionIntelligenceView) -> None:
+    render_section_title("Bu Ay")
+    planned = _money(view.planned_monthly_contribution, view.currency)
+    if view.monthly_evidence_quality == ContributionEvidenceQuality.COMPLETE:
+        actual = _money(view.actual_monthly_net_contribution, view.currency)
+        remaining = _money(view.monthly_remaining, view.currency)
+    else:
+        actual = "Kanıt eksik"
+        remaining = "—"
+    render_kpi_row(
+        [
+            ("Planlanan katkı", planned, None),
+            ("Gerçekleşen katkı", actual, None),
+            ("Kalan", remaining, None),
+        ]
+    )
+    if view.monthly_evidence_quality != ContributionEvidenceQuality.COMPLETE:
+        st.caption("Gerçekleşen katkı verisi eksik — 0 olarak gösterilmez.")
+    if view.monthly_surplus:
+        st.caption(f"Bu ay plan fazlası: {_money(view.monthly_surplus, view.currency)}")
+
+    st.markdown("**Yıl ilerlemesi**")
+    st.caption(
+        f"Plan YTD: {_money(view.planned_ytd_contribution, view.currency)} · "
+        f"Yıllık plan: {_money(view.planned_full_year_contribution, view.currency)}"
+    )
+    if view.ytd_evidence_quality == ContributionEvidenceQuality.COMPLETE:
+        ytd_pct = float(view.ytd_completion_pct or 0) / 100.0
+        st.progress(min(max(ytd_pct, 0.0), 1.0))
+        st.caption(
+            f"Gerçekleşen YTD: {_money(view.actual_ytd_net_contribution, view.currency)} · "
+            f"Kalan YTD: {_money(view.ytd_remaining, view.currency)}"
+        )
+    else:
+        st.caption("Yıl içi gerçekleşen katkı kanıtı eksik; plan sapması etiketlenmez.")
+
+    st.markdown("**2031 plan yeterliliği**")
+    st.caption(USER_ASSUMPTION_NOTE)
+    if view.required_starting_monthly_contribution is None:
+        st.caption(view.adequacy_summary)
+    else:
+        st.caption(
+            f"Gerekli aylık (Base %8): "
+            f"{_money(view.required_starting_monthly_contribution, view.currency)} · "
+            f"Plan: {_money(view.planned_monthly_contribution, view.currency)}"
+        )
+        st.caption(view.adequacy_summary)
+
+    st.info(view.monthly_action_summary)
+
+
+def _period_start_snapshot(wealth, portfolio_id: str, as_of_date: date):
+    try:
+        from services.wealth_timeline_service import WealthTimelineService
+
+        snapshots = WealthTimelineService(wealth).list_snapshots(
+            str(portfolio_id or ""),
+            limit=50,
+        )
+    except Exception:
+        return None
+    return select_period_start_snapshot(snapshots, as_of=as_of_date)
+
+
+def _render_plan_and_performance(view: ContributionIntelligenceView) -> None:
+    render_section_title("Plan ve Performans")
+    contrib = view.ytd_evidence_quality.value
+    if view.ytd_evidence_quality == ContributionEvidenceQuality.COMPLETE:
+        contrib_detail = (
+            f"YTD {_money(view.actual_ytd_net_contribution, view.currency)} / "
+            f"{_money(view.planned_ytd_contribution, view.currency)}"
+        )
+    else:
+        contrib_detail = "Gerçekleşen katkı kanıtı eksik — 0 varsayılmaz."
+    if view.performance_evidence_quality == PerformanceEvidenceQuality.COMPLETE:
+        if view.investment_return_pct is None:
+            perf_detail = (
+                f"Kazanç/kayıp {_money(view.investment_gain_loss, 'USD')}"
+            )
+        else:
+            perf_detail = f"{_pct(view.investment_return_pct)} dönem getirisi"
+    elif view.performance_evidence_quality == PerformanceEvidenceQuality.PARTIAL:
+        perf_detail = "Kısmi — getiri uydurulmaz."
+    else:
+        perf_detail = PERFORMANCE_UNAVAILABLE_COPY
+    goal_detail = view.adequacy_summary
+    render_kpi_row(
+        [
+            ("Katkı durumu", contrib, contrib_detail),
+            ("Portföy performansı", view.performance_evidence_quality.value, perf_detail),
+            ("Hedef planı durumu", view.plan_adequacy_status.value, goal_detail),
+        ]
+    )
+    st.markdown("**Ana sapma nedeni**")
+    st.info(view.attribution_summary)
+    st.caption(f"Veri güveni: {view.data_confidence_summary}")
+    st.caption(view.planning_benchmark_label)
+    if view.planning_benchmark_available:
+        st.caption(
+            f"Planlama yolu: {_money(view.planning_path_value, 'USD')} · "
+            f"Ölçülen dönem sonu: {_money(view.period_end_value, 'USD')}"
+        )
+    else:
+        st.caption("Planlama yolu karşılaştırması mevcut başlangıç kanıtıyla yapılamıyor.")
+    if view.performance_evidence_quality == PerformanceEvidenceQuality.UNAVAILABLE:
+        st.caption(PERFORMANCE_UNAVAILABLE_COPY)
+    if view.attribution_status == PlanAttributionStatus.EVIDENCE_INCOMPLETE:
+        st.caption("Eksik kanıt tek başına olumsuz tanı değildir.")
 
 
 def _render_scenario_table(bands: Sequence[ProjectionResult], currency: str) -> None:
