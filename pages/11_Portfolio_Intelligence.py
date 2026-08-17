@@ -140,6 +140,9 @@ render_portfolio_executive_hero(
     wealth_metrics=wealth_metrics,
     wave3=wave3,
 )
+st.caption(
+    "2031 servet hedefi ve katkı planı **Wealth → 2031 Hedef** sekmesindedir."
+)
 
 render_portfolio_management_expander(wealth, portfolio, accounts)
 render_snapshot_controls(wealth, portfolio, intelligence)

@@ -66,6 +66,7 @@ from services.wealth_timeline_service import WealthTimelineService
 
 
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
+from components.wealth_goal_center_ui import render_wealth_goal_center
 
 
 def _format_money(value, currency: str) -> str:
@@ -258,9 +259,10 @@ col6.metric("İşlem", summary.transaction_count)
 
 st.divider()
 
-tab_summary, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis, tab_adviser = st.tabs(
+tab_summary, tab_goal, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis, tab_adviser = st.tabs(
     [
         "Özet",
+        "2031 Hedef",
         "Hesaplar",
         "Varlıklar",
         "İşlemler",
@@ -392,6 +394,13 @@ with tab_summary:
                     f"- {row.get('name')} · {row.get('liability_type')} · "
                     f"{row.get('principal')} {row.get('currency')}"
                 )
+
+with tab_goal:
+    render_wealth_goal_center(
+        portfolio_view=portfolio_view,
+        wealth=wealth,
+        accounts=accounts,
+    )
 
 with tab_accounts:
     st.subheader("Hesap oluştur")
