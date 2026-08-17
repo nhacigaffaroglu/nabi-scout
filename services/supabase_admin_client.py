@@ -157,8 +157,16 @@ def _resolve_publishable_key(secrets: Mapping[str, object]) -> str:
 
 
 def _resolve_service_role_key() -> str:
-    for env_name in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_KEY"):
-        key = str(os.environ.get(env_name) or "").strip()
+    secrets = load_local_secrets_toml()
+    supabase = secrets.get("supabase") if isinstance(secrets.get("supabase"), dict) else {}
+    candidates = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+        os.environ.get("SUPABASE_KEY"),
+        str(supabase.get("service_role_key") or ""),
+        str(supabase.get("secret_key") or ""),
+    )
+    for candidate in candidates:
+        key = str(candidate or "").strip()
         if key and not is_publishable_supabase_key(key):
             return key
     return ""

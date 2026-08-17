@@ -141,6 +141,21 @@ class WealthPosition:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class BuyCostBasis:
+    """Commission-aware BUY lot cost. Quantity is never increased by commission."""
+
+    quantity: float
+    unit_price: float
+    commission: float
+    gross_cost: float
+    total_cost_basis: float
+    effective_unit_cost: float
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 def normalize_symbol(symbol: Optional[str]) -> str:
     return str(symbol or "").strip().upper()
 
@@ -156,6 +171,49 @@ def validate_txn_type(txn_type: str) -> str:
     return normalized
 
 
+def compute_buy_cost_basis(
+    quantity: float,
+    unit_price: float,
+    commission: Optional[float] = 0.0,
+) -> BuyCostBasis:
+    """gross_cost = qty × unit_price; total_cost_basis = gross + commission."""
+    qty = float(quantity)
+    price = float(unit_price)
+    fee = 0.0 if commission is None else float(commission)
+    if qty <= 0:
+        raise WealthValidationError("Adet sıfırdan büyük olmalı.")
+    if price <= 0:
+        raise WealthValidationError("Alış/satış için birim fiyat gerekli.")
+    if fee < 0:
+        raise WealthValidationError("Komisyon negatif olamaz.")
+    gross = qty * price
+    total = gross + fee
+    return BuyCostBasis(
+        quantity=qty,
+        unit_price=price,
+        commission=fee,
+        gross_cost=gross,
+        total_cost_basis=total,
+        effective_unit_cost=total / qty,
+    )
+
+
+def buy_commission_from_ledger(
+    *,
+    quantity: float,
+    price: Optional[float],
+    amount: float,
+) -> float:
+    """Recover commission encoded as BUY.amount − (quantity × execution price)."""
+    qty = float(quantity or 0.0)
+    unit = float(price or 0.0)
+    total = float(amount or 0.0)
+    if qty <= 0 or unit <= 0:
+        return 0.0
+    commission = total - (qty * unit)
+    return commission if commission > 1e-12 else 0.0
+
+
 def normalize_trade_amount(
     txn_type: str,
     *,
@@ -163,7 +221,12 @@ def normalize_trade_amount(
     price: Optional[float],
     amount: float,
 ) -> float:
-    """Derive and validate monetary amount for buy/sell rows."""
+    """Derive and validate monetary amount for buy/sell rows.
+
+    SELL amount must equal quantity × price.
+    BUY amount is total acquisition cost: quantity × execution price, plus
+    optional commission. Commission must not change quantity.
+    """
     if txn_type not in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
         return amount
 
@@ -172,10 +235,19 @@ def normalize_trade_amount(
     if price is None or price <= 0:
         raise WealthValidationError("Alış/satış için birim fiyat gerekli.")
 
-    computed = quantity * price
-    if amount > 0 and abs(amount - computed) > 1e-6:
-        raise WealthValidationError("Tutar miktar × birim fiyat ile uyuşmalı.")
-    return computed
+    gross = quantity * price
+    if txn_type == TXN_TYPE_SELL:
+        if amount > 0 and abs(amount - gross) > 1e-6:
+            raise WealthValidationError("Tutar miktar × birim fiyat ile uyuşmalı.")
+        return gross
+
+    if amount <= 0:
+        return gross
+    if abs(amount - gross) <= 1e-6:
+        return gross
+    if amount + 1e-6 < gross:
+        raise WealthValidationError("Alış tutarı brüt maliyetten küçük olamaz.")
+    return amount
 
 
 def normalize_transfer_amount(

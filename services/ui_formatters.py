@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 LEGACY_HISTORY_NOTE = (
@@ -143,6 +144,51 @@ def format_date_tr(value: Any) -> str:
 
     month = MONTHS_TR.get(parsed.month, str(parsed.month))
     return f"{parsed.day} {month} {parsed.year}"
+
+
+def format_date_dmy(value: Any) -> str:
+    """User-facing numeric Turkish date: DD.MM.YYYY. Storage stays ISO."""
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        return f"{value.day:02d}.{value.month:02d}.{value.year}"
+    else:
+        parsed = _parse_datetime(value)
+        if parsed is None:
+            text = str(value).strip()
+            return text or "—"
+    return f"{parsed.day:02d}.{parsed.month:02d}.{parsed.year}"
+
+
+_DMY_DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$")
+DATE_DMY_PLACEHOLDER = "07.08.2025"
+DATE_DMY_HELP = (
+    "Gün.Ay.Yıl (GG.AA.YYYY). Örnek: 14.05.2025. Boş bırakılabilir."
+)
+DATE_DMY_ERROR = "Tarih GG.AA.YYYY formatında olmalı. Örnek: 07.08.2025"
+
+
+def parse_date_dmy(value: Any) -> Optional[date]:
+    """Parse a user-facing DD.MM.YYYY string. Empty -> None. Storage remains date/ISO."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    match = _DMY_DATE_RE.fullmatch(text)
+    if not match:
+        raise ValueError(DATE_DMY_ERROR)
+    day, month, year = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    try:
+        return date(year, month, day)
+    except ValueError as exc:
+        raise ValueError(DATE_DMY_ERROR) from exc
 
 
 def format_datetime_tr(value: Any) -> str:

@@ -273,6 +273,8 @@ class SourceUniverseTests(unittest.TestCase):
     def test_etf_excluded(self) -> None:
         symbols = {row[0] for row in dedupe_expansion_symbols()}
         self.assertTrue(ETF_SYMBOLS.isdisjoint(symbols))
+        self.assertTrue({"SPUS", "HLAL", "SPSK", "SPRE", "SPWO"} <= ETF_SYMBOLS)
+        self.assertNotIn("VISN", ETF_SYMBOLS)
 
     def test_bounded_universe_at_least_50(self) -> None:
         self.assertGreaterEqual(len(dedupe_expansion_symbols()), 50)

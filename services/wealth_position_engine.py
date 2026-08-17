@@ -121,6 +121,9 @@ def materialize_position_from_transactions(
     """Replay append-only ledger rows into current quantity and average cost.
 
     Reversed originals and their reversal rows are excluded as cancelling pairs.
+    BUY.amount is the lot's total acquisition cost (execution notional plus
+    any commission). BUY.quantity is share count only; commission never
+    increases quantity. ``txn_type=fee`` remains a cash-balance reduction.
     """
     quantity = 0.0
     average_cost = 0.0

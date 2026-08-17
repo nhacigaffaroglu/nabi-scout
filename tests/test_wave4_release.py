@@ -57,6 +57,8 @@ class ManualEntryTests(unittest.TestCase):
         ui = Path("components/portfolio_management_ui.py").read_text(encoding="utf-8")
         self.assertIn("Görünen ad", ui)
         self.assertIn("Not (opsiyonel)", ui)
+        self.assertIn("Komisyon / masraf", ui)
+        self.assertIn("Birim alış fiyatı", ui)
 
 
 if __name__ == "__main__":

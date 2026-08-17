@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 from config.scan_universe import SCAN_UNIVERSES
 
 # ETFs excluded from equity participation onboarding.
-ETF_SYMBOLS = frozenset({"SPUS", "HLAL", "SPSK"})
+ETF_SYMBOLS = frozenset({"SPUS", "HLAL", "SPSK", "SPRE", "SPWO"})
 
 # Pilot equity symbols (no ETFs) — highest priority batch.
 PILOT_EQUITY_SYMBOLS: Tuple[str, ...] = tuple(

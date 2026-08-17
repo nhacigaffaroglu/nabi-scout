@@ -19,8 +19,10 @@ from services.wealth_contract import (
     TXN_TYPE_SELL,
     TXN_TYPE_WITHDRAW,
     WealthValidationError,
+    compute_buy_cost_basis,
     normalize_symbol,
 )
+from services.wealth_asset_classification import resolve_asset_metadata
 from services.wealth_core_service import WealthCoreService
 
 
@@ -120,6 +122,7 @@ class PortfolioManagementService:
         executed_at: Optional[str] = None,
         notes: Optional[str] = None,
         name: Optional[str] = None,
+        commission: float = 0.0,
     ) -> Dict[str, Any]:
         if not str(account_id or "").strip():
             raise WealthValidationError("Kurum / hesap seçimi gerekli.")
@@ -150,22 +153,27 @@ class PortfolioManagementService:
                 notes=notes or "Portföye ekle — nakit",
             )
 
+        basis = compute_buy_cost_basis(
+            quantity=quantity,
+            unit_price=average_cost,
+            commission=commission,
+        )
+        _, resolved_market, _, _ = resolve_asset_metadata(sym, currency=currency)
         asset = self.wealth.register_asset(
             symbol=sym,
-            market=str(market or "US").strip().upper(),
+            market=resolved_market,
             asset_class=normalized_class,
             currency=currency.strip().upper(),
             name=str(name).strip() or None,
         )
-        amount = quantity * average_cost
         return self.wealth.post_transaction(
             account_id=account_id,
             txn_type=TXN_TYPE_BUY,
-            quantity=quantity,
-            amount=amount,
+            quantity=basis.quantity,
+            amount=basis.total_cost_basis,
             currency=currency.strip().upper(),
             asset_id=str(asset["id"]),
-            price=average_cost,
+            price=basis.unit_price,
             executed_at=_parse_executed_at(executed_at),
             notes=notes or "Portföye ekle",
         )

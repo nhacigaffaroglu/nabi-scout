@@ -336,6 +336,9 @@ class CandidatePriceServiceTests(unittest.TestCase):
         client = MagicMock()
         repo = MagicMock()
         repo.get_by_symbol.return_value = {"current_price": 42.5, "currency": "USD"}
+        repo.list_by_symbol.return_value = [
+            {"current_price": 42.5, "currency": "USD"}
+        ]
         with patch(
             "services.candidate_price_service.CandidateRepository",
             return_value=repo,

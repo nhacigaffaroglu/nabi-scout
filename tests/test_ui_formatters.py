@@ -8,10 +8,12 @@ from services.ui_formatters import (
     format_badges_compact,
     format_change_window_summary,
     format_data_quality_notes,
+    format_date_dmy,
     format_date_tr,
     format_datetime_tr,
     format_priority_reason,
     format_priority_reasons,
+    parse_date_dmy,
 )
 
 
@@ -52,6 +54,71 @@ class UiFormatterDatetimeTests(unittest.TestCase):
     def test_invalid_datetime_safe_fallback(self) -> None:
         self.assertEqual(format_datetime_tr("not-a-date"), "not-a-date")
         self.assertEqual(format_date_tr(""), "—")
+
+
+class UiFormatterNumericTurkishDateTests(unittest.TestCase):
+    def test_iso_date_to_dmy(self) -> None:
+        self.assertEqual(format_date_dmy("2025-08-07"), "07.08.2025")
+        self.assertEqual(format_date_dmy("2025-05-14"), "14.05.2025")
+
+    def test_iso_datetime_to_dmy(self) -> None:
+        self.assertEqual(
+            format_date_dmy("2025-05-14T00:00:00+00:00"),
+            "14.05.2025",
+        )
+
+    def test_date_object_to_dmy(self) -> None:
+        from datetime import date
+
+        value = date(2025, 8, 7)
+        self.assertEqual(format_date_dmy(value), "07.08.2025")
+        self.assertEqual(value.isoformat(), "2025-08-07")
+
+    def test_none_and_empty(self) -> None:
+        self.assertEqual(format_date_dmy(None), "—")
+        self.assertEqual(format_date_dmy(""), "—")
+
+    def test_parse_dmy_roundtrip_storage_iso(self) -> None:
+        parsed = parse_date_dmy("07.08.2025")
+        self.assertEqual(parsed.isoformat(), "2025-08-07")
+        self.assertEqual(format_date_dmy(parsed), "07.08.2025")
+        self.assertIsNone(parse_date_dmy(""))
+        self.assertIsNone(parse_date_dmy(None))
+        with self.assertRaises(ValueError):
+            parse_date_dmy("08/07/2025")
+        with self.assertRaises(ValueError):
+            parse_date_dmy("2025-08-07")
+
+    def test_does_not_emit_us_format(self) -> None:
+        rendered = format_date_dmy("2025-08-07")
+        self.assertNotIn("/", rendered)
+        self.assertNotEqual(rendered, "08/07/2025")
+        self.assertNotEqual(rendered, "2025-08-07")
+
+    def test_management_date_input_turkish(self) -> None:
+        source = Path("components/portfolio_management_ui.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Alış tarihi (opsiyonel)", source)
+        self.assertIn("DATE_DMY_PLACEHOLDER", source)
+        self.assertIn("parse_date_dmy", source)
+        self.assertIn(".isoformat()", source)
+        self.assertNotIn("st.date_input", source)
+        self.assertNotIn("MM/DD/YYYY", source)
+
+    def test_changed_surfaces_use_dmy_helper(self) -> None:
+        files = [
+            "pages/10_Wealth.py",
+            "components/portfolio_advanced_ui.py",
+            "components/portfolio_wave3_ui.py",
+            "components/portfolio_management_ui.py",
+        ]
+        for path in files:
+            source = Path(path).read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertNotIn("MM/DD/YYYY", source)
+                self.assertNotIn("%m/%d/%Y", source)
+                self.assertIn("format_date_dmy", source)
 
 
 class UiFormatterChangeCountTests(unittest.TestCase):

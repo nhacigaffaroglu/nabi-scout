@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import pandas as pd
 import streamlit as st
@@ -256,14 +256,26 @@ def render_empty_portfolio_onboarding(
         render_create_account_form,
     )
 
-    st.info("İlk yatırım aracını portföyüne ekle")
+    st.markdown("## Portföyünü Kur")
     st.markdown(
-        "1. Kurum / hesap oluştur\n"
-        "2. İlk enstrümanı ekle\n"
+        "Kurum / hesap oluştur ve pozisyonlarını manuel olarak ekle. "
+        "Portföy panosu otomatik güncellenir."
+    )
+    st.caption(
+        "1. Kurum / hesap oluştur (TFK, Midas vb.)\n"
+        "2. Sembol, adet, birim alış fiyatı, komisyon ve alış tarihini gir\n"
         "3. Portföy panosu otomatik güncellenir"
     )
-    render_create_account_form(wealth, str(portfolio["id"]))
-    render_add_holding_form(wealth, portfolio, accounts)
+
+    render_create_account_form(wealth, str(portfolio["id"]), expanded=not accounts)
+    st.divider()
+    holding_title = (
+        "+ Portföye Ekle / İlk Enstrümanı Ekle"
+        if not accounts
+        else "+ Portföye Ekle"
+    )
+    with st.expander(holding_title, expanded=bool(accounts)):
+        render_add_holding_form(wealth, portfolio, accounts)
 
 
 def render_position_filters(

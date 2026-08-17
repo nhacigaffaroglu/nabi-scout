@@ -17,12 +17,33 @@ from services.portfolio_management_service import (
     ASSET_CLASS_OPTIONS,
     PortfolioManagementService,
 )
+from services.ui_formatters import (
+    DATE_DMY_HELP,
+    DATE_DMY_PLACEHOLDER,
+    format_date_dmy,
+    parse_date_dmy,
+)
 from services.wealth_contract import (
     ASSET_CLASS_CASH,
     ASSET_CLASS_EQUITY,
+    BuyCostBasis,
     WealthValidationError,
+    compute_buy_cost_basis,
 )
 from services.wealth_core_service import WealthCoreService
+
+
+def _optional_dmy_date_text(label: str) -> str:
+    """User-facing date field. Streamlit date_input is locale-pinned to en-US."""
+    return str(
+        st.text_input(
+            label,
+            value="",
+            placeholder=DATE_DMY_PLACEHOLDER,
+            help=DATE_DMY_HELP,
+        )
+        or ""
+    )
 
 
 def render_account_scope_filter(
@@ -40,11 +61,28 @@ def render_account_scope_filter(
     return labels_to_id.get(selected)
 
 
+def _format_cost_money(value: float, currency: str) -> str:
+    return f"{value:,.2f} {currency}"
+
+
+def render_buy_cost_preview(basis: BuyCostBasis, currency: str) -> None:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Brüt alış", _format_cost_money(basis.gross_cost, currency))
+    c2.metric("Komisyon", _format_cost_money(basis.commission, currency))
+    c3.metric("Toplam maliyet", _format_cost_money(basis.total_cost_basis, currency))
+    c4.metric(
+        "Komisyon dahil birim maliyet",
+        f"{basis.effective_unit_cost:,.6f} {currency}",
+    )
+
+
 def render_create_account_form(
     wealth: WealthCoreService,
     portfolio_id: str,
+    *,
+    expanded: bool = False,
 ) -> None:
-    with st.expander("+ Yeni Kurum / Hesap", expanded=False):
+    with st.expander("+ Yeni Kurum / Hesap", expanded=expanded):
         with st.form("pi_create_account_form"):
             institution = st.text_input("Kurum", placeholder="Midas, YKB, TFK…")
             account_label = st.text_input("Hesap etiketi", placeholder="ABD Hisse")
@@ -72,6 +110,9 @@ def render_add_holding_form(
 ) -> None:
     portfolio_accounts = accounts_for_portfolio(accounts, str(portfolio["id"]))
     st.subheader("Portföye Ekle")
+    flash = st.session_state.pop("pi_add_holding_flash", None)
+    if flash:
+        st.success(flash)
     if not portfolio_accounts:
         st.info("Önce bir kurum / hesap oluşturun.")
         return
@@ -91,33 +132,74 @@ def render_add_holding_form(
             index=ASSET_CLASS_OPTIONS.index(ASSET_CLASS_EQUITY),
         )
         quantity = st.number_input("Adet", min_value=0.0, value=0.0, step=1.0)
-        average_cost = st.number_input(
-            "Alış fiyatı / ortalama maliyet",
+        unit_price = st.number_input(
+            "Birim alış fiyatı",
             min_value=0.0,
             value=0.0,
             step=0.01,
         )
+        commission = st.number_input(
+            "Komisyon / masraf",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            help="Boş veya 0 ise komisyon yok. Maliyet bazına eklenir; adedi artırmaz.",
+        )
         currency = st.text_input("Para birimi", value="USD")
         notes = st.text_area("Not (opsiyonel)", placeholder="Manuel ekleme notu")
-        purchase_date = st.date_input("Alış tarihi (opsiyonel)", value=None)
+        purchase_date_raw = _optional_dmy_date_text("Alış tarihi (opsiyonel)")
+        st.caption(
+            "Kayıt öncesi özet: Brüt alış · Komisyon · Toplam maliyet · "
+            "Komisyon dahil birim maliyet"
+        )
         submitted = st.form_submit_button("Portföye Ekle", type="primary")
+
+    last_preview = st.session_state.get("pi_last_buy_cost_preview")
+    if last_preview:
+        render_buy_cost_preview(
+            BuyCostBasis(**last_preview["basis"]),
+            str(last_preview.get("currency") or "USD"),
+        )
 
     if submitted:
         mgmt = PortfolioManagementService(wealth)
+        try:
+            purchase_date = parse_date_dmy(purchase_date_raw)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
         executed_at = purchase_date.isoformat() if purchase_date else None
         try:
+            if asset_class != ASSET_CLASS_CASH:
+                preview = compute_buy_cost_basis(
+                    quantity=float(quantity),
+                    unit_price=float(unit_price),
+                    commission=float(commission),
+                )
+                render_buy_cost_preview(preview, currency.strip().upper() or "USD")
+                st.session_state["pi_last_buy_cost_preview"] = {
+                    "basis": preview.to_dict(),
+                    "currency": currency.strip().upper() or "USD",
+                }
             mgmt.add_holding(
                 account_id=account_id,
                 symbol=symbol,
                 quantity=float(quantity),
-                average_cost=float(average_cost),
+                average_cost=float(unit_price),
                 currency=currency,
                 asset_class=asset_class,
                 executed_at=executed_at,
                 notes=notes.strip() or None,
                 name=display_name.strip() or None,
+                commission=float(commission),
             )
-            st.success(f"{symbol.strip().upper()} eklendi.")
+            symbol_label = symbol.strip().upper()
+            if purchase_date:
+                st.session_state["pi_add_holding_flash"] = (
+                    f"{symbol_label} eklendi. Alış tarihi: {format_date_dmy(purchase_date)}"
+                )
+            else:
+                st.session_state["pi_add_holding_flash"] = f"{symbol_label} eklendi."
             st.rerun()
         except (WealthValidationError, Exception) as exc:
             st.error(str(exc))
@@ -285,7 +367,7 @@ def render_position_management_panel(
                         value=float(val.quantity),
                         step=1.0,
                     )
-                    xfer_date = st.date_input("Transfer tarihi (opsiyonel)", value=None)
+                    xfer_date_raw = _optional_dmy_date_text("Transfer tarihi (opsiyonel)")
                     xfer_note = st.text_input("Not (opsiyonel)", value="")
                     confirm_xfer = st.checkbox(
                         "Bu işlem satış değildir; maliyet bazını koruyarak "
@@ -297,6 +379,7 @@ def render_position_management_panel(
                         st.error("Onay kutusunu işaretleyin.")
                     else:
                         try:
+                            xfer_date = parse_date_dmy(xfer_date_raw)
                             executed_at = xfer_date.isoformat() if xfer_date else None
                             PortfolioManagementService(wealth).transfer_holding(
                                 from_account_id=val.account_id,
