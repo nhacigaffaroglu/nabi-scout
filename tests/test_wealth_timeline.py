@@ -573,7 +573,7 @@ class WealthPerformanceEngineTests(unittest.TestCase):
             transaction_history_complete=False,
         )
         self.assertFalse(period.performance_comparable)
-        self.assertTrue(any("truncated" in w.lower() for w in period.warnings))
+        self.assertTrue(any("eksik" in w.lower() for w in period.warnings))
 
 
 class WealthTimelineServiceTests(unittest.TestCase):

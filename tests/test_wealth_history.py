@@ -284,6 +284,69 @@ class WealthHistoryContractTests(unittest.TestCase):
         self.assertIsNone(view.return_pct)
         self.assertEqual(view.evidence_quality, PerformanceEvidenceQuality.PARTIAL)
 
+    def test_two_partial_snapshots_do_not_manufacture_return(self) -> None:
+        view = _history(
+            [
+                _snap(
+                    snap_id="s1",
+                    captured_at="2026-08-17T06:30:00+00:00",
+                    value=58642.1676,
+                    coverage=80.0,
+                    unpriced=3,
+                    mixed=True,
+                ),
+                _snap(
+                    snap_id="s2",
+                    captured_at="2026-08-18T06:30:00+00:00",
+                    value=58515.9676,
+                    coverage=80.0,
+                    unpriced=3,
+                    mixed=False,
+                ),
+            ],
+            [_txn(TXN_TYPE_BUY, 0, executed_at="2026-08-17T12:00:00+00:00")],
+        )
+        self.assertIsNone(view.return_pct)
+        self.assertIsNone(view.investment_gain_loss)
+        self.assertFalse(view.bridge_available)
+        self.assertNotEqual(view.return_pct, Decimal("0"))
+        self.assertEqual(view.evidence_quality, PerformanceEvidenceQuality.PARTIAL)
+
+    def test_history_reason_strings_are_turkish(self) -> None:
+        view = _history(
+            [
+                _snap(
+                    snap_id="s1",
+                    captured_at="2026-08-17T06:30:00+00:00",
+                    value=58642.1676,
+                    coverage=80.0,
+                    unpriced=3,
+                    mixed=True,
+                ),
+                _snap(
+                    snap_id="s2",
+                    captured_at="2026-08-18T06:30:00+00:00",
+                    value=58515.9676,
+                    coverage=80.0,
+                    unpriced=3,
+                    mixed=True,
+                ),
+            ]
+        )
+        reasons = " ".join(view.limitations)
+        self.assertIn("Karışık para birimli görüntüler tam karşılaştırılamaz.", reasons)
+        self.assertIn("Başlangıç veya bitişte fiyatsız pozisyon var.", reasons)
+        self.assertIn("Başlangıç veya bitişte fiyatlı pozisyon kapsamı eksik.", reasons)
+        ui = Path("components/wealth_history_ui.py").read_text(encoding="utf-8")
+        self.assertIn("Getiri % gösterilmiyor", ui)
+        self.assertNotIn("Incomplete priced-position coverage", reasons)
+        self.assertNotIn("Mixed-currency snapshots", reasons)
+        self.assertNotIn("Unpriced positions present", reasons)
+        self.assertNotIn("Portfolio performance is not comparable.", reasons)
+        engine = Path("services/wealth_performance_engine.py").read_text(encoding="utf-8")
+        self.assertNotIn("Mixed-currency snapshots are not fully comparable.", engine)
+        self.assertNotIn("Portfolio performance is not comparable.", Path("services/wealth_benchmark_service.py").read_text(encoding="utf-8"))
+
     def test_wealth_curve_requires_two_points_no_interpolation(self) -> None:
         one = _history([_snap(snap_id="s1", captured_at="2026-01-01T00:00:00+00:00", value=10000.0)])
         self.assertIsNone(build_wealth_history_curve(one.curve_points))

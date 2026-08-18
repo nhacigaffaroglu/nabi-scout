@@ -147,7 +147,10 @@ def apply_fx_to_portfolio_view(
     view: PortfolioIntelligenceView,
     fx_service: FxRateService,
 ) -> Tuple[PortfolioIntelligenceView, FxAdjustedTotals]:
-    from services.portfolio_intelligence_engine import rollup_portfolio_intelligence
+    from services.portfolio_intelligence_engine import (
+        mixed_currency_warning_from_rows,
+        rollup_portfolio_intelligence,
+    )
 
     all_rows = (
         list(view.priced_positions)
@@ -192,7 +195,9 @@ def apply_fx_to_portfolio_view(
             1 for row in adjusted_rows if row.fx_unavailable and row.price_available
         ),
         total_position_count=rerolled.total_position_count,
-        mixed_currency_warning=totals.unconverted_market_value > 0,
+        mixed_currency_warning=mixed_currency_warning_from_rows(
+            adjusted_rows, view.base_currency
+        ),
         fx_supported=totals.conversion_coverage_pct is not None,
         priced_positions=rerolled.priced_positions,
         unpriced_positions=rerolled.unpriced_positions,

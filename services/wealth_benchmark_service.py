@@ -138,7 +138,7 @@ class WealthBenchmarkService:
                 benchmark_return_pct=None,
                 relative_return_pct=None,
                 performance_comparable=False,
-                warnings=["Portfolio performance is not comparable."],
+                warnings=["Portföy performansı karşılaştırılabilir değil."],
                 provider_fetch_count=self._fetch_count,
             )
 

@@ -29,6 +29,30 @@ def position_in_base_currency(asset_currency: str, base_currency: str) -> bool:
     return normalize_currency(asset_currency) == normalize_currency(base_currency)
 
 
+def position_converted_to_base(row: PositionValuationRow, base_currency: str) -> bool:
+    """True when native currency is already comparable in portfolio base valuation."""
+    if position_in_base_currency(row.valuation_currency, base_currency):
+        return True
+    return bool(
+        getattr(row, "fx_converted", False)
+        and row.included_in_base_totals
+        and row.price_available
+        and row.market_value is not None
+    )
+
+
+def mixed_currency_warning_from_rows(
+    rows: List[PositionValuationRow],
+    base_currency: str,
+) -> bool:
+    """True when any holding is not fully converted into base-currency valuation.
+
+    Unpriced TRY/TL on a USD portfolio counts as unresolved mixed currency.
+    Missing price/FX stays None on the row and is never treated as zero.
+    """
+    return any(not position_converted_to_base(row, base_currency) for row in rows)
+
+
 def value_position(
     *,
     position: Dict[str, Any],
@@ -218,7 +242,7 @@ def rollup_portfolio_intelligence(
         unpriced_position_count=len(unpriced_all),
         foreign_currency_position_count=len(foreign_rows),
         total_position_count=len(rows),
-        mixed_currency_warning=len(foreign_rows) > 0,
+        mixed_currency_warning=mixed_currency_warning_from_rows(rows, normalized_base),
         fx_supported=False,
         priced_positions=sorted(
             weighted_rows,

@@ -352,18 +352,18 @@ def build_performance_period(
     end_at = _parse_ts(end.captured_at)
 
     if start_at >= end_at:
-        warnings.append("Period start must be before end.")
+        warnings.append("Dönem başlangıcı bitişten önce olmalıdır.")
     if _normalize_currency(start.base_currency) != _normalize_currency(end.base_currency):
-        warnings.append("Snapshot base currencies differ.")
+        warnings.append("Görüntü baz para birimleri farklı.")
     if start.mixed_currency_warning or end.mixed_currency_warning:
-        warnings.append("Mixed-currency snapshots are not fully comparable.")
+        warnings.append("Karışık para birimli görüntüler tam karşılaştırılamaz.")
     if start.unpriced_position_count > 0 or end.unpriced_position_count > 0:
-        warnings.append("Unpriced positions present at start or end.")
+        warnings.append("Başlangıç veya bitişte fiyatsız pozisyon var.")
     if start.priced_position_coverage_pct < 100.0 or end.priced_position_coverage_pct < 100.0:
-        warnings.append("Incomplete priced-position coverage at start or end.")
+        warnings.append("Başlangıç veya bitişte fiyatlı pozisyon kapsamı eksik.")
     if not transaction_history_complete:
         warnings.append(
-            "Transaction history may be truncated; external flow totals are not trusted."
+            "İşlem geçmişi eksik olabilir; dış akış toplamlarına güvenilmiyor."
         )
 
     inflows, outflows, dividend_income, fee_cost, flow_warnings = aggregate_cash_flows(

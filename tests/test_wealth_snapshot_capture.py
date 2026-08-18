@@ -433,6 +433,107 @@ class PerformanceCompatibilityTests(unittest.TestCase):
         )
         self.assertFalse(period.performance_comparable)
         self.assertIsNone(period.simple_period_return_pct)
+        reasons = " ".join(period.warnings)
+        self.assertIn("Karışık para birimli", reasons)
+        self.assertIn("fiyatsız pozisyon", reasons)
+        self.assertIn("fiyatlı pozisyon kapsamı eksik", reasons)
+        self.assertNotIn("Mixed-currency", reasons)
+        self.assertNotIn("Unpriced positions present", reasons)
+        self.assertNotIn("Incomplete priced-position coverage", reasons)
+
+
+class MixedCurrencyWarningSemanticTests(unittest.TestCase):
+    def test_usd_plus_unpriced_try_is_warning(self) -> None:
+        from services.portfolio_intelligence_engine import rollup_portfolio_intelligence
+
+        view = rollup_portfolio_intelligence(
+            portfolio_id="pf-1",
+            portfolio_name="Main",
+            base_currency="USD",
+            rows=[
+                _row(symbol="AAPL", price_available=True, market_value=100.0, currency="USD"),
+                _row(
+                    symbol="BIMAS",
+                    price_available=False,
+                    market_value=None,
+                    currency="TRY",
+                    included_in_base_totals=False,
+                ),
+            ],
+            price_provider="none",
+            unique_price_symbols_fetched=0,
+            valuation_errors=[],
+        )
+        self.assertTrue(view.mixed_currency_warning)
+        payload = build_valuation_payload(view)
+        self.assertTrue(payload["mixed_currency_warning"])
+        self.assertIsNone(
+            next(row for row in view.unpriced_positions + view.foreign_currency_positions if row.symbol == "BIMAS").price
+        )
+
+    def test_tl_alias_behaves_as_try(self) -> None:
+        from services.portfolio_intelligence_engine import mixed_currency_warning_from_rows
+        from services.wealth_price_service import normalize_currency
+
+        self.assertEqual(normalize_currency("TL"), "TRY")
+        rows = [
+            _row(symbol="AAPL", price_available=True, market_value=100.0, currency="USD"),
+            _row(
+                symbol="ASELS",
+                price_available=False,
+                market_value=None,
+                currency="TL",
+                included_in_base_totals=False,
+            ),
+        ]
+        self.assertTrue(mixed_currency_warning_from_rows(rows, "USD"))
+
+    def test_usd_only_snapshot_is_not_mixed(self) -> None:
+        from services.portfolio_intelligence_engine import rollup_portfolio_intelligence
+
+        view = rollup_portfolio_intelligence(
+            portfolio_id="pf-1",
+            portfolio_name="Main",
+            base_currency="USD",
+            rows=[
+                _row(symbol="AAPL", price_available=True, market_value=100.0, currency="USD"),
+                _row(symbol="MSFT", price_available=True, market_value=50.0, currency="USD"),
+            ],
+            price_provider="none",
+            unique_price_symbols_fetched=0,
+            valuation_errors=[],
+        )
+        self.assertFalse(view.mixed_currency_warning)
+
+    def test_fx_overlay_keeps_warning_for_unpriced_try(self) -> None:
+        from services.fx_conversion_engine import apply_fx_to_portfolio_view
+        from services.fx_rate_service import FxRateService
+        from services.portfolio_intelligence_engine import rollup_portfolio_intelligence
+
+        view = rollup_portfolio_intelligence(
+            portfolio_id="pf-1",
+            portfolio_name="Main",
+            base_currency="USD",
+            rows=[
+                _row(symbol="AAPL", price_available=True, market_value=100.0, currency="USD"),
+                _row(
+                    symbol="TUPRS",
+                    price_available=False,
+                    market_value=None,
+                    currency="TRY",
+                    included_in_base_totals=False,
+                ),
+            ],
+            price_provider="none",
+            unique_price_symbols_fetched=0,
+            valuation_errors=[],
+        )
+        fx = FxRateService(MagicMock())
+        fx.repo.get_rate = MagicMock(return_value=None)
+        adjusted, totals = apply_fx_to_portfolio_view(view, fx)
+        self.assertEqual(totals.unconverted_market_value, 0.0)
+        self.assertTrue(adjusted.mixed_currency_warning)
+        self.assertEqual(fx.remote_calls, 0)
 
 
 class SafetyTests(unittest.TestCase):
