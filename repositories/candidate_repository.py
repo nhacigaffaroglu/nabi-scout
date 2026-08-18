@@ -74,9 +74,10 @@ class CandidateRepository:
         )
         return response.data or []
 
-    def upsert_expansion_candidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Reuse the canonical symbol row; never insert a second stub."""
+    def upsert_expansion_candidate(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Reuse the canonical symbol row; never insert an identity-only stub."""
         from services.candidate_identity import (
+            expansion_insert_has_usable_enrichment,
             merge_preserving_enriched,
             select_canonical_candidate,
         )
@@ -90,6 +91,8 @@ class CandidateRepository:
             if not patch:
                 return canonical
             return self.update(canonical["id"], patch)
+        if not expansion_insert_has_usable_enrichment(cleaned):
+            return None
         return self.upsert_by_symbol(cleaned)
 
     def get_all(self, limit=None, order_by="created_at", descending=True):

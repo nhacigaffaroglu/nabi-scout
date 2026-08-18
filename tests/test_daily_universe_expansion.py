@@ -315,6 +315,7 @@ class OnboardingPersistenceTests(unittest.TestCase):
         view.available = True
         view.result = result
         candidate_repo = MagicMock()
+        candidate_repo.upsert_expansion_candidate.return_value = None
 
         with unittest.mock.patch(
             "services.universe_expansion_onboarding_service.build_company_report_participation",
@@ -331,11 +332,12 @@ class OnboardingPersistenceTests(unittest.TestCase):
                 candidate_repo=candidate_repo,
             )
 
-        self.assertTrue(onboarding.success)
-        self.assertTrue(onboarding.candidate_upserted)
+        self.assertFalse(onboarding.success)
+        self.assertFalse(onboarding.candidate_upserted)
         payload = candidate_repo.upsert_expansion_candidate.call_args.args[0]
         self.assertEqual(payload["symbol"], "XYZ")
         self.assertEqual(payload["company_name"], "XYZ")
+        self.assertNotIn("current_price", payload)
 
     def test_absent_profile_safe_empty_mapping(self) -> None:
         from services.universe_expansion_candidate_payload import (

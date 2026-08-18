@@ -54,6 +54,11 @@ def is_stub_candidate(row: Optional[Dict[str, Any]]) -> bool:
     )
 
 
+def expansion_insert_has_usable_enrichment(payload: Optional[Dict[str, Any]]) -> bool:
+    """First-time expansion inserts require a numeric persisted price."""
+    return numeric_current_price(payload) is not None
+
+
 def select_canonical_candidate(
     rows: Sequence[Dict[str, Any]],
     *,

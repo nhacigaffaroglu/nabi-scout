@@ -21,8 +21,15 @@ from services.candidate_price_service import CandidatePriceService
 from services.scheduled_universe_expansion_service import (
     evaluate_scheduled_expansion_run,
 )
-from services.universe_expansion_contract import STOP_REASON_SAFETY_CAP
-from services.universe_expansion_onboarding_service import run_participation_onboarding
+from services.universe_expansion_contract import (
+    ERROR_CATEGORY_DATA_INSUFFICIENT,
+    EXPANSION_STATUS_RETRYABLE,
+    STOP_REASON_SAFETY_CAP,
+)
+from services.universe_expansion_onboarding_service import (
+    onboarding_final_status,
+    run_participation_onboarding,
+)
 
 
 ABD_ENRICHED = {
@@ -144,10 +151,10 @@ class ExpansionUpsertReuseTests(unittest.TestCase):
             self.assertNotIn("current_price", patch)
             self.assertNotEqual(patch.get("company_name"), "AVGO")
 
-    def test_new_symbol_uses_insert_path(self) -> None:
+    def test_new_symbol_stub_does_not_insert(self) -> None:
         repo = CandidateRepository(MagicMock())
         repo.list_by_symbol = MagicMock(return_value=[])
-        repo.upsert_by_symbol = MagicMock(return_value={"id": "created", "symbol": "NEWCO"})
+        repo.upsert_by_symbol = MagicMock()
         payload = {
             "symbol": "NEWCO",
             "market": "US",
@@ -156,8 +163,25 @@ class ExpansionUpsertReuseTests(unittest.TestCase):
             "data_source": "universe_expansion",
         }
         result = repo.upsert_expansion_candidate(payload)
+        repo.upsert_by_symbol.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_new_symbol_with_price_inserts(self) -> None:
+        repo = CandidateRepository(MagicMock())
+        repo.list_by_symbol = MagicMock(return_value=[])
+        payload = {
+            "symbol": "NEWCO",
+            "market": "US",
+            "asset_type": "equity",
+            "company_name": "New Company Inc.",
+            "current_price": 12.5,
+            "data_source": "universe_expansion",
+        }
+        repo.upsert_by_symbol = MagicMock(return_value={"id": "created", **payload})
+        result = repo.upsert_expansion_candidate(payload)
         repo.upsert_by_symbol.assert_called_once()
         self.assertEqual(result["symbol"], "NEWCO")
+        self.assertEqual(result["current_price"], 12.5)
 
 
 class DuplicateLookupTests(unittest.TestCase):
@@ -206,6 +230,7 @@ class OnboardingWriterTests(unittest.TestCase):
         view.available = True
         view.result = result
         candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
+        candidate_repo.upsert_expansion_candidate.return_value = ABD_ENRICHED
 
         with patch(
             "services.universe_expansion_onboarding_service.build_company_report_participation",
@@ -220,8 +245,184 @@ class OnboardingWriterTests(unittest.TestCase):
             onboarding = run_participation_onboarding("AVGO", candidate_repo=candidate_repo)
 
         self.assertTrue(onboarding.candidate_upserted)
+        self.assertTrue(onboarding.success)
         candidate_repo.upsert_expansion_candidate.assert_called_once()
         candidate_repo.upsert_by_symbol.assert_not_called()
+
+    def _participation_view(self, *, available: bool, status: str = "Uygun", sec_available: bool = True):
+        from services.participation_assessment_service import ParticipationAssessmentResult
+        from services.participation_intelligence_contract import (
+            ASSET_KIND_EQUITY,
+            CONFIDENCE_MEDIUM,
+            PARTICIPATION_SOURCE_METHODOLOGY,
+            ParticipationAssessment,
+        )
+
+        view = MagicMock()
+        view.available = available
+        view.error_message = None if available else "provider_timeout"
+        view.result = None
+        if available:
+            assessment = ParticipationAssessment(
+                symbol="XOM",
+                asset_kind=ASSET_KIND_EQUITY,
+                status=status,
+                source=PARTICIPATION_SOURCE_METHODOLOGY,
+                confidence=CONFIDENCE_MEDIUM,
+            )
+            view.result = ParticipationAssessmentResult(
+                symbol="XOM",
+                methodology_id="msci_islamic_index_series",
+                resolved_methodology_version="2025-05",
+                participation_assessment=assessment,
+                source_evidence=(("provider", "SEC"),),
+                sec_available=sec_available,
+                participation_provider_calls={"profile": 1},
+            )
+        return view
+
+    def test_provider_failure_does_not_insert_candidate(self) -> None:
+        candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
+        view = self._participation_view(available=False)
+        with patch(
+            "services.universe_expansion_onboarding_service.build_company_report_participation",
+            return_value=view,
+        ):
+            onboarding = run_participation_onboarding("XOM", candidate_repo=candidate_repo)
+        self.assertFalse(onboarding.success)
+        self.assertFalse(onboarding.candidate_upserted)
+        candidate_repo.upsert_expansion_candidate.assert_not_called()
+        candidate_repo.upsert_by_symbol.assert_not_called()
+        status = onboarding_final_status(onboarding, budget_rate_limited=False)
+        self.assertEqual(status, EXPANSION_STATUS_RETRYABLE)
+
+    def test_no_canonical_no_price_skips_stub_and_marks_incomplete(self) -> None:
+        candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
+        candidate_repo.upsert_expansion_candidate.return_value = None
+        view = self._participation_view(available=True, status="Kontrol Et")
+        with patch(
+            "services.universe_expansion_onboarding_service.build_company_report_participation",
+            return_value=view,
+        ), patch(
+            "services.universe_expansion_onboarding_service.evaluate_research_eligibility_from_assessment",
+            return_value=MagicMock(research_allowed=False),
+        ), patch(
+            "services.universe_expansion_onboarding_service.save_participation_assessment_snapshot",
+            return_value=MagicMock(saved=True, skipped_duplicate=False),
+        ):
+            onboarding = run_participation_onboarding("XOM", candidate_repo=candidate_repo)
+        self.assertFalse(onboarding.candidate_upserted)
+        self.assertFalse(onboarding.success)
+        self.assertEqual(onboarding.error_category, ERROR_CATEGORY_DATA_INSUFFICIENT)
+        candidate_repo.upsert_expansion_candidate.assert_called_once()
+        payload = candidate_repo.upsert_expansion_candidate.call_args.args[0]
+        self.assertNotIn("current_price", payload)
+        candidate_repo.upsert_by_symbol.assert_not_called()
+        status = onboarding_final_status(onboarding, budget_rate_limited=False)
+        self.assertEqual(status, EXPANSION_STATUS_RETRYABLE)
+
+    def test_existing_canonical_is_preserved(self) -> None:
+        candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
+        candidate_repo.upsert_expansion_candidate.return_value = ABD_ENRICHED
+        view = self._participation_view(available=True, status="Kontrol Et")
+        with patch(
+            "services.universe_expansion_onboarding_service.build_company_report_participation",
+            return_value=view,
+        ), patch(
+            "services.universe_expansion_onboarding_service.evaluate_research_eligibility_from_assessment",
+            return_value=MagicMock(research_allowed=False),
+        ), patch(
+            "services.universe_expansion_onboarding_service.save_participation_assessment_snapshot",
+            return_value=MagicMock(saved=True, skipped_duplicate=False),
+        ):
+            onboarding = run_participation_onboarding("AVGO", candidate_repo=candidate_repo)
+        self.assertTrue(onboarding.candidate_upserted)
+        self.assertTrue(onboarding.success)
+        candidate_repo.upsert_by_symbol.assert_not_called()
+        written = candidate_repo.upsert_expansion_candidate.return_value
+        self.assertEqual(written["current_price"], 392.99)
+        self.assertEqual(written["company_name"], "Broadcom Inc.")
+
+    def test_scheduled_path_provider_failure_queue_is_retryable(self) -> None:
+        from repositories.universe_expansion_repository import UniverseExpansionRepository
+        from services.daily_universe_expansion_service import DailyUniverseExpansionService
+        from services.universe_expansion_contract import EXPANSION_STATUS_RETRYABLE as QUEUE_RETRYABLE
+
+        queue_repo = UniverseExpansionRepository()
+        queue_repo.upsert_pending("XOM", source_universe="pilot", priority=1)
+        candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
+        view = self._participation_view(available=False)
+
+        def runner(symbol, **kwargs):
+            return run_participation_onboarding(
+                symbol,
+                candidate_repo=kwargs.get("candidate_repo"),
+            )
+
+        service = DailyUniverseExpansionService(
+            queue_repo=queue_repo,
+            onboarding_runner=runner,
+        )
+        with patch(
+            "services.universe_expansion_onboarding_service.build_company_report_participation",
+            return_value=view,
+        ):
+            report = service.run_once(
+                max_symbols=1,
+                now=datetime(2026, 8, 18, 5, 19, tzinfo=timezone.utc),
+                seed_if_empty=False,
+                candidate_repo=candidate_repo,
+            )
+        row = queue_repo.get_by_symbol("XOM")
+        self.assertEqual(report.symbols_retryable, 1)
+        self.assertEqual(row["status"], QUEUE_RETRYABLE)
+        candidate_repo.upsert_expansion_candidate.assert_not_called()
+
+    def test_scheduled_path_no_stub_insert_queue_incomplete(self) -> None:
+        from repositories.universe_expansion_repository import UniverseExpansionRepository
+        from services.daily_universe_expansion_service import DailyUniverseExpansionService
+        from services.universe_expansion_contract import EXPANSION_STATUS_RETRYABLE as QUEUE_RETRYABLE
+
+        queue_repo = UniverseExpansionRepository()
+        queue_repo.upsert_pending("XOM", source_universe="pilot", priority=1)
+        candidate_repo = CandidateRepository(MagicMock())
+        candidate_repo.list_by_symbol = MagicMock(return_value=[])
+        candidate_repo.upsert_by_symbol = MagicMock()
+        view = self._participation_view(available=True, status="Kontrol Et")
+
+        def runner(symbol, **kwargs):
+            return run_participation_onboarding(
+                symbol,
+                candidate_repo=kwargs.get("candidate_repo"),
+            )
+
+        service = DailyUniverseExpansionService(
+            queue_repo=queue_repo,
+            onboarding_runner=runner,
+        )
+        with patch(
+            "services.universe_expansion_onboarding_service.build_company_report_participation",
+            return_value=view,
+        ), patch(
+            "services.universe_expansion_onboarding_service.evaluate_research_eligibility_from_assessment",
+            return_value=MagicMock(research_allowed=False),
+        ), patch(
+            "services.universe_expansion_onboarding_service.save_participation_assessment_snapshot",
+            return_value=MagicMock(saved=True, skipped_duplicate=False),
+        ):
+            report = service.run_once(
+                max_symbols=1,
+                now=datetime(2026, 8, 18, 5, 19, tzinfo=timezone.utc),
+                seed_if_empty=False,
+                candidate_repo=candidate_repo,
+            )
+        row = queue_repo.get_by_symbol("XOM")
+        candidate_repo.upsert_by_symbol.assert_not_called()
+        self.assertEqual(report.symbols_retryable, 1)
+        self.assertEqual(report.symbols_completed, 0)
+        self.assertEqual(row["status"], QUEUE_RETRYABLE)
+        self.assertEqual(row["last_error_category"], ERROR_CATEGORY_DATA_INSUFFICIENT)
+        self.assertIsNone(row["completed_at"])
 
 
 class MissingRunsTableTests(unittest.TestCase):

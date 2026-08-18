@@ -11,6 +11,7 @@ from services.participation_assessment_persistence_service import (
 )
 from services.research_eligibility_service import evaluate_research_eligibility_from_assessment
 from services.universe_expansion_contract import (
+    ERROR_CATEGORY_DATA_INSUFFICIENT,
     ERROR_CATEGORY_PLAN_RESTRICTED,
     ERROR_CATEGORY_RATE_LIMIT,
     EXPANSION_STATUS_BLOCKED,
@@ -24,6 +25,7 @@ from services.universe_expansion_error_classifier import (
     classify_participation_outcome,
     classify_sec_error,
 )
+from services.candidate_identity import expansion_insert_has_usable_enrichment
 from services.universe_expansion_candidate_payload import build_expansion_candidate_payload
 from services.universe_expansion_provider_wrappers import (
     map_participation_calls_to_providers,
@@ -127,10 +129,12 @@ def run_participation_onboarding(
         try:
             writer = getattr(candidate_repo, "upsert_expansion_candidate", None)
             if callable(writer):
-                writer(payload)
+                written = writer(payload)
+            elif expansion_insert_has_usable_enrichment(payload):
+                written = candidate_repo.upsert_by_symbol(payload)
             else:
-                candidate_repo.upsert_by_symbol(payload)
-            candidate_upserted = True
+                written = None
+            candidate_upserted = written is not None
         except Exception:
             candidate_upserted = False
 
@@ -141,6 +145,8 @@ def run_participation_onboarding(
         participation_status=participation_status,
         sec_available=result.sec_available,
     )
+    if candidate_repo is not None and not candidate_upserted and error_category is None:
+        error_category = ERROR_CATEGORY_DATA_INSUFFICIENT
 
     return OnboardingResult(
         symbol=normalized,
@@ -166,7 +172,7 @@ def onboarding_final_status(
         return EXPANSION_STATUS_RETRYABLE
     if onboarding.error_category == ERROR_CATEGORY_PLAN_RESTRICTED:
         return EXPANSION_STATUS_BLOCKED
-    if onboarding.participation_status:
+    if onboarding.participation_status and onboarding.candidate_upserted:
         return EXPANSION_STATUS_COMPLETED
     return EXPANSION_STATUS_RETRYABLE
 
