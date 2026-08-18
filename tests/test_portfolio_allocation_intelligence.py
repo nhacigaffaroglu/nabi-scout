@@ -478,7 +478,9 @@ class DecisionSurfaceTests(unittest.TestCase):
         self.assertFalse(view.signals.contribution_routing_available)
         self.assertFalse(view.signals.material_drift)
         decision = Path("services/portfolio_decision_intelligence.py").read_text(encoding="utf-8")
-        self.assertNotIn("portfolio_allocation_intelligence", decision)
+        self.assertIn("AllocationDecisionSignals", decision)
+        self.assertNotIn("portfolio_allocation_policy", decision)
+        self.assertNotIn(".insert(", decision)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,11 @@ from components.portfolio_decision_center_ui import (
     present_action_center,
     render_portfolio_decision_center,
 )
+from services.portfolio_allocation_intelligence import (
+    AllocationCompleteness,
+    AllocationDecisionSignals,
+    AllocationPolicyStatus,
+)
 from services.portfolio_decision_intelligence import (
     DecisionAction,
     DecisionActionStatus,
@@ -461,6 +466,83 @@ def _fake_streamlit(recorded: list[str]):
             return _Ctx()
 
     return _St()
+
+
+class AllocationActionCenterTests(unittest.TestCase):
+    def test_unconfigured_info_is_not_primary_and_has_no_security_language(self) -> None:
+        decision = build_portfolio_decision(
+            _partial_bist_view(),
+            as_of_date=AS_OF,
+            transactions=[_buy(1000)],
+            account_ids=[ACCOUNT],
+            allocation_signals=AllocationDecisionSignals(
+                target_status=AllocationPolicyStatus.TARGET_NOT_CONFIGURED,
+                completeness=AllocationCompleteness.PARTIAL_ALLOCATION,
+                material_drift=False,
+                allocation_evidence_incomplete=True,
+                contribution_routing_available=False,
+                best_routing_bucket_id=None,
+                limitations=("TARGET_NOT_CONFIGURED",),
+            ),
+        )
+        presented = present_action_center(decision)
+        self.assertEqual(presented.visible_actions[0].id, "incomplete_valuation")
+        define = next(
+            row for row in presented.visible_actions if row.id == "allocation_target_not_configured"
+        )
+        self.assertEqual(define.title, "Hedef portföy dağılımını tanımla")
+        self.assertEqual(define.priority_label, "Bilgi")
+        text = flatten_presentation_text(presented).lower()
+        self.assertNotIn("buy spus", text)
+        self.assertNotIn("sell aapl", text)
+
+    def test_drift_action_shows_routing_bucket_not_security(self) -> None:
+        decision = build_portfolio_decision(
+            _partial_bist_view(top_weight=40.0),
+            as_of_date=AS_OF,
+            transactions=[_buy(1000)],
+            account_ids=[ACCOUNT],
+            allocation_signals=AllocationDecisionSignals(
+                target_status=AllocationPolicyStatus.CONFIGURED,
+                completeness=AllocationCompleteness.PARTIAL_ALLOCATION,
+                material_drift=True,
+                allocation_evidence_incomplete=True,
+                contribution_routing_available=True,
+                best_routing_bucket_id="etf",
+                limitations=("PARTIAL_VALUATION", "OBSERVABLE_ALLOCATION_ONLY"),
+            ),
+        )
+        presented = present_action_center(decision)
+        self.assertEqual(presented.visible_actions[0].id, "incomplete_valuation")
+        drift = next(row for row in presented.visible_actions if row.id == "allocation_drift_review")
+        self.assertEqual(drift.title, "Hedef dağılımdan sapmayı gözden geçir")
+        blob = " ".join(drift.evidence_lines).lower() + " " + drift.explanation.lower()
+        self.assertIn("etf bölgesine", blob)
+        self.assertNotIn("spus", blob)
+        self.assertNotIn("satın al", blob)
+        self.assertNotIn("sell aapl", blob)
+
+    def test_build_decision_reads_persisted_policy_without_write(self) -> None:
+        service = MagicMock()
+        service.get_policy.return_value = None
+        wealth = MagicMock()
+        wealth.list_assets.return_value = []
+        wealth.list_positions.return_value = []
+        wealth.list_transactions.return_value = [_buy(1000)]
+        decision = build_decision_for_ui(
+            _partial_bist_view(),
+            wealth=wealth,
+            accounts=[{"id": ACCOUNT}],
+            session_state={},
+            as_of=AS_OF,
+            policy_service=service,
+            portfolio_id="pf-a",
+        )
+        service.get_policy.assert_called_once_with("pf-a")
+        service.save_policy.assert_not_called()
+        service.delete_policy.assert_not_called()
+        self.assertIn("allocation_target_not_configured", [row.id for row in decision.actions])
+        self.assertEqual(decision.primary_action.id, "incomplete_valuation")
 
 
 class RenderSafetyTests(unittest.TestCase):

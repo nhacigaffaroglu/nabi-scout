@@ -269,9 +269,12 @@ class TargetPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(sum(weights.values()), 90)
         self.assertIsNotNone(validate_target_weights(weights))
 
-    def test_session_only_target_and_fx_key_reused(self) -> None:
+    def test_session_keys_and_no_direct_writes(self) -> None:
         source = UI.read_text(encoding="utf-8")
         self.assertIn(APPLIED_WEIGHTS_KEY, source)
+        self.assertIn("Hedef dağılımı kaydet", source)
+        self.assertIn("Hedefi sıfırla", source)
+        self.assertIn("Kaydedilmiş hedef dağılım", source)
         self.assertEqual(PLANNING_FX_SESSION_KEY, "wealth_os_2031_usdtry")
         self.assertIn("wealth_os_2031_usdtry", source)
         for token in WRITE_TOKENS:

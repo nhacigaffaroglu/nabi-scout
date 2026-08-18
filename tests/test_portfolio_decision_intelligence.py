@@ -5,8 +5,14 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from services.portfolio_allocation_intelligence import (
+    AllocationCompleteness,
+    AllocationDecisionSignals,
+    AllocationPolicyStatus,
+)
 from services.portfolio_decision_intelligence import (
     CONCENTRATION_REVIEW_THRESHOLD_PCT,
+    DecisionActionStatus,
     DecisionCategory,
     DecisionPriority,
     build_portfolio_decision,
@@ -467,6 +473,82 @@ class PerformanceAndFallbackTests(unittest.TestCase):
         self.assertEqual(first.primary_action.id, first.actions[0].id)
         self.assertEqual(first.primary_action.category, DecisionCategory.DATA)
         self.assertEqual(first.primary_action.priority, DecisionPriority.HIGH)
+
+
+def _signals(
+    *,
+    configured: bool,
+    material_drift: bool = False,
+    routing_bucket: str | None = None,
+    incomplete: bool = True,
+) -> AllocationDecisionSignals:
+    return AllocationDecisionSignals(
+        target_status=(
+            AllocationPolicyStatus.CONFIGURED
+            if configured
+            else AllocationPolicyStatus.TARGET_NOT_CONFIGURED
+        ),
+        completeness=(
+            AllocationCompleteness.PARTIAL_ALLOCATION
+            if incomplete
+            else AllocationCompleteness.COMPLETE_ALLOCATION
+        ),
+        material_drift=material_drift,
+        allocation_evidence_incomplete=incomplete,
+        contribution_routing_available=bool(routing_bucket),
+        best_routing_bucket_id=routing_bucket,
+        limitations=("PARTIAL_VALUATION",) if incomplete else (),
+    )
+
+
+class AllocationSignalIntegrationTests(unittest.TestCase):
+    def test_unconfigured_does_not_fabricate_drift(self) -> None:
+        view = build_portfolio_decision(
+            _partial_bist_view(),
+            as_of_date=AS_OF,
+            allocation_signals=_signals(configured=False),
+        )
+        self.assertNotIn("allocation_drift_review", _ids(view))
+        self.assertIn("allocation_target_not_configured", _ids(view))
+        self.assertEqual(view.primary_action.id, "incomplete_valuation")
+        self.assertEqual(view.primary_action.priority, DecisionPriority.HIGH)
+
+    def test_incomplete_drift_does_not_create_false_action(self) -> None:
+        view = build_portfolio_decision(
+            _partial_bist_view(),
+            as_of_date=AS_OF,
+            allocation_signals=_signals(configured=True, material_drift=False),
+        )
+        self.assertNotIn("allocation_drift_review", _ids(view))
+        self.assertNotIn("allocation_target_not_configured", _ids(view))
+
+    def test_material_drift_is_portfolio_medium_and_not_primary_over_data(self) -> None:
+        view = build_portfolio_decision(
+            _partial_bist_view(top_weight=40.0),
+            as_of_date=AS_OF,
+            allocation_signals=_signals(
+                configured=True,
+                material_drift=True,
+                routing_bucket="etf",
+            ),
+        )
+        action = next(row for row in view.actions if row.id == "allocation_drift_review")
+        self.assertEqual(action.category, DecisionCategory.PORTFOLIO)
+        self.assertEqual(action.priority, DecisionPriority.MEDIUM)
+        self.assertEqual(action.status, DecisionActionStatus.INDETERMINATE)
+        self.assertEqual(view.primary_action.id, "incomplete_valuation")
+        self.assertEqual(view.primary_action.priority, DecisionPriority.HIGH)
+        self.assertIn("etf bölgesine", " ".join(action.evidence).lower())
+        combined = _text(view)
+        self.assertNotIn("buy spus", combined)
+        self.assertNotIn("sell aapl", combined)
+        self.assertNotIn("aapl", " ".join(action.evidence).lower())
+
+    def test_no_signals_keeps_existing_priority(self) -> None:
+        view = build_portfolio_decision(_partial_bist_view(), as_of_date=AS_OF)
+        self.assertNotIn("allocation_drift_review", _ids(view))
+        self.assertNotIn("allocation_target_not_configured", _ids(view))
+        self.assertEqual(view.primary_action.id, "incomplete_valuation")
 
 
 class SafetyTests(unittest.TestCase):

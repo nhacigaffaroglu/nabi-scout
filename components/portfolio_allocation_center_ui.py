@@ -21,6 +21,9 @@ from services.portfolio_allocation_intelligence import (
     build_allocation_intelligence,
     policy_is_configured,
 )
+from services.portfolio_allocation_policy_service import (
+    AllocationPolicyStoreError,
+)
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.wealth_goal_models import default_contribution_plan, default_wealth_goal_2031
 from services.wealth_goal_planning import planning_conversion
@@ -38,14 +41,23 @@ SIMULATION_NOTE = (
 UNCONFIGURED_ROUTING = "Hedef dağılım tanımlanmadan katkı yönlendirmesi hesaplanamaz."
 FX_REQUIRED_COPY = "Kur varsayımı gerekli."
 INDETERMINATE_ROUTING = "Kısmi değerleme nedeniyle katkı yönlendirmesi belirsiz."
-APPLY_LABEL = "Hedefi uygula"
-CLEAR_LABEL = "Hedefi temizle"
+SAVE_LABEL = "Hedef dağılımı kaydet"
+RESET_LABEL = "Hedefi sıfırla"
+PERSISTED_STATUS = "Kaydedilmiş hedef dağılım"
+SETTINGS_UNAVAILABLE = "Hedef ayarları şu an kullanılamıyor."
+SAVE_FAILED = "Hedef dağılım kaydedilemedi."
+RESET_FAILED = "Hedef sıfırlanamadı."
 PLANNED_CONTRIBUTION_LABEL = "Planlanan aylık katkı"
 PLANNING_FX_SESSION_KEY = "wealth_os_2031_usdtry"
 APPLIED_WEIGHTS_KEY = "portfolio_allocation_applied_weights"
 DRAFT_WEIGHT_KEY_PREFIX = "portfolio_allocation_draft_"
 CONTRIB_AMOUNT_KEY = "portfolio_allocation_contribution_amount"
 CONTRIB_CURRENCY_KEY = "portfolio_allocation_contribution_currency"
+HYDRATED_KEY = "portfolio_allocation_hydrated"
+PERSISTED_FLAG_KEY = "portfolio_allocation_persisted"
+LOAD_ERROR_KEY = "portfolio_allocation_load_error"
+SAVE_ERROR_KEY = "portfolio_allocation_save_error"
+RESET_ERROR_KEY = "portfolio_allocation_reset_error"
 
 ASSET_CLASS_BUCKETS = ("equity", "etf", "sukuk", "cash", "other")
 BUCKET_LABELS = {
@@ -107,10 +119,13 @@ class AllocationCenterPresentation:
     observable_heading: str
     routing_heading: str
     configured: bool
+    persisted: bool
+    settings_unavailable: bool
     remaining_pct: float
     draft_total: float
-    can_apply: bool
+    can_save: bool
     apply_error: Optional[str]
+    persistence_message: Optional[str]
     partial: bool
     partial_note: str
     simulation_note: str
@@ -156,19 +171,15 @@ def validate_target_weights(weights: Mapping[str, float]) -> Optional[str]:
     return None
 
 
-def policy_from_session(session_state: Optional[Mapping[str, Any]]) -> Optional[AllocationPolicy]:
-    source = session_state or {}
-    applied = source.get(APPLIED_WEIGHTS_KEY)
-    if not isinstance(applied, dict) or not applied:
-        return None
-    weights = {str(key).lower(): _as_float(value) for key, value in applied.items()}
-    if validate_target_weights(weights):
+def policy_from_weights(weights: Mapping[str, float]) -> Optional[AllocationPolicy]:
+    normalized = {str(key).lower(): _as_float(value) for key, value in weights.items()}
+    if validate_target_weights(normalized):
         return None
     targets = tuple(
         AllocationTarget(
             bucket_id=bucket,
             dimension=AllocationDimension.ASSET_CLASS,
-            target_weight_pct=float(weights.get(bucket, 0.0)),
+            target_weight_pct=float(normalized.get(bucket, 0.0)),
             source=AllocationProvenance.USER_DEFINED,
         )
         for bucket in ASSET_CLASS_BUCKETS
@@ -176,6 +187,110 @@ def policy_from_session(session_state: Optional[Mapping[str, Any]]) -> Optional[
     policy = AllocationPolicy(targets=targets, provenance=AllocationProvenance.USER_DEFINED)
     policy.validate()
     return policy
+
+
+def weights_from_policy(policy: AllocationPolicy) -> Dict[str, float]:
+    by_id = {
+        str(target.bucket_id).strip().lower(): float(target.target_weight_pct)
+        for target in policy.targets
+        if target.dimension == AllocationDimension.ASSET_CLASS
+    }
+    return {bucket: float(by_id.get(bucket, 0.0)) for bucket in ASSET_CLASS_BUCKETS}
+
+
+def policy_from_session(session_state: Optional[Mapping[str, Any]]) -> Optional[AllocationPolicy]:
+    source = session_state or {}
+    applied = source.get(APPLIED_WEIGHTS_KEY)
+    if not isinstance(applied, dict) or not applied:
+        return None
+    return policy_from_weights(applied)
+
+
+def hydrate_allocation_session(
+    session_state: Any,
+    *,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
+) -> None:
+    if session_state is None or session_state.get(HYDRATED_KEY):
+        return
+    session_state[HYDRATED_KEY] = True
+    session_state.pop(LOAD_ERROR_KEY, None)
+    if policy_service is None or not portfolio_id:
+        session_state[PERSISTED_FLAG_KEY] = False
+        return
+    try:
+        policy = policy_service.get_policy(portfolio_id)
+    except AllocationPolicyStoreError as exc:
+        session_state[LOAD_ERROR_KEY] = str(exc) or SETTINGS_UNAVAILABLE
+        session_state[PERSISTED_FLAG_KEY] = False
+        return
+    except Exception:
+        session_state[LOAD_ERROR_KEY] = SETTINGS_UNAVAILABLE
+        session_state[PERSISTED_FLAG_KEY] = False
+        return
+    if policy is None:
+        session_state[PERSISTED_FLAG_KEY] = False
+        return
+    weights = weights_from_policy(policy)
+    session_state[APPLIED_WEIGHTS_KEY] = dict(weights)
+    for bucket, value in weights.items():
+        session_state[draft_weight_key(bucket)] = float(value)
+    session_state[PERSISTED_FLAG_KEY] = True
+
+
+def save_allocation_policy_from_session(
+    session_state: Any,
+    *,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
+) -> Optional[str]:
+    weights = draft_weights_from_session(session_state)
+    error = validate_target_weights(weights)
+    if error:
+        return error
+    policy = policy_from_weights(weights)
+    if policy is None:
+        return "Hedef dağılım henüz tanımlanmadı."
+    if policy_service is not None and portfolio_id:
+        try:
+            stored = policy_service.save_policy(portfolio_id, policy)
+        except AllocationPolicyStoreError as exc:
+            return str(exc) or SAVE_FAILED
+        except Exception:
+            return SAVE_FAILED
+        weights = weights_from_policy(stored)
+        session_state[PERSISTED_FLAG_KEY] = True
+    else:
+        session_state[PERSISTED_FLAG_KEY] = False
+    session_state[APPLIED_WEIGHTS_KEY] = dict(weights)
+    for bucket, value in weights.items():
+        session_state[draft_weight_key(bucket)] = float(value)
+    session_state.pop(SAVE_ERROR_KEY, None)
+    session_state.pop(RESET_ERROR_KEY, None)
+    return None
+
+
+def reset_allocation_policy_session(
+    session_state: Any,
+    *,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
+) -> Optional[str]:
+    if policy_service is not None and portfolio_id:
+        try:
+            policy_service.delete_policy(portfolio_id)
+        except AllocationPolicyStoreError as exc:
+            return str(exc) or RESET_FAILED
+        except Exception:
+            return RESET_FAILED
+    session_state.pop(APPLIED_WEIGHTS_KEY, None)
+    for bucket in ASSET_CLASS_BUCKETS:
+        session_state[draft_weight_key(bucket)] = 0.0
+    session_state[PERSISTED_FLAG_KEY] = False
+    session_state.pop(SAVE_ERROR_KEY, None)
+    session_state.pop(RESET_ERROR_KEY, None)
+    return None
 
 
 def _session_conversion(session_state: Optional[Mapping[str, Any]], *, contribution_currency: str):
@@ -339,6 +454,9 @@ def present_allocation_center(
     view: AllocationIntelligenceView,
     *,
     draft_weights: Optional[Mapping[str, float]] = None,
+    persisted: bool = False,
+    settings_unavailable: bool = False,
+    persistence_message: Optional[str] = None,
 ) -> AllocationCenterPresentation:
     draft = dict(draft_weights or {})
     total = sum(float(draft.get(bucket, 0.0)) for bucket in ASSET_CLASS_BUCKETS)
@@ -353,10 +471,13 @@ def present_allocation_center(
         observable_heading=OBSERVABLE_HEADING,
         routing_heading=ROUTING_HEADING,
         configured=view.target_policy_status == AllocationPolicyStatus.CONFIGURED,
+        persisted=bool(persisted),
+        settings_unavailable=bool(settings_unavailable),
         remaining_pct=remaining,
         draft_total=round(total, 4),
-        can_apply=apply_error is None,
+        can_save=apply_error is None and not settings_unavailable,
         apply_error=None if apply_error is None else apply_error,
+        persistence_message=persistence_message,
         partial=view.completeness != AllocationCompleteness.COMPLETE_ALLOCATION,
         partial_note=PARTIAL_NOTE,
         simulation_note=SIMULATION_NOTE,
@@ -375,6 +496,9 @@ def flatten_allocation_text(presented: AllocationCenterPresentation) -> str:
         presented.simulation_note,
         presented.routing.message,
         presented.apply_error or "",
+        presented.persistence_message or "",
+        PERSISTED_STATUS if presented.persisted else "",
+        SETTINGS_UNAVAILABLE if presented.settings_unavailable else "",
     ]
     for row in presented.rows:
         parts.extend(
@@ -472,11 +596,17 @@ def _render_presented(
     presented: AllocationCenterPresentation,
     *,
     session_state,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
 ) -> None:
     import streamlit as st
 
     render_section_title(presented.heading)
     st.caption(presented.partial_note if presented.partial else "Ölçülebilir dağılım tam kapsamlıdır.")
+    if presented.settings_unavailable:
+        st.info(presented.persistence_message or SETTINGS_UNAVAILABLE)
+    elif presented.persisted:
+        st.caption(PERSISTED_STATUS)
     cols = st.columns(len(ASSET_CLASS_BUCKETS))
     for col, bucket in zip(cols, ASSET_CLASS_BUCKETS):
         with col:
@@ -497,16 +627,31 @@ def _render_presented(
         st.caption(f"Fazla tahsis: {abs(remaining):.1f}% — otomatik dengeleme yok.")
     actions = st.columns(2)
     with actions[0]:
-        if st.button(APPLY_LABEL, disabled=not presented.can_apply, key="portfolio_allocation_apply"):
-            weights = draft_weights_from_session(session_state)
-            if validate_target_weights(weights) is None:
-                session_state[APPLIED_WEIGHTS_KEY] = dict(weights)
+        if st.button(SAVE_LABEL, disabled=not presented.can_save, key="portfolio_allocation_save"):
+            error = save_allocation_policy_from_session(
+                session_state,
+                policy_service=policy_service,
+                portfolio_id=portfolio_id,
+            )
+            if error:
+                session_state[SAVE_ERROR_KEY] = error
+            else:
                 st.rerun()
     with actions[1]:
-        if st.button(CLEAR_LABEL, key="portfolio_allocation_clear"):
-            session_state.pop(APPLIED_WEIGHTS_KEY, None)
-            st.rerun()
-    if presented.apply_error and not presented.configured:
+        if st.button(RESET_LABEL, key="portfolio_allocation_reset"):
+            error = reset_allocation_policy_session(
+                session_state,
+                policy_service=policy_service,
+                portfolio_id=portfolio_id,
+            )
+            if error:
+                session_state[RESET_ERROR_KEY] = error
+            else:
+                st.rerun()
+    save_error = session_state.get(SAVE_ERROR_KEY) or session_state.get(RESET_ERROR_KEY)
+    if save_error:
+        st.info(save_error)
+    elif presented.apply_error and not presented.configured:
         st.info(presented.apply_error)
     render_section_title(presented.observable_heading)
     if presented.partial:
@@ -576,8 +721,10 @@ def render_portfolio_allocation_center(
     session_state: Optional[Any] = None,
     allocation: Optional[AllocationIntelligenceView] = None,
     empty_portfolio: bool = False,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
 ) -> Optional[AllocationCenterPresentation]:
-    """Session-only target/drift UI. Never writes Wealth or fetches providers."""
+    """Target/drift UI. Policy writes occur only on explicit save or reset."""
     if empty_portfolio or (
         portfolio_view is not None and int(portfolio_view.total_position_count or 0) == 0
     ):
@@ -586,6 +733,11 @@ def render_portfolio_allocation_center(
         import streamlit as st
 
         state = session_state if session_state is not None else st.session_state
+        hydrate_allocation_session(
+            state,
+            policy_service=policy_service,
+            portfolio_id=portfolio_id,
+        )
         view = allocation
         if view is None:
             if portfolio_view is None:
@@ -595,11 +747,26 @@ def render_portfolio_allocation_center(
                 wealth=wealth,
                 session_state=state,
             )
+        unavailable = bool(state.get(LOAD_ERROR_KEY))
+        persisted = bool(state.get(PERSISTED_FLAG_KEY)) and not unavailable
+        persistence_message = (
+            state.get(LOAD_ERROR_KEY)
+            or state.get(SAVE_ERROR_KEY)
+            or state.get(RESET_ERROR_KEY)
+        )
         presented = present_allocation_center(
             view,
             draft_weights=draft_weights_from_session(state),
+            persisted=persisted,
+            settings_unavailable=unavailable,
+            persistence_message=persistence_message,
         )
-        _render_presented(presented, session_state=state)
+        _render_presented(
+            presented,
+            session_state=state,
+            policy_service=policy_service,
+            portfolio_id=portfolio_id,
+        )
         return presented
     except Exception:
         return None

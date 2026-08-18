@@ -5,6 +5,10 @@ from datetime import date
 from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
+from services.portfolio_allocation_intelligence import (
+    AllocationDecisionSignals,
+    AllocationPolicyStatus,
+)
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
@@ -315,6 +319,84 @@ def _performance_limitation(
     return "PERFORMANCE_EVIDENCE_INCOMPLETE"
 
 
+ALLOCATION_BUCKET_REGION_LABELS = {
+    "equity": "Hisse",
+    "etf": "ETF",
+    "sukuk": "Sukuk",
+    "cash": "Nakit",
+    "other": "Diğer",
+    "us": "ABD",
+    "tr": "TR",
+}
+
+
+def _rule_allocation_target_missing(
+    signals: Optional[AllocationDecisionSignals],
+) -> Optional[DecisionAction]:
+    if signals is None or signals.target_status != AllocationPolicyStatus.TARGET_NOT_CONFIGURED:
+        return None
+    return DecisionAction(
+        id="allocation_target_not_configured",
+        category=DecisionCategory.PLAN,
+        priority=DecisionPriority.INFO,
+        title="Hedef portföy dağılımını tanımla",
+        explanation=(
+            "Kayıtlı bir hedef dağılım yok. Sapma ve katkı yönlendirmesi "
+            "hedef tanımlanmadan hesaplanmaz."
+        ),
+        evidence=("TARGET_NOT_CONFIGURED",),
+        status=DecisionActionStatus.OBSERVE,
+        limitations=("TARGET_NOT_CONFIGURED",),
+    )
+
+
+def _rule_allocation_drift(
+    signals: Optional[AllocationDecisionSignals],
+) -> Optional[DecisionAction]:
+    if signals is None or signals.target_status != AllocationPolicyStatus.CONFIGURED:
+        return None
+    if not signals.material_drift:
+        return None
+    evidence = ["MATERIAL_OBSERVABLE_DRIFT"]
+    if signals.allocation_evidence_incomplete:
+        evidence.append("OBSERVABLE_ALLOCATION_ONLY")
+    bucket_id = signals.best_routing_bucket_id
+    if signals.contribution_routing_available and bucket_id:
+        label = ALLOCATION_BUCKET_REGION_LABELS.get(bucket_id, bucket_id)
+        evidence.append(
+            f"Yeni katkının {label} bölgesine yönelmesi ölçülebilir sapmayı en fazla azaltıyor."
+        )
+    explanation = (
+        "Ölçülebilir dağılım kayıtlı hedeften sapma gösteriyor. "
+        "Bu bir al/sat önerisi değildir."
+    )
+    if signals.allocation_evidence_incomplete:
+        explanation = (
+            "Ölçülebilir bölümde hedef sapması görülüyor; fiyatlanamayan varlıklar "
+            "sonucu değiştirebilir. Bu bir al/sat önerisi veya tam portföy hükmü değildir."
+        )
+    return DecisionAction(
+        id="allocation_drift_review",
+        category=DecisionCategory.PORTFOLIO,
+        priority=DecisionPriority.MEDIUM,
+        title="Hedef dağılımdan sapmayı gözden geçir",
+        explanation=explanation,
+        evidence=tuple(evidence),
+        status=(
+            DecisionActionStatus.INDETERMINATE
+            if signals.allocation_evidence_incomplete
+            else DecisionActionStatus.OPEN
+        ),
+        limitations=tuple(dict.fromkeys(signals.limitations)),
+        context={
+            "best_routing_bucket_id": bucket_id,
+            "routing_available": signals.contribution_routing_available,
+            "allocation_evidence_incomplete": signals.allocation_evidence_incomplete,
+            "material_drift": True,
+        },
+    )
+
+
 def _monitor_fallback() -> DecisionAction:
     return DecisionAction(
         id="continue_observation",
@@ -346,6 +428,7 @@ def build_portfolio_decision(
     start_snapshot: Optional[PortfolioSnapshotView] = None,
     end_snapshot: Optional[PortfolioSnapshotView] = None,
     current_wealth: Optional[CurrentWealthSnapshot] = None,
+    allocation_signals: Optional[AllocationDecisionSignals] = None,
 ) -> PortfolioDecisionView:
     """Deterministic evidence/action-priority engine. No LLM, providers, or writes."""
     as_of = as_of_date or date.today()
@@ -384,6 +467,8 @@ def build_portfolio_decision(
         lambda: _rule_concentration(
             portfolio_view, valuation_complete=current.valuation_complete
         ),
+        lambda: _rule_allocation_drift(allocation_signals),
+        lambda: _rule_allocation_target_missing(allocation_signals),
     ):
         item = builder()
         if item is not None:
@@ -417,6 +502,7 @@ def build_portfolio_decision(
         "build_contribution_intelligence",
         "solve_required_starting_monthly",
         "CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT",
+        *(("allocation_decision_signals",) if allocation_signals is not None else ()),
     )
     return PortfolioDecisionView(
         actions=ordered,

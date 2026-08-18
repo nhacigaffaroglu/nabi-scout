@@ -40,6 +40,7 @@ from components.portfolio_wave3_ui import (
 from services.auth_service import get_current_user_id
 from services.candidate_price_service import CandidatePriceService
 from services.portfolio_account_helpers import accounts_for_portfolio, format_account_display
+from services.portfolio_allocation_policy_service import PortfolioAllocationPolicyService
 from services.portfolio_intelligence_enrichment_service import (
     build_portfolio_intelligence_dashboard,
 )
@@ -102,6 +103,7 @@ with st.spinner("Portföy analizi yükleniyor…"):
     portfolio_ai_service = PortfolioAIAdviserService(client, user_id)
     wave3_service = Wave3IntelligenceService(client, user_id, wealth)
     reference_limits_service = PortfolioReferenceLimitsService(client, user_id)
+    allocation_policy_service = PortfolioAllocationPolicyService(client, user_id)
 
     base_view = intelligence.build_view(
         portfolio,
@@ -149,10 +151,14 @@ render_portfolio_decision_center(
     portfolio_view=base_view,
     wealth=wealth,
     accounts=accounts,
+    policy_service=allocation_policy_service,
+    portfolio_id=str(portfolio["id"]),
 )
 render_portfolio_allocation_center(
     portfolio_view=base_view,
     wealth=wealth,
+    policy_service=allocation_policy_service,
+    portfolio_id=str(portfolio["id"]),
 )
 
 render_portfolio_management_expander(wealth, portfolio, accounts)

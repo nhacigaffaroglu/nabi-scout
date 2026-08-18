@@ -8,6 +8,7 @@ from components.nabi_design_system import (
     render_section_title,
     render_status_badge,
 )
+from services.portfolio_allocation_intelligence import build_allocation_intelligence
 from services.portfolio_decision_intelligence import (
     DecisionAction,
     DecisionCategory,
@@ -70,12 +71,19 @@ LIMITATION_COPY = {
     "CONTRIBUTION_EVIDENCE_INCOMPLETE": (
         "Katkı kanıtı eksik; alış işlemleri nakit yatırma sayılmaz."
     ),
+    "TARGET_NOT_CONFIGURED": "Kayıtlı hedef dağılım yok.",
+    "OBSERVABLE_ALLOCATION_ONLY": (
+        "Sapma yalnızca ölçülebilir bölüme göredir; eksik fiyatlı varlıklar sıfır sayılmaz."
+    ),
 }
 FX_DIRECTION = "Wealth → 2031 Hedef sekmesindeki planlama kuru alanını kullanın."
 CONTRIBUTION_DIRECTION = (
     "Katkı takibi için yatırma/çekme geçmişi gerekir; alış kayıtları yeterli değildir."
 )
 PLAN_DIRECTION = "Wealth → 2031 Hedef sekmesinden katkı planını gözden geçirin."
+ALLOCATION_DIRECTION = (
+    "Hedef Dağılım ve Sapma bölümünden hedefi kaydedin veya sapmayı gözden geçirin."
+)
 EVIDENCE_QUALITY_LABELS = {
     "COMPLETE": "tamam",
     "PARTIAL": "kısmi",
@@ -277,6 +285,40 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             limitation=limitation,
             direction=None,
         )
+    if action.id == "allocation_target_not_configured":
+        return PresentedAction(
+            id=action.id,
+            category_label=category,
+            priority_label=priority,
+            priority_tone=tone,
+            title="Hedef portföy dağılımını tanımla",
+            explanation=(
+                "Kayıtlı bir hedef dağılım yok. Sapma ve katkı yönlendirmesi "
+                "hedef tanımlanmadan hesaplanmaz."
+            ),
+            evidence_lines=(),
+            limitation=limitation,
+            direction=ALLOCATION_DIRECTION,
+        )
+    if action.id == "allocation_drift_review":
+        evidence = [
+            line
+            for line in action.evidence
+            if line not in {"MATERIAL_OBSERVABLE_DRIFT", "OBSERVABLE_ALLOCATION_ONLY"}
+        ]
+        if action.context.get("allocation_evidence_incomplete"):
+            evidence.append("Kanıt: ölçülebilir bölüm; kısmi değerleme")
+        return PresentedAction(
+            id=action.id,
+            category_label=category,
+            priority_label=priority,
+            priority_tone=tone,
+            title="Hedef dağılımdan sapmayı gözden geçir",
+            explanation=action.explanation,
+            evidence_lines=tuple(evidence),
+            limitation=limitation,
+            direction=ALLOCATION_DIRECTION,
+        )
     if action.id == "continue_observation":
         return PresentedAction(
             id=action.id,
@@ -413,6 +455,8 @@ def build_decision_for_ui(
     accounts: Sequence[Dict[str, Any]] = (),
     session_state: Optional[Any] = None,
     as_of=None,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
 ) -> PortfolioDecisionView:
     """Read-only wrapper around the Prompt 1 engine. No providers, no writes."""
     transactions: Iterable[Dict[str, Any]] = ()
@@ -424,6 +468,23 @@ def build_decision_for_ui(
         positions = wealth.list_positions()
         transactions = wealth.list_transactions(limit=2000)
         account_ids = [str(row.get("id") or "") for row in accounts]
+    allocation_signals = None
+    if policy_service is not None and portfolio_id:
+        try:
+            policy = policy_service.get_policy(portfolio_id)
+            plan = default_contribution_plan()
+            allocation = build_allocation_intelligence(
+                portfolio_view,
+                policy=policy,
+                contribution_amount=plan.starting_monthly,
+                contribution_currency=plan.currency,
+                conversion=_session_conversion(session_state),
+                assets=assets,
+                positions=positions,
+            )
+            allocation_signals = allocation.signals
+        except Exception:
+            allocation_signals = None
     return build_portfolio_decision(
         portfolio_view,
         as_of_date=as_of,
@@ -432,6 +493,7 @@ def build_decision_for_ui(
         account_ids=account_ids,
         positions=positions,
         assets=assets,
+        allocation_signals=allocation_signals,
     )
 
 
@@ -496,6 +558,8 @@ def render_portfolio_decision_center(
     decision: Optional[PortfolioDecisionView] = None,
     session_state: Optional[Any] = None,
     empty_portfolio: bool = False,
+    policy_service=None,
+    portfolio_id: Optional[str] = None,
 ) -> Optional[ActionCenterPresentation]:
     """Render engine outputs only. Never invent actions or trigger providers."""
     if empty_portfolio or (
@@ -515,6 +579,8 @@ def render_portfolio_decision_center(
                 wealth=wealth,
                 accounts=accounts,
                 session_state=session_state if session_state is not None else st.session_state,
+                policy_service=policy_service,
+                portfolio_id=portfolio_id,
             )
         presented = present_action_center(view)
         _render_presented(presented)

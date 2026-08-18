@@ -206,7 +206,7 @@ class ContributionRoutingResult:
 
 @dataclass(frozen=True)
 class AllocationDecisionSignals:
-    """Later consumption surface for Portfolio Decision Intelligence. Not wired yet."""
+    """Consumption surface for Portfolio Decision Intelligence."""
 
     target_status: AllocationPolicyStatus
     completeness: AllocationCompleteness
