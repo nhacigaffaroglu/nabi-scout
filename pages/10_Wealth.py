@@ -113,6 +113,10 @@ st.info(
 )
 if st.button("Portföy Zekâsı'na git", key="wealth_go_pi"):
     st.switch_page("pages/11_Portfolio_Intelligence.py")
+st.caption(
+    "Şimdi neye odaklanmalıyım? → **Portföy Zekâsı** eylem merkezi. "
+    "Bu sayfada tam eylem merkezi tekrarlanmaz."
+)
 st.divider()
 
 user_id = get_current_user_id(client)

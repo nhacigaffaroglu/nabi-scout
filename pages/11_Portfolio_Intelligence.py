@@ -1,6 +1,7 @@
 import streamlit as st
 
 from components.portfolio_ai_adviser_ui import render_portfolio_ai_adviser_section
+from components.portfolio_decision_center_ui import render_portfolio_decision_center
 from components.portfolio_advanced_ui import (
     render_cash_flow_section,
     render_change_section,
@@ -142,6 +143,11 @@ render_portfolio_executive_hero(
 )
 st.caption(
     "2031 servet hedefi ve katkı planı **Wealth → 2031 Hedef** sekmesindedir."
+)
+render_portfolio_decision_center(
+    portfolio_view=base_view,
+    wealth=wealth,
+    accounts=accounts,
 )
 
 render_portfolio_management_expander(wealth, portfolio, accounts)
