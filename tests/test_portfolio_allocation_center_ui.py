@@ -445,6 +445,14 @@ class SafetyTests(unittest.TestCase):
             def selectbox(self, *a, **k):
                 return "USD"
 
+            def radio(self, *a, **k):
+                options = k.get("options") or (a[1] if len(a) > 1 else ["ASSET_CLASS"])
+                key = k.get("key")
+                state = getattr(self, "session_state", None)
+                if isinstance(state, dict) and key in state:
+                    return state[key]
+                return options[0]
+
             def altair_chart(self, *a, **k):
                 return None
 

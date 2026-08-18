@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -42,6 +42,9 @@ US_MARKET_ALIASES = frozenset({"US", "USA", "ABD"})
 TR_MARKET_ALIASES = frozenset({"TR", "BIST", "TURKEY", "TURKIYE", "TÜRKİYE"})
 ASSET_CLASS_KEYS = frozenset({"equity", "etf", "sukuk", "cash", "other"})
 MARKET_KEYS = frozenset({"us", "tr", "other", "unknown"})
+ECONOMIC_EXPOSURE_KEYS = frozenset(
+    {"equity", "fixed_income", "sukuk", "real_estate", "cash", "commodity", "other"}
+)
 CLASS_MAP = {
     ASSET_CLASS_EQUITY: "equity",
     ASSET_CLASS_ETF: "etf",
@@ -54,6 +57,7 @@ CLASS_MAP = {
 class AllocationDimension(str, Enum):
     ASSET_CLASS = "ASSET_CLASS"
     MARKET = "MARKET"
+    ECONOMIC_EXPOSURE = "ECONOMIC_EXPOSURE"
 
 
 class AllocationCompleteness(str, Enum):
@@ -107,7 +111,7 @@ class AllocationTarget:
         key = str(self.bucket_id or "").strip().lower()
         if not key:
             raise WealthValidationError("Hedef kova kimliği gerekli.")
-        allowed = ASSET_CLASS_KEYS if self.dimension == AllocationDimension.ASSET_CLASS else MARKET_KEYS
+        allowed = _allowed_target_keys(self.dimension)
         if key not in allowed:
             raise WealthValidationError(f"Geçersiz hedef kova: {self.bucket_id}")
         weight = float(self.target_weight_pct)
@@ -215,6 +219,7 @@ class AllocationDecisionSignals:
     contribution_routing_available: bool
     best_routing_bucket_id: Optional[str]
     limitations: Tuple[str, ...]
+    unknown_exposure_symbols: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,6 +237,7 @@ class AllocationIntelligenceView:
     limitations: Tuple[str, ...]
     generated_from: Tuple[str, ...]
     signals: AllocationDecisionSignals
+    unknown_exposure_symbols: Tuple[str, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -249,6 +255,16 @@ def _round_weight(value: Optional[float]) -> Optional[float]:
     if value is None:
         return None
     return round(float(value), WEIGHT_QUANT)
+
+
+def _allowed_target_keys(dimension: AllocationDimension) -> frozenset:
+    if dimension == AllocationDimension.ASSET_CLASS:
+        return ASSET_CLASS_KEYS
+    if dimension == AllocationDimension.MARKET:
+        return MARKET_KEYS
+    if dimension == AllocationDimension.ECONOMIC_EXPOSURE:
+        return ECONOMIC_EXPOSURE_KEYS
+    raise WealthValidationError(f"Geçersiz hedef boyutu: {dimension}")
 
 
 def policy_is_configured(policy: Optional[AllocationPolicy]) -> bool:
@@ -393,6 +409,9 @@ def _bucket_label(dimension: AllocationDimension, bucket_id: str) -> str:
         "us": "US",
         "tr": "TR",
         "unknown": "Unknown",
+        "fixed_income": "Fixed income",
+        "real_estate": "Real estate",
+        "commodity": "Commodity",
     }
     if dimension == AllocationDimension.MARKET and bucket_id == "other":
         return "Other market"
@@ -655,10 +674,14 @@ def allocation_decision_signals(view: AllocationIntelligenceView) -> AllocationD
         target_status=view.target_policy_status,
         completeness=view.completeness,
         material_drift=material,
-        allocation_evidence_incomplete=view.completeness != AllocationCompleteness.COMPLETE_ALLOCATION,
+        allocation_evidence_incomplete=(
+            view.completeness != AllocationCompleteness.COMPLETE_ALLOCATION
+            or "EXPOSURE_CLASSIFICATION_INCOMPLETE" in view.limitations
+        ),
         contribution_routing_available=routing_available,
         best_routing_bucket_id=best,
         limitations=view.limitations,
+        unknown_exposure_symbols=view.unknown_exposure_symbols,
     )
 
 
@@ -671,6 +694,7 @@ def build_allocation_intelligence(
     conversion: Optional[ConversionAssumption] = None,
     assets: Optional[Sequence[dict]] = None,
     positions: Optional[Sequence[dict]] = None,
+    exposure_buckets: Optional[Sequence[AllocationBucket]] = None,
 ) -> AllocationIntelligenceView:
     """Deterministic observable allocation, explicit-target drift, contribution-only routing."""
     if policy is not None:
@@ -760,23 +784,69 @@ def build_allocation_intelligence(
             base_currency=portfolio_view.base_currency,
             conversion=conversion,
         )
-        for dimension in (AllocationDimension.ASSET_CLASS, AllocationDimension.MARKET):
+        for dimension in (
+            AllocationDimension.ASSET_CLASS,
+            AllocationDimension.MARKET,
+            AllocationDimension.ECONOMIC_EXPOSURE,
+        ):
             targets = by_dimension.get(dimension) or []
             if not targets:
                 continue
-            buckets = (
-                asset_class_buckets
-                if dimension == AllocationDimension.ASSET_CLASS
-                else market_buckets
-            )
-            drift_rows.extend(
-                _compute_drift(
-                    buckets,
-                    targets,
-                    tolerance=tolerance,
-                    valuation_complete=current.valuation_complete,
+            unknown_priced = False
+            extra_limits: Tuple[str, ...] = ()
+            if dimension == AllocationDimension.ASSET_CLASS:
+                buckets = asset_class_buckets
+                complete = current.valuation_complete
+            elif dimension == AllocationDimension.MARKET:
+                buckets = market_buckets
+                complete = current.valuation_complete
+            else:
+                buckets = tuple(exposure_buckets or ())
+                if not buckets:
+                    continue
+                unknown = next((row for row in buckets if row.bucket_id == "unknown"), None)
+                unknown_priced = bool(
+                    unknown is not None
+                    and unknown.symbols
+                    and (unknown.observable_weight_pct or 0.0) > 0
                 )
+                complete = current.valuation_complete and not unknown_priced
+                if unknown_priced:
+                    extra_limits = ("EXPOSURE_CLASSIFICATION_INCOMPLETE",)
+            computed = _compute_drift(
+                buckets,
+                targets,
+                tolerance=tolerance,
+                valuation_complete=complete,
             )
+            if dimension == AllocationDimension.ECONOMIC_EXPOSURE and unknown_priced:
+                safe: list[DriftResult] = []
+                for row in computed:
+                    if row.status in {DriftStatus.UNDERWEIGHT, DriftStatus.ON_TARGET}:
+                        safe.append(
+                            replace(
+                                row,
+                                status=DriftStatus.INDETERMINATE,
+                                limitations=tuple(
+                                    dict.fromkeys(
+                                        (*row.limitations, "EXPOSURE_CLASSIFICATION_INCOMPLETE")
+                                    )
+                                ),
+                            )
+                        )
+                    else:
+                        safe.append(
+                            replace(
+                                row,
+                                limitations=tuple(
+                                    dict.fromkeys(
+                                        (*row.limitations, "EXPOSURE_CLASSIFICATION_INCOMPLETE")
+                                    )
+                                ),
+                            )
+                        )
+                computed = tuple(safe)
+            drift_rows.extend(computed)
             if contribution_amount is None:
                 routing_rows.append(
                     ContributionRoutingResult(
@@ -804,16 +874,24 @@ def build_allocation_intelligence(
                     )
                 )
             else:
-                routing_rows.append(
-                    _route_dimension(
-                        buckets,
-                        targets,
-                        contribution=float(comparable or 0.0),
-                        observable_total=observable_total,
-                        valuation_complete=current.valuation_complete,
-                        extra_limitations=fx_notes,
-                    )
+                routed = _route_dimension(
+                    buckets,
+                    targets,
+                    contribution=float(comparable or 0.0),
+                    observable_total=observable_total,
+                    valuation_complete=complete,
+                    extra_limitations=tuple(dict.fromkeys((*fx_notes, *extra_limits))),
                 )
+                if unknown_priced and routed.status == RoutingStatus.AVAILABLE:
+                    routed = replace(
+                        routed,
+                        status=RoutingStatus.INDETERMINATE,
+                        best_bucket_id=None,
+                        after_drift_score=None,
+                        improvement=None,
+                        evidence_quality=RoutingEvidenceQuality.PARTIAL,
+                    )
+                routing_rows.append(routed)
         drift = tuple(drift_rows)
         routing = tuple(routing_rows)
     else:
@@ -835,14 +913,24 @@ def build_allocation_intelligence(
         "wealth_asset_metadata",
         "ALLOCATION_DRIFT_TOLERANCE_PCT",
     )
+    unknown_exposure_symbols: Tuple[str, ...] = ()
+    if exposure_buckets:
+        unknown_bucket = next((row for row in exposure_buckets if row.bucket_id == "unknown"), None)
+        if unknown_bucket and unknown_bucket.symbols:
+            unknown_exposure_symbols = unknown_bucket.symbols
+            if (unknown_bucket.observable_weight_pct or 0.0) > 0:
+                limitations.append("EXPOSURE_CLASSIFICATION_INCOMPLETE")
     notes = tuple(dict.fromkeys(limitations))
+    exposure_incomplete = "EXPOSURE_CLASSIFICATION_INCOMPLETE" in notes
     signals = AllocationDecisionSignals(
         target_status=status,
         completeness=completeness,
         material_drift=any(
             row.status in {DriftStatus.OVERWEIGHT, DriftStatus.UNDERWEIGHT} for row in drift
         ),
-        allocation_evidence_incomplete=completeness != AllocationCompleteness.COMPLETE_ALLOCATION,
+        allocation_evidence_incomplete=(
+            completeness != AllocationCompleteness.COMPLETE_ALLOCATION or exposure_incomplete
+        ),
         contribution_routing_available=any(
             row.status == RoutingStatus.AVAILABLE for row in routing
         ),
@@ -851,6 +939,7 @@ def build_allocation_intelligence(
             None,
         ),
         limitations=notes,
+        unknown_exposure_symbols=unknown_exposure_symbols,
     )
     return AllocationIntelligenceView(
         completeness=completeness,
@@ -866,4 +955,5 @@ def build_allocation_intelligence(
         limitations=notes,
         generated_from=generated_from,
         signals=signals,
+        unknown_exposure_symbols=unknown_exposure_symbols,
     )

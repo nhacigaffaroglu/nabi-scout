@@ -203,12 +203,81 @@ class MigrationContractTests(TestCase):
         self.assertNotIn("routing jsonb", lowered)
 
 
+class EconomicExposureDimensionMigrationTests(TestCase):
+    def test_additive_check_constraint_migration(self) -> None:
+        sql = Path("database/migration_portfolio_allocation_policies_economic_exposure.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PRE-DEPLOY MIGRATION REQUIRED", sql)
+        self.assertIn("drop constraint if exists portfolio_allocation_policies_dimension_check", sql)
+        self.assertIn(
+            "check (dimension in ('ASSET_CLASS', 'MARKET', 'ECONOMIC_EXPOSURE'))",
+            sql,
+        )
+        self.assertNotIn("create table", sql.lower())
+        self.assertNotIn("drop table", sql.lower())
+        self.assertNotIn("truncate", sql.lower())
+        original = MIGRATION.read_text(encoding="utf-8")
+        self.assertNotIn("ECONOMIC_EXPOSURE", original)
+
+
 class RepositoryServiceTests(TestCase):
     def test_no_row_means_not_configured(self) -> None:
         service = _service(FakeAllocationClient())
         self.assertIsNone(service.get_policy(PF_A))
         view = build_allocation_intelligence(_complete_usd_view(), policy=service.get_policy(PF_A))
         self.assertEqual(view.target_policy_status, AllocationPolicyStatus.TARGET_NOT_CONFIGURED)
+
+    def test_economic_exposure_dimension_accepted_and_unknown_rejected(self) -> None:
+        client = FakeAllocationClient()
+        service = _service(client)
+        policy = AllocationPolicy(
+            targets=(
+                AllocationTarget("equity", AllocationDimension.ECONOMIC_EXPOSURE, 70),
+                AllocationTarget("sukuk", AllocationDimension.ECONOMIC_EXPOSURE, 30),
+            ),
+            provenance=AllocationProvenance.USER_DEFINED,
+        )
+        payload = policy_record_payload(policy)
+        self.assertEqual(payload["dimension"], "ECONOMIC_EXPOSURE")
+        saved = service.save_policy(PF_A, policy)
+        self.assertEqual(saved.targets[0].dimension, AllocationDimension.ECONOMIC_EXPOSURE)
+        with self.assertRaises(WealthValidationError):
+            AllocationTarget("unknown", AllocationDimension.ECONOMIC_EXPOSURE, 100).validate()
+        invalid_total = AllocationPolicy(
+            targets=(
+                AllocationTarget("equity", AllocationDimension.ECONOMIC_EXPOSURE, 70),
+                AllocationTarget("cash", AllocationDimension.ECONOMIC_EXPOSURE, 20),
+            ),
+            provenance=AllocationProvenance.USER_DEFINED,
+        )
+        with self.assertRaises(WealthValidationError):
+            service.save_policy(PF_B, invalid_total)
+        self.assertEqual(len(client.rows), 1)
+
+    def test_growth_economic_exposure_round_trips(self) -> None:
+        from components.portfolio_economic_exposure_ui import (
+            GROWTH_ECONOMIC_EXPOSURE_WEIGHTS,
+            growth_economic_exposure_policy,
+            hydrate_economic_exposure_from_policy,
+            weights_from_exposure_policy,
+        )
+
+        client = FakeAllocationClient()
+        service = _service(client)
+        saved = service.save_policy(PF_A, growth_economic_exposure_policy())
+        loaded = service.get_policy(PF_A)
+        self.assertEqual(loaded, saved)
+        self.assertEqual(policy_record_payload(loaded)["dimension"], "ECONOMIC_EXPOSURE")
+        self.assertEqual(loaded.provenance, AllocationProvenance.USER_DEFINED)
+        weights = weights_from_exposure_policy(loaded)
+        self.assertEqual(weights, GROWTH_ECONOMIC_EXPOSURE_WEIGHTS)
+        session: Dict[str, Any] = {}
+        hydrate_allocation_session(session, policy_service=service, portfolio_id=PF_A)
+        self.assertNotIn(APPLIED_WEIGHTS_KEY, session)
+        self.assertFalse(session.get(PERSISTED_FLAG_KEY))
+        hydrate_economic_exposure_from_policy(session, loaded)
+        self.assertEqual(session["portfolio_economic_exposure_applied_weights"]["equity"], 75.0)
 
     def test_valid_user_defined_policy_saves_and_round_trips(self) -> None:
         client = FakeAllocationClient()
@@ -450,6 +519,10 @@ class UiPersistenceTests(TestCase):
 
             def selectbox(self, *a, **k):
                 return "USD"
+
+            def radio(self, *a, **k):
+                options = k.get("options") or (a[1] if len(a) > 1 else ["ASSET_CLASS"])
+                return options[0]
 
             def altair_chart(self, *a, **k):
                 return None

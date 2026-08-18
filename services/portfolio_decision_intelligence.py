@@ -327,7 +327,37 @@ ALLOCATION_BUCKET_REGION_LABELS = {
     "other": "Diğer",
     "us": "ABD",
     "tr": "TR",
+    "fixed_income": "Sabit Getirili",
+    "real_estate": "Gayrimenkul",
+    "commodity": "Emtia",
 }
+
+
+def _rule_economic_exposure_incomplete(
+    signals: Optional[AllocationDecisionSignals],
+) -> Optional[DecisionAction]:
+    if signals is None:
+        return None
+    if "EXPOSURE_CLASSIFICATION_INCOMPLETE" not in signals.limitations:
+        return None
+    symbols = tuple(str(item).strip().upper() for item in signals.unknown_exposure_symbols if str(item).strip())
+    evidence = ["EXPOSURE_CLASSIFICATION_INCOMPLETE"]
+    if symbols:
+        evidence.append("Sınıflandırılamayan: " + ", ".join(symbols))
+    return DecisionAction(
+        id="economic_exposure_incomplete",
+        category=DecisionCategory.DATA,
+        priority=DecisionPriority.MEDIUM,
+        title="Ekonomik maruziyet sınıflandırmasını tamamla",
+        explanation=(
+            "Bazı araçların ekonomik maruziyeti sınıflandırılamadı. "
+            "Bu, isim veya ticker’dan bir kova iddia etmez."
+        ),
+        evidence=tuple(evidence),
+        status=DecisionActionStatus.OPEN,
+        limitations=("EXPOSURE_CLASSIFICATION_INCOMPLETE",),
+        context={"unknown_exposure_symbols": list(symbols)},
+    )
 
 
 def _rule_allocation_target_missing(
@@ -461,6 +491,7 @@ def build_portfolio_decision(
         lambda: _rule_partial_valuation(current),
         lambda: _rule_planning_fx(plan, goal, conversion),
         lambda: _rule_contribution_evidence(contrib),
+        lambda: _rule_economic_exposure_incomplete(allocation_signals),
         lambda: _rule_goal_plan(
             contrib, fx_missing=fx_missing, valuation_complete=current.valuation_complete
         ),

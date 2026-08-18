@@ -232,6 +232,13 @@ def hydrate_allocation_session(
     if policy is None:
         session_state[PERSISTED_FLAG_KEY] = False
         return
+    dimensions = {target.dimension for target in policy.targets}
+    if AllocationDimension.ECONOMIC_EXPOSURE in dimensions:
+        from components.portfolio_economic_exposure_ui import hydrate_economic_exposure_from_policy
+
+        hydrate_economic_exposure_from_policy(session_state, policy)
+        session_state[PERSISTED_FLAG_KEY] = False
+        return
     weights = weights_from_policy(policy)
     session_state[APPLIED_WEIGHTS_KEY] = dict(weights)
     for bucket, value in weights.items():
@@ -676,11 +683,12 @@ def _render_presented(
         )
         if row.limitation:
             st.caption(row.limitation)
-    chart = build_target_vs_observable_chart(presented.chart_records)
-    if chart is not None and presented.configured:
-        st.altair_chart(chart, use_container_width=True)
-        if any(row.indeterminate for row in presented.rows):
-            st.caption("Belirsiz kovalar için kesin hedef üstü/altı sonucu gösterilmez.")
+    if presented.configured:
+        chart = build_target_vs_observable_chart(presented.chart_records)
+        if chart is not None:
+            st.altair_chart(chart, use_container_width=True)
+            if any(row.indeterminate for row in presented.rows):
+                st.caption("Belirsiz kovalar için kesin hedef üstü/altı sonucu gösterilmez.")
     render_section_title(presented.routing_heading)
     st.caption(presented.simulation_note)
     amount, currency = contribution_defaults(session_state)
@@ -738,6 +746,33 @@ def render_portfolio_allocation_center(
             policy_service=policy_service,
             portfolio_id=portfolio_id,
         )
+        from components.portfolio_economic_exposure_ui import (
+            DIMENSION_LABELS,
+            DIMENSION_VIEW_KEY,
+            VIEW_ASSET_CLASS,
+            VIEW_ECONOMIC_EXPOSURE,
+            render_economic_exposure_center,
+        )
+
+        if DIMENSION_VIEW_KEY not in state:
+            state[DIMENSION_VIEW_KEY] = VIEW_ASSET_CLASS
+        selected = st.radio(
+            "Dağılım görünümü",
+            options=[VIEW_ASSET_CLASS, VIEW_ECONOMIC_EXPOSURE],
+            format_func=lambda value: DIMENSION_LABELS[value],
+            key=DIMENSION_VIEW_KEY,
+            horizontal=True,
+        )
+        if selected == VIEW_ECONOMIC_EXPOSURE:
+            if portfolio_view is None:
+                return None
+            return render_economic_exposure_center(
+                portfolio_view=portfolio_view,
+                wealth=wealth,
+                session_state=state,
+                policy_service=policy_service,
+                portfolio_id=portfolio_id,
+            )
         view = allocation
         if view is None:
             if portfolio_view is None:

@@ -481,7 +481,12 @@ def _signals(
     material_drift: bool = False,
     routing_bucket: str | None = None,
     incomplete: bool = True,
+    limitations: tuple[str, ...] | None = None,
+    unknown_exposure_symbols: tuple[str, ...] = (),
 ) -> AllocationDecisionSignals:
+    notes = ("PARTIAL_VALUATION",) if incomplete else ()
+    if limitations is not None:
+        notes = limitations
     return AllocationDecisionSignals(
         target_status=(
             AllocationPolicyStatus.CONFIGURED
@@ -497,7 +502,8 @@ def _signals(
         allocation_evidence_incomplete=incomplete,
         contribution_routing_available=bool(routing_bucket),
         best_routing_bucket_id=routing_bucket,
-        limitations=("PARTIAL_VALUATION",) if incomplete else (),
+        limitations=notes,
+        unknown_exposure_symbols=unknown_exposure_symbols,
     )
 
 
@@ -549,6 +555,30 @@ class AllocationSignalIntegrationTests(unittest.TestCase):
         self.assertNotIn("allocation_drift_review", _ids(view))
         self.assertNotIn("allocation_target_not_configured", _ids(view))
         self.assertEqual(view.primary_action.id, "incomplete_valuation")
+
+    def test_configured_target_removes_missing_action_and_adds_exposure_data(self) -> None:
+        view = build_portfolio_decision(
+            _partial_bist_view(),
+            as_of_date=AS_OF,
+            allocation_signals=_signals(
+                configured=True,
+                material_drift=True,
+                limitations=("PARTIAL_VALUATION", "EXPOSURE_CLASSIFICATION_INCOMPLETE"),
+                unknown_exposure_symbols=("SPUS", "SPSK", "SPRE", "SPWO"),
+            ),
+        )
+        self.assertNotIn("allocation_target_not_configured", _ids(view))
+        action = next(row for row in view.actions if row.id == "economic_exposure_incomplete")
+        self.assertEqual(action.category, DecisionCategory.DATA)
+        self.assertEqual(action.priority, DecisionPriority.MEDIUM)
+        self.assertEqual(action.title, "Ekonomik maruziyet sınıflandırmasını tamamla")
+        self.assertIn("SPUS", " ".join(action.evidence))
+        self.assertNotIn("equity", " ".join(action.evidence).lower())
+        self.assertEqual(view.primary_action.id, "incomplete_valuation")
+        self.assertEqual(view.primary_action.priority, DecisionPriority.HIGH)
+        combined = _text(view)
+        self.assertNotIn("buy spus", combined)
+        self.assertNotIn("sell aapl", combined)
 
 
 class SafetyTests(unittest.TestCase):

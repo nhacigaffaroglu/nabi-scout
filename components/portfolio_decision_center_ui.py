@@ -75,6 +75,9 @@ LIMITATION_COPY = {
     "OBSERVABLE_ALLOCATION_ONLY": (
         "Sapma yalnızca ölçülebilir bölüme göredir; eksik fiyatlı varlıklar sıfır sayılmaz."
     ),
+    "EXPOSURE_CLASSIFICATION_INCOMPLETE": (
+        "Ekonomik maruziyet sınıflandırması eksik olduğu için bazı sapma sonuçları belirsiz olabilir."
+    ),
 }
 FX_DIRECTION = "Wealth → 2031 Hedef sekmesindeki planlama kuru alanını kullanın."
 CONTRIBUTION_DIRECTION = (
@@ -300,6 +303,26 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             limitation=limitation,
             direction=ALLOCATION_DIRECTION,
         )
+    if action.id == "economic_exposure_incomplete":
+        raw = action.context.get("unknown_exposure_symbols")
+        symbols = tuple(str(item) for item in raw) if isinstance(raw, (list, tuple)) else ()
+        evidence = []
+        if symbols:
+            evidence.append("Sınıflandırılamayan: " + ", ".join(symbols))
+        return PresentedAction(
+            id=action.id,
+            category_label=category,
+            priority_label=priority,
+            priority_tone=tone,
+            title="Ekonomik maruziyet sınıflandırmasını tamamla",
+            explanation=(
+                "Bazı araçların ekonomik maruziyeti sınıflandırılamadı. "
+                "Bu, isim veya ticker’dan bir kova iddia etmez."
+            ),
+            evidence_lines=tuple(evidence),
+            limitation=limitation,
+            direction=ALLOCATION_DIRECTION,
+        )
     if action.id == "allocation_drift_review":
         evidence = [
             line
@@ -473,6 +496,21 @@ def build_decision_for_ui(
         try:
             policy = policy_service.get_policy(portfolio_id)
             plan = default_contribution_plan()
+            exposure_buckets = None
+            if policy is not None and any(
+                target.dimension.value == "ECONOMIC_EXPOSURE" for target in policy.targets
+            ):
+                from components.portfolio_economic_exposure_ui import (
+                    allocation_buckets_from_exposure,
+                    build_economic_exposure_for_ui,
+                )
+
+                exposure = build_economic_exposure_for_ui(
+                    portfolio_view,
+                    wealth=wealth,
+                    session_state=session_state,
+                )
+                exposure_buckets = allocation_buckets_from_exposure(exposure)
             allocation = build_allocation_intelligence(
                 portfolio_view,
                 policy=policy,
@@ -481,6 +519,7 @@ def build_decision_for_ui(
                 conversion=_session_conversion(session_state),
                 assets=assets,
                 positions=positions,
+                exposure_buckets=exposure_buckets,
             )
             allocation_signals = allocation.signals
         except Exception:
