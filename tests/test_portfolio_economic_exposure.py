@@ -210,6 +210,68 @@ class WeightAndAggregationTests(unittest.TestCase):
         self.assertAlmostEqual(buckets["unknown"], 40.0)
         self.assertIn("EXPOSURE_CLASSIFICATION_INCOMPLETE", view.limitations)
 
+    def test_lookthrough_does_not_normalize_incomplete_coverage(self) -> None:
+        snapshot = _snapshot(
+            "SPUS",
+            (
+                FundHoldingRow("AAPL", "Apple", 90.0, "equity", None, None),
+                FundHoldingRow("CASH", "Cash", 5.0, "cash", None, None),
+            ),
+            coverage=95.0,
+        )
+        view = classify_instrument_exposure(_etf("SPUS"), fund_snapshots={"SPUS": snapshot})
+        buckets = {row.exposure_bucket: row.weight_pct for row in view.economic_exposures}
+        self.assertAlmostEqual(buckets["equity"], 90.0)
+        self.assertAlmostEqual(buckets["cash"], 5.0)
+        self.assertAlmostEqual(buckets["unknown"], 5.0)
+        self.assertNotIn("94.74", str(buckets["equity"]))
+
+    def test_lookthrough_cash_fixed_income_sukuk_and_explicit_reit(self) -> None:
+        snapshot = _snapshot(
+            "MIX",
+            (
+                FundHoldingRow("AAPL", "Apple", 40.0, "equity", None, None),
+                FundHoldingRow("CASH", "Cash", 10.0, "cash", None, None),
+                FundHoldingRow("BOND1", "Bond", 20.0, "bond", None, None),
+                FundHoldingRow("SUK1", "Sukuk", 15.0, "sukuk", None, None),
+                FundHoldingRow("O", "Realty Income REIT", 15.0, "reit", None, None),
+            ),
+        )
+        view = classify_instrument_exposure(_etf("MIX"), fund_snapshots={"MIX": snapshot})
+        buckets = {row.exposure_bucket: row.weight_pct for row in view.economic_exposures}
+        self.assertAlmostEqual(buckets["equity"], 40.0)
+        self.assertAlmostEqual(buckets["cash"], 10.0)
+        self.assertAlmostEqual(buckets["fixed_income"], 20.0)
+        self.assertAlmostEqual(buckets["sukuk"], 15.0)
+        self.assertAlmostEqual(buckets["real_estate"], 15.0)
+        self.assertNotEqual(buckets["sukuk"], buckets["fixed_income"])
+
+    def test_reit_name_without_explicit_type_is_not_real_estate(self) -> None:
+        snapshot = _snapshot(
+            "SPRE",
+            (
+                FundHoldingRow("O", "Realty Income REIT", 80.0, None, None, None),
+            ),
+            coverage=80.0,
+        )
+        view = classify_instrument_exposure(_etf("SPRE"), fund_snapshots={"SPRE": snapshot})
+        buckets = {row.exposure_bucket: row.weight_pct for row in view.economic_exposures}
+        self.assertNotIn("real_estate", buckets)
+        self.assertIn("unknown", buckets)
+
+    def test_unknown_holding_ticker_without_type_is_not_guessed(self) -> None:
+        snapshot = _snapshot(
+            "SPSK",
+            (
+                FundHoldingRow("UNKNOWNBOND", "SP Funds Sukuk Holding", 50.0, None, None, None),
+            ),
+            coverage=50.0,
+        )
+        view = classify_instrument_exposure(_etf("SPSK"), fund_snapshots={"SPSK": snapshot})
+        buckets = {row.exposure_bucket: row.weight_pct for row in view.economic_exposures}
+        self.assertEqual(set(buckets), {"unknown"})
+        self.assertAlmostEqual(buckets["unknown"], 100.0)
+
     def test_unknown_market_value_preserved(self) -> None:
         view = build_economic_exposure(_view_from_rows([_etf("SPWO", 25), _equity("AAPL", 75)]))
         unknown = next(row for row in view.buckets if row.bucket_id == "unknown")
