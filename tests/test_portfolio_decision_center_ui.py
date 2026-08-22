@@ -372,7 +372,7 @@ class PresentationTests(unittest.TestCase):
         )
         presented = present_action_center(decision)
         self.assertTrue(presented.healthy)
-        self.assertIn("öne çıkan bir veri veya planlama açığı görünmüyor", presented.healthy_message or "")
+        self.assertIn("müdahale gerektiren kritik bir konu görünmüyor", presented.healthy_message or "")
         self.assertEqual(presented.visible_actions[0].id, "continue_observation")
         self.assertEqual(presented.visible_actions[0].title, "İzlemeye devam et")
         self.assertEqual(presented.visible_actions[0].category_label, "İzleme")
@@ -649,7 +649,7 @@ class RenderSafetyTests(unittest.TestCase):
         self.assertIsNotNone(presented)
         self.assertIn(HEADING, blob)
         self.assertIn("Portföy değerlemesini tamamla", blob)
-        self.assertIn("Bu öneriler neye dayanıyor?", blob)
+        self.assertIn("Detaylar", blob)
         self.assertIn("BIMAS", blob)
 
     def test_no_provider_or_write_path(self) -> None:

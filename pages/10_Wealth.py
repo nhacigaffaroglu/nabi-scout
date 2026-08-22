@@ -66,8 +66,11 @@ from services.wealth_timeline_service import WealthTimelineService
 
 
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
+from components.wealth_brief_ui import render_wealth_brief
 from components.wealth_goal_center_ui import render_wealth_goal_center
 from components.wealth_history_ui import render_wealth_history
+from components.wealth_institution_center_ui import render_institution_center
+from components.wealth_purification_zakat_ui import render_purification_zakat_center
 from services.wealth_external_cash_flow import contribution_reconciliations_for_wealth
 from services.wealth_history_service import build_wealth_history
 
@@ -109,8 +112,8 @@ def _render_allocation(title: str, slices, currency: str) -> None:
 client = prepare_protected_page("Wealth | NABI Scout", "💰")
 
 st.info(
-    "**Portföy analitiği** için **Portföy Zekâsı** sayfasını kullanın. "
-    "Bu sayfa Wealth Danışman (AI) modülünü içerir."
+    "Servet durumu **Özet** brief'inde. "
+    "Karar detayı ve portföy analitiği için **Portföy Zekâsı**."
 )
 if st.button("Portföy Zekâsı'na git", key="wealth_go_pi"):
     st.switch_page("pages/11_Portfolio_Intelligence.py")
@@ -245,9 +248,9 @@ def _render_adviser_response(response) -> None:
     )
 
 
-st.title("💰 Wealth Core")
+st.title("NABI Wealth")
 st.caption(
-    "Manuel portföy, hesap, varlık ve işlem kaydı. "
+    "Kayıt, hedef, performans ve karar özeti. "
     "Pozisyonlar işlem defterinden türetilir. "
     "Alış/satış tek taraflıdır; nakit bakiyesi otomatik güncellenmez."
 )
@@ -266,16 +269,18 @@ col6.metric("İşlem", summary.transaction_count)
 
 st.divider()
 
-tab_summary, tab_goal, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_history, tab_analysis, tab_adviser = st.tabs(
+tab_summary, tab_goal, tab_history, tab_institutions, tab_purification, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_analysis, tab_adviser = st.tabs(
     [
         "Özet",
         "2031 Hedef",
+        "Performans",
+        "Kurum Merkezi",
+        "Arındırma & Zekât",
         "Hesaplar",
         "Varlıklar",
         "İşlemler",
         "Pozisyonlar",
         "Borçlar",
-        "Geçmiş",
         "Analiz",
         "Danışman",
     ]
@@ -291,122 +296,136 @@ account_by_id = {row["id"]: row for row in accounts}
 asset_by_id = {row["id"]: row for row in assets}
 
 with tab_summary:
-    st.subheader("Portföy özeti")
-    st.write(
-        f"**{portfolio_view.portfolio_name}** "
-        f"({portfolio_view.base_currency})"
+    render_wealth_brief(
+        portfolio_view=portfolio_view,
+        wealth=wealth,
+        accounts=accounts,
     )
-
     if portfolio_view.total_position_count == 0 and not accounts and not liabilities:
         st.info("Henüz wealth kaydı yok. Hesap ve varlık ekleyerek başlayın.")
     else:
-        base_ccy = portfolio_view.base_currency
-        v1, v2, v3, v4 = st.columns(4)
-        partial = (
-            portfolio_view.unpriced_position_count > 0
-            or portfolio_view.foreign_currency_position_count > 0
-            or portfolio_view.priced_position_count < portfolio_view.total_position_count
-        )
-        if partial:
+        with st.expander("Portföy ayrıntıları", expanded=False):
+            st.write(
+                f"**{portfolio_view.portfolio_name}** "
+                f"({portfolio_view.base_currency})"
+            )
+            base_ccy = portfolio_view.base_currency
+            v1, v2, v3, v4 = st.columns(4)
+            partial = (
+                portfolio_view.unpriced_position_count > 0
+                or portfolio_view.foreign_currency_position_count > 0
+                or portfolio_view.priced_position_count < portfolio_view.total_position_count
+            )
+            if partial:
+                st.caption(
+                    f"Toplamlar yalnızca fiyatlı {base_ccy} pozisyonlarını kapsar; "
+                    "tam portföy değeri değildir."
+                )
+
+            v1.metric(
+                f"Piyasa değeri (fiyatlı {base_ccy})",
+                _format_money(portfolio_view.priced_total_market_value, base_ccy),
+            )
+            v2.metric(
+                f"Maliyet (fiyatlı {base_ccy})",
+                _format_money(portfolio_view.priced_total_cost_basis, base_ccy),
+            )
+            v3.metric(
+                f"Gerçekleşmemiş K/Z ({base_ccy})",
+                _format_money(portfolio_view.priced_total_unrealized_pl, base_ccy),
+            )
+            v4.metric(
+                "Nakit / Yatırım (fiyatlı)",
+                f"{portfolio_view.health.cash_pct:.1f}% / "
+                f"{portfolio_view.health.invested_pct:.1f}%",
+            )
+
+            if portfolio_view.mixed_currency_warning:
+                st.warning(
+                    f"{portfolio_view.foreign_currency_position_count} pozisyon "
+                    f"baz para birimi ({base_ccy}) dışında. "
+                    "FX dönüşümü yok; bu pozisyonlar toplam değere dahil değil."
+                )
+            if portfolio_view.unpriced_position_count:
+                st.warning(
+                    f"{portfolio_view.unpriced_position_count} pozisyon için güncel "
+                    "fiyat yok; toplamlardan hariç tutuldu."
+                )
+            if portfolio_view.valuation_errors:
+                with st.expander("Fiyat sağlayıcı uyarıları"):
+                    for msg in portfolio_view.valuation_errors:
+                        st.write(f"- {msg}")
+
+            st.markdown("**Sağlık göstergeleri**")
             st.caption(
-                f"Toplamlar yalnızca fiyatlı {base_ccy} pozisyonlarını kapsar; "
-                "tam portföy değeri değildir."
+                "Ağırlık ve yoğunluk: fiyatlı baz para birimi pozisyonları."
+            )
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric(
+                "En büyük ağırlık",
+                f"{portfolio_view.health.largest_position_weight_pct:.1f}%",
+            )
+            h2.metric(
+                "Top-3 yoğunluk",
+                f"{portfolio_view.health.top3_concentration_pct:.1f}%",
+            )
+            h3.metric(
+                "Varlık sınıfı yoğunluğu",
+                f"{portfolio_view.health.largest_asset_class_concentration_pct:.1f}%",
+            )
+            priced_any = portfolio_view.total_position_count - portfolio_view.unpriced_position_count
+            h4.metric(
+                "Fiyat kapsamı",
+                f"{portfolio_view.health.priced_position_coverage_pct:.0f}%",
+                delta=f"{priced_any}/{portfolio_view.total_position_count}",
+                delta_color="off",
             )
 
-        v1.metric(
-            f"Piyasa değeri (fiyatlı {base_ccy})",
-            _format_money(portfolio_view.priced_total_market_value, base_ccy),
-        )
-        v2.metric(
-            f"Maliyet (fiyatlı {base_ccy})",
-            _format_money(portfolio_view.priced_total_cost_basis, base_ccy),
-        )
-        v3.metric(
-            f"Gerçekleşmemiş K/Z ({base_ccy})",
-            _format_money(portfolio_view.priced_total_unrealized_pl, base_ccy),
-        )
-        v4.metric(
-            "Nakit / Yatırım (fiyatlı)",
-            f"{portfolio_view.health.cash_pct:.1f}% / "
-            f"{portfolio_view.health.invested_pct:.1f}%",
-        )
-
-        if portfolio_view.mixed_currency_warning:
-            st.warning(
-                f"{portfolio_view.foreign_currency_position_count} pozisyon "
-                f"baz para birimi ({base_ccy}) dışında. "
-                "FX dönüşümü yok; bu pozisyonlar toplam değere dahil değil."
+            _render_allocation(
+                f"Varlık sınıfı dağılımı (fiyatlı {base_ccy})",
+                portfolio_view.asset_class_allocation,
+                base_ccy,
             )
-        if portfolio_view.unpriced_position_count:
-            st.warning(
-                f"{portfolio_view.unpriced_position_count} pozisyon için güncel "
-                "fiyat yok; toplamlardan hariç tutuldu."
+            _render_allocation(
+                f"Hesap dağılımı (fiyatlı {base_ccy})",
+                portfolio_view.account_allocation,
+                base_ccy,
             )
-        if portfolio_view.valuation_errors:
-            with st.expander("Fiyat sağlayıcı uyarıları"):
-                for msg in portfolio_view.valuation_errors:
-                    st.write(f"- {msg}")
 
-        st.markdown("**Sağlık göstergeleri**")
-        st.caption(
-            "Ağırlık ve yoğunluk: fiyatlı baz para birimi pozisyonları."
-        )
-        h1, h2, h3, h4, h5 = st.columns(5)
-        h1.metric(
-            "En büyük ağırlık",
-            f"{portfolio_view.health.largest_position_weight_pct:.1f}%",
-        )
-        h2.metric(
-            "Top-3 yoğunluk",
-            f"{portfolio_view.health.top3_concentration_pct:.1f}%",
-        )
-        h3.metric(
-            "Varlık sınıfı yoğunluğu",
-            f"{portfolio_view.health.largest_asset_class_concentration_pct:.1f}%",
-        )
-        priced_any = portfolio_view.total_position_count - portfolio_view.unpriced_position_count
-        h4.metric(
-            "Fiyat kapsamı (pozisyon)",
-            f"{portfolio_view.health.priced_position_coverage_pct:.0f}%",
-            delta=f"{priced_any}/{portfolio_view.total_position_count}",
-            delta_color="off",
-        )
-        h5.metric(
-            "Fiyat çağrısı",
-            f"{portfolio_view.unique_price_symbols_fetched}",
-        )
-
-        _render_allocation(
-            f"Varlık sınıfı dağılımı (fiyatlı {base_ccy})",
-            portfolio_view.asset_class_allocation,
-            base_ccy,
-        )
-        _render_allocation(
-            f"Hesap dağılımı (fiyatlı {base_ccy})",
-            portfolio_view.account_allocation,
-            base_ccy,
-        )
-
-        if accounts:
-            st.markdown("**Hesaplar**")
-            for row in accounts:
-                st.write(
-                    f"- {row.get('name')} · {row.get('account_type')} · "
-                    f"{row.get('currency')}"
-                )
-        if liabilities:
-            st.markdown("**Borçlar**")
-            for row in liabilities:
-                st.write(
-                    f"- {row.get('name')} · {row.get('liability_type')} · "
-                    f"{row.get('principal')} {row.get('currency')}"
-                )
+            if accounts:
+                st.markdown("**Hesaplar**")
+                for row in accounts:
+                    st.write(
+                        f"- {row.get('name')} · {row.get('account_type')} · "
+                        f"{row.get('currency')}"
+                    )
+            if liabilities:
+                st.markdown("**Borçlar**")
+                for row in liabilities:
+                    st.write(
+                        f"- {row.get('name')} · {row.get('liability_type')} · "
+                        f"{row.get('principal')} {row.get('currency')}"
+                    )
 
 with tab_goal:
     render_wealth_goal_center(
         portfolio_view=portfolio_view,
         wealth=wealth,
         accounts=accounts,
+    )
+
+with tab_institutions:
+    render_institution_center(
+        portfolio_view=portfolio_view,
+        accounts=accounts,
+    )
+
+with tab_purification:
+    render_purification_zakat_center(
+        portfolio_view=portfolio_view,
+        accounts=accounts,
+        assets=assets,
+        transactions=wealth.list_transactions(limit=2000),
     )
 
 with tab_accounts:
@@ -725,12 +744,6 @@ with tab_liabilities:
             )
 
 with tab_history:
-    st.subheader("Portföy geçmişi")
-    st.caption(
-        "Anlık görüntüler yalnızca açıkça kaydedildiğinde oluşturulur. "
-        "Performans, fiyatlı baz para birimi değerleri üzerinden hesaplanır."
-    )
-
     if st.button("Anlık görüntü kaydet", type="primary", key="wealth_save_snapshot"):
         try:
             saved = timeline.save_snapshot_from_view(portfolio, portfolio_view)
@@ -741,107 +754,117 @@ with tab_history:
             st.rerun()
         except Exception as exc:
             st.error(str(exc))
+    st.caption("Anlık görüntüler yalnızca açıkça kaydedildiğinde oluşturulur.")
 
     timeline_view = timeline.build_timeline_view(portfolio)
     performance_view = timeline.build_performance_view(portfolio)
+    history_txns = wealth.list_transactions(limit=2000)
+    history_account_ids = [str(row.get("id") or "") for row in accounts]
+    history_recons = contribution_reconciliations_for_wealth(
+        wealth, str(portfolio["id"])
+    )
     history_view = build_wealth_history(
         timeline_view.snapshots,
-        transactions=wealth.list_transactions(limit=2000),
-        account_ids=[str(row.get("id") or "") for row in accounts],
-        contribution_reconciliations=contribution_reconciliations_for_wealth(
-            wealth, str(portfolio["id"])
-        ),
+        transactions=history_txns,
+        account_ids=history_account_ids,
+        contribution_reconciliations=history_recons,
         portfolio_id=str(portfolio["id"]),
     )
-    render_wealth_history(history_view)
+    render_wealth_history(
+        history_view,
+        snapshots=timeline_view.snapshots,
+        transactions=history_txns,
+        account_ids=history_account_ids,
+        contribution_reconciliations=history_recons,
+        portfolio_id=str(portfolio["id"]),
+    )
 
-    if timeline_view.snapshots:
-        st.markdown("**Son görüntüler**")
-        for snap in timeline_view.snapshots[:10]:
-            partial_note = ""
-            if snap.unpriced_position_count or snap.mixed_currency_warning:
-                partial_note = " · kısmi"
+    with st.expander("Kayıt ve teknik geçmiş", expanded=False):
+        if timeline_view.snapshots:
+            st.markdown("**Son görüntüler**")
+            for snap in timeline_view.snapshots[:10]:
+                partial_note = ""
+                if snap.unpriced_position_count or snap.mixed_currency_warning:
+                    partial_note = " · kısmi"
+                st.write(
+                    f"- {format_date_dmy(snap.captured_at)} · "
+                    f"{_format_money(snap.priced_market_value, snap.base_currency)} · "
+                    f"kapsam {snap.priced_position_coverage_pct:.0f}%"
+                    f"{partial_note}"
+                )
+
+        linked = performance_view.linked_performance
+        if linked is not None:
+            st.markdown("**Zincirlenmiş dönem getirisi**")
+            st.caption(
+                "Fiyatlı baz para birimi portföyü; dış akışlar (yatırım/çekim) ayıklanmış "
+                "alt dönem getirilerinin Modified Dietz ile zincirlenmesi."
+            )
             st.write(
-                f"- {format_date_dmy(snap.captured_at)} · "
-                f"{_format_money(snap.priced_market_value, snap.base_currency)} · "
-                f"kapsam {snap.priced_position_coverage_pct:.0f}%"
-                f"{partial_note}"
+                f"{format_date_dmy(linked.period_start_at)} → {format_date_dmy(linked.period_end_at)}"
             )
-
-    linked = performance_view.linked_performance
-    if linked is not None:
-        st.divider()
-        st.markdown("**Zincirlenmiş dönem getirisi**")
-        st.caption(
-            "Fiyatlı baz para birimi portföyü; dış akışlar (yatırım/çekim) ayıklanmış "
-            "alt dönem getirilerinin Modified Dietz ile zincirlenmesi."
-        )
-        st.write(
-            f"{format_date_dmy(linked.period_start_at)} → {format_date_dmy(linked.period_end_at)}"
-        )
-        if linked.performance_comparable and linked.linked_return_pct is not None:
-            st.metric(
-                "Portföy dönem getirisi",
-                f"{linked.linked_return_pct:.2f}%",
-            )
-        else:
-            st.warning(
-                "Portföy dönem getirisi tam karşılaştırılabilir değil; "
-                "eksik veya kısmi veri nedeniyle yüzde gösterilmiyor."
-            )
-            for warning in linked.warnings:
-                st.write(f"- {warning}")
-
-    if len(timeline_view.snapshots) >= 2:
-        st.divider()
-        st.markdown("**Tarihsel karşılaştırma (portföy vs SPY)**")
-        st.caption(
-            "Normalleştirilmiş seriler ilk karşılaştırılabilir görüntüde 100'e "
-            "ölçeklenir. Yalnızca bilgilendirme amaçlı tarihsel karşılaştırmadır."
-        )
-        benchmark_service = _load_benchmark_service()
-        fetch_before = benchmark_service.fetch_count
-        benchmark_view = timeline.build_benchmark_comparison(
-            portfolio,
-            performance_view,
-            benchmark_service,
-        )
-        provider_calls = benchmark_service.fetch_count - fetch_before
-
-        if benchmark_view.performance_comparable:
-            comparison_df = build_benchmark_comparison_chart_frame(
-                benchmark_view.portfolio_normalized,
-            )
-            st.altair_chart(
-                build_benchmark_comparison_altair_chart(comparison_df),
-                use_container_width=True,
-            )
-
-            c1, c2, c3 = st.columns(3)
-            if benchmark_view.portfolio_return_pct is not None:
-                c1.metric(
-                    "Portföy getirisi",
-                    f"{benchmark_view.portfolio_return_pct:.2f}%",
+            if linked.performance_comparable and linked.linked_return_pct is not None:
+                st.metric(
+                    "Portföy dönem getirisi",
+                    f"{linked.linked_return_pct:.2f}%",
                 )
-            if benchmark_view.benchmark_return_pct is not None:
-                c2.metric(
-                    f"{benchmark_view.benchmark_symbol} getirisi",
-                    f"{benchmark_view.benchmark_return_pct:.2f}%",
+            else:
+                st.warning(
+                    "Portföy dönem getirisi tam karşılaştırılabilir değil; "
+                    "eksik veya kısmi veri nedeniyle yüzde gösterilmiyor."
                 )
-            if benchmark_view.relative_return_pct is not None:
-                c3.metric(
-                    "Göreli tarihsel performans",
-                    f"{benchmark_view.relative_return_pct:+.2f} puan",
-                )
-        else:
-            st.warning(
-                "SPY karşılaştırması tam karşılaştırılabilir değil; "
-                "eksik benchmark fiyatı veya portföy veri kalitesi."
-            )
-            for warning in benchmark_view.warnings:
-                st.write(f"- {warning}")
+                for warning in linked.warnings:
+                    st.write(f"- {warning}")
 
-        st.caption(f"Benchmark sağlayıcı çağrısı (bu görünüm): {provider_calls}")
+        if len(timeline_view.snapshots) >= 2:
+            st.markdown("**Tarihsel karşılaştırma (portföy vs SPY)**")
+            st.caption(
+                "Normalleştirilmiş seriler ilk karşılaştırılabilir görüntüde 100'e "
+                "ölçeklenir. Yalnızca bilgilendirme amaçlı tarihsel karşılaştırmadır."
+            )
+            benchmark_service = _load_benchmark_service()
+            fetch_before = benchmark_service.fetch_count
+            benchmark_view = timeline.build_benchmark_comparison(
+                portfolio,
+                performance_view,
+                benchmark_service,
+            )
+            provider_calls = benchmark_service.fetch_count - fetch_before
+
+            if benchmark_view.performance_comparable:
+                comparison_df = build_benchmark_comparison_chart_frame(
+                    benchmark_view.portfolio_normalized,
+                )
+                st.altair_chart(
+                    build_benchmark_comparison_altair_chart(comparison_df),
+                    use_container_width=True,
+                )
+
+                c1, c2, c3 = st.columns(3)
+                if benchmark_view.portfolio_return_pct is not None:
+                    c1.metric(
+                        "Portföy getirisi",
+                        f"{benchmark_view.portfolio_return_pct:.2f}%",
+                    )
+                if benchmark_view.benchmark_return_pct is not None:
+                    c2.metric(
+                        f"{benchmark_view.benchmark_symbol} getirisi",
+                        f"{benchmark_view.benchmark_return_pct:.2f}%",
+                    )
+                if benchmark_view.relative_return_pct is not None:
+                    c3.metric(
+                        "Göreli tarihsel performans",
+                        f"{benchmark_view.relative_return_pct:+.2f} puan",
+                    )
+            else:
+                st.warning(
+                    "SPY karşılaştırması tam karşılaştırılabilir değil; "
+                    "eksik benchmark fiyatı veya portföy veri kalitesi."
+                )
+                for warning in benchmark_view.warnings:
+                    st.write(f"- {warning}")
+
+            st.caption(f"Karşılaştırma fiyat çağrısı: {provider_calls}")
 
 with tab_analysis:
     st.subheader("Portföy analizi")

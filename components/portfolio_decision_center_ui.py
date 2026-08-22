@@ -26,15 +26,22 @@ from services.wealth_external_cash_flow import (
     contribution_reconciliations_for_wealth,
     load_contribution_tracking_start,
 )
+from services.wealth_goal_center_presentation import format_money_display
 from services.wealth_planning_fx import load_planning_fx_schedule, missing_years_copy
 
-HEADING = "Şimdi neye odaklanmalıyım?"
+HEADING = "NABI Karar Merkezi"
 DISCLAIMER = (
     "Bu alan veri ve planlama önceliklerini gösterir; otomatik al/sat önerisi üretmez."
 )
-HEALTHY_MESSAGE = "Şu anda öne çıkan bir veri veya planlama açığı görünmüyor."
+HEALTHY_MESSAGE = "Şu anda müdahale gerektiren kritik bir konu görünmüyor."
 UNAVAILABLE_MESSAGE = "Eylem merkezi şu anda kullanılamıyor."
-EVIDENCE_EXPANDER_LABEL = "Bu öneriler neye dayanıyor?"
+EVIDENCE_EXPANDER_LABEL = "Detaylar"
+PLAN_OPTIONS = (
+    "A) Aylık katkıyı artır",
+    "B) Hedef tarihini uzat",
+    "C) Senaryo karşılaştır",
+)
+CONTRIBUTION_PLAN_TITLE = "2031 hedefi için katkı planı yetersiz"
 MAX_VISIBLE_ACTIONS = 5
 PLANNING_FX_SESSION_KEY = "wealth_os_2031_usdtry"
 
@@ -89,6 +96,9 @@ CONTRIBUTION_DIRECTION = (
     "Katkı takibi için yatırma/çekme geçmişi ve mutabakat gerekir; alış kayıtları yeterli değildir."
 )
 PLAN_DIRECTION = "Wealth → 2031 Hedef sekmesinden katkı planını gözden geçirin."
+ALLOCATION_SCENARIO_POINTER = (
+    "Katkı planını uygulamak için dağılım senaryosunu görüntüle"
+)
 ALLOCATION_DIRECTION = (
     "Hedef Dağılım ve Sapma bölümünden hedefi kaydedin veya sapmayı gözden geçirin."
 )
@@ -104,6 +114,13 @@ _SUMMARY_COVERED_LIMITATIONS = {
     "CONTRIBUTION_EVIDENCE_INCOMPLETE",
     "PERFORMANCE_EVIDENCE_INCOMPLETE",
 }
+_PRIORITY_ORDER = {
+    DecisionPriority.CRITICAL: 0,
+    DecisionPriority.HIGH: 1,
+    DecisionPriority.MEDIUM: 2,
+    DecisionPriority.LOW: 3,
+    DecisionPriority.INFO: 4,
+}
 
 
 @dataclass(frozen=True)
@@ -117,6 +134,8 @@ class PresentedAction:
     evidence_lines: Tuple[str, ...]
     limitation: Optional[str]
     direction: Optional[str]
+    options: Tuple[str, ...] = ()
+    details_lines: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -129,6 +148,9 @@ class ActionCenterPresentation:
     hidden_count: int
     evidence_summary: Tuple[str, ...]
     action_ids: Tuple[str, ...]
+    status_summary: str
+    actionable_count: int
+    highest_severity_label: Optional[str]
 
 
 def _join_tr(items: Sequence[str]) -> str:
@@ -172,6 +194,26 @@ def _limitation_copy(action: DecisionAction) -> Optional[str]:
     return None
 
 
+def _decimal_or_none(value: Any) -> Optional[Decimal]:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _actionable_actions(actions: Sequence[DecisionAction]) -> Tuple[DecisionAction, ...]:
+    return tuple(row for row in actions if row.id != "continue_observation")
+
+
+def _highest_severity_label(actions: Sequence[DecisionAction]) -> Optional[str]:
+    if not actions:
+        return None
+    top = min(actions, key=lambda row: _PRIORITY_ORDER.get(row.priority, 99))
+    return PRIORITY_LABELS[top.priority]
+
+
 def _present_action(action: DecisionAction) -> PresentedAction:
     category = CATEGORY_LABELS[action.category]
     priority = PRIORITY_LABELS[action.priority]
@@ -199,6 +241,7 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             evidence_lines=tuple(evidence),
             limitation=limitation,
             direction="Eksik fiyatlı semboller listelenir; fiyat sağlayıcısı çağrılmaz.",
+            options=("Eksik fiyat kanıtını gözden geçir",),
         )
     if action.id == "missing_planning_fx":
         pair = action.evidence[0] if action.evidence else "TRY->USD"
@@ -218,6 +261,7 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             evidence_lines=(f"Eksik planlama dönüşümü: {pair}",),
             limitation=limitation,
             direction=FX_DIRECTION,
+            options=("Planlama kur varsayımlarını gir",),
         )
     if action.id == "contribution_evidence_incomplete":
         quality = str(
@@ -251,28 +295,43 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             evidence_lines=(f"Katkı kanıtı: {quality_label}",),
             limitation=limitation,
             direction=CONTRIBUTION_DIRECTION,
+            options=("Katkı geçmişini ve mutabakatı tamamla",),
         )
     if action.id == "contribution_plan_below_required":
-        planned = action.context.get("planned_monthly")
-        required = action.context.get("required_starting_monthly")
-        evidence = []
+        planned = _decimal_or_none(action.context.get("planned_monthly"))
+        required = _decimal_or_none(action.context.get("required_starting_monthly"))
+        currency = default_contribution_plan().currency
+        goal_year = default_wealth_goal_2031().target_date.year
+        evidence: list[str] = []
+        details: list[str] = []
         if planned is not None:
-            evidence.append(f"Planlanan aylık: {planned}")
+            evidence.append(f"Mevcut aylık katkı: {format_money_display(planned, currency)}")
+            details.append(f"Planlanan aylık (kanıt): {planned}")
         if required is not None:
-            evidence.append(f"Gerekli başlangıç aylık: {required}")
+            evidence.append(
+                f"Gerekli başlangıç aylık katkı: {format_money_display(required, currency)}"
+            )
+            details.append(f"Gerekli başlangıç aylık (kanıt): {required}")
+        if planned is not None and required is not None:
+            evidence.append(
+                f"Fark: {format_money_display(required - planned, currency)}"
+            )
+        evidence.append(f"Hedef yılı: {goal_year}")
         return PresentedAction(
             id=action.id,
             category_label=category,
             priority_label=priority,
             priority_tone=tone,
-            title="Katkı planını gözden geçir",
+            title=CONTRIBUTION_PLAN_TITLE,
             explanation=(
-                "Mevcut plan, hedefe ulaşmak için gereken başlangıç aylık katkının "
-                "altında görünüyor. Bu bir menkul kıymet al/sat önerisi değildir."
+                "2031 hedefi mevcut katkı planıyla yakalanamıyor. "
+                "Bu bir menkul kıymet al/sat önerisi değildir."
             ),
             evidence_lines=tuple(evidence),
             limitation=limitation,
             direction=PLAN_DIRECTION,
+            options=PLAN_OPTIONS,
+            details_lines=tuple(details),
         )
     if action.id == "concentration_review":
         symbol = str(action.context.get("symbol") or (action.evidence[0] if action.evidence else ""))
@@ -308,6 +367,7 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             evidence_lines=tuple(evidence),
             limitation=limitation,
             direction=None,
+            options=("Yoğunlaşmayı izlemeye devam et",),
         )
     if action.id == "allocation_target_not_configured":
         return PresentedAction(
@@ -443,6 +503,14 @@ def present_action_center(decision: PortfolioDecisionView) -> ActionCenterPresen
         decision.primary_action.id == "continue_observation"
         and decision.primary_action.category == DecisionCategory.MONITOR
     )
+    actionable = _actionable_actions(ordered)
+    highest = None if healthy else _highest_severity_label(actionable)
+    if healthy:
+        status = HEALTHY_MESSAGE
+    elif highest:
+        status = f"{len(actionable)} konu · en yüksek önem: {highest}"
+    else:
+        status = HEALTHY_MESSAGE
     return ActionCenterPresentation(
         heading=HEADING,
         healthy=healthy,
@@ -452,6 +520,9 @@ def present_action_center(decision: PortfolioDecisionView) -> ActionCenterPresen
         hidden_count=hidden,
         evidence_summary=_evidence_summary(decision),
         action_ids=tuple(row.id for row in ordered),
+        status_summary=status,
+        actionable_count=0 if healthy else len(actionable),
+        highest_severity_label=highest,
     )
 
 
@@ -459,6 +530,7 @@ def flatten_presentation_text(presented: ActionCenterPresentation) -> str:
     parts = [presented.heading, presented.disclaimer]
     if presented.healthy_message:
         parts.append(presented.healthy_message)
+    parts.append(presented.status_summary)
     for action in presented.visible_actions:
         parts.extend(
             [
@@ -469,6 +541,8 @@ def flatten_presentation_text(presented: ActionCenterPresentation) -> str:
                 action.limitation or "",
                 action.direction or "",
                 *action.evidence_lines,
+                *action.options,
+                *action.details_lines,
             ]
         )
     parts.extend(presented.evidence_summary)
@@ -580,44 +654,45 @@ def _render_presented(presented: ActionCenterPresentation) -> None:
     render_section_title(presented.heading)
     st.caption(presented.disclaimer)
     if presented.healthy and presented.healthy_message:
-        st.success(presented.healthy_message)
+        st.success(presented.status_summary)
+    else:
+        st.info(presented.status_summary)
     if not presented.visible_actions:
         return
-    primary = presented.visible_actions[0]
-    remaining = presented.visible_actions[1:]
-    with st.container(border=True):
-        badges = " ".join(
-            [
-                render_status_badge(primary.priority_label, primary.priority_tone),
-                render_status_badge(primary.category_label, "info"),
-            ]
-        )
-        st.markdown(f"{badges}", unsafe_allow_html=True)
-        st.markdown(f"**{primary.title}**")
-        st.write(primary.explanation)
-        for line in primary.evidence_lines:
-            st.caption(line)
-        if primary.limitation:
-            st.caption(primary.limitation)
-        if primary.direction:
-            st.caption(primary.direction)
-    for row in remaining:
-        st.markdown(
-            f"**{row.priority_label} · {row.category_label}** — {row.title}"
-        )
-        st.caption(row.explanation)
-        for line in row.evidence_lines:
-            st.caption(line)
-        if row.limitation:
-            st.caption(row.limitation)
-        if row.direction:
-            st.caption(row.direction)
+    for row in presented.visible_actions:
+        with st.container(border=True):
+            badges = " ".join(
+                [
+                    render_status_badge(row.priority_label, row.priority_tone),
+                    render_status_badge(row.category_label, "info"),
+                ]
+            )
+            st.markdown(f"{badges}", unsafe_allow_html=True)
+            st.markdown(f"**{row.title}**")
+            st.write(row.explanation)
+            for line in row.evidence_lines:
+                st.caption(line)
+            if row.options:
+                st.caption("Seçenekler")
+                for option in row.options:
+                    st.caption(option)
+            if row.limitation:
+                st.caption(row.limitation)
+            if row.direction:
+                st.caption(row.direction)
     if presented.hidden_count:
         st.caption(f"+ {presented.hidden_count} ek odak maddesi")
+    st.caption(ALLOCATION_SCENARIO_POINTER)
     with st.expander(EVIDENCE_EXPANDER_LABEL):
         st.caption(presented.disclaimer)
         for line in presented.evidence_summary:
             st.caption(f"• {line}")
+        for row in presented.visible_actions:
+            if not row.details_lines:
+                continue
+            st.caption(row.title)
+            for line in row.details_lines:
+                st.caption(f"• {line}")
 
 
 def render_portfolio_decision_center(

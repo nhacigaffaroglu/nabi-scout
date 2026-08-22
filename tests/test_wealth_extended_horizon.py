@@ -17,6 +17,7 @@ from services.wealth_goal_scenario_service import (
     EXTENDED_HORIZON_AVAILABLE,
     EXTENDED_HORIZON_BLOCKED,
     analyze_extended_goal_horizon,
+    earliest_target_reach,
 )
 from services.wealth_planning_fx import (
     CONTINUATION_ANCHOR_YEARS,
@@ -130,6 +131,33 @@ class ExtendedHorizonGateTests(unittest.TestCase):
         self.assertIsNone(fx.usdtry_for_year(2032))
         self.assertEqual(default_wealth_goal_2031().target_date, date(2031, 12, 31))
         self.assertEqual(default_contribution_plan().starting_monthly, Decimal("60000"))
+
+    def test_earliest_target_reach_reuses_horizon_row(self) -> None:
+        blocked = earliest_target_reach(
+            as_of_date=AS_OF,
+            current=_usd(),
+            contribution_plan=_plan(),
+            fx_schedule=_persisted_fx(),
+        )
+        self.assertEqual(blocked.label, EXTENDED_HORIZON_BLOCKED)
+        self.assertIsNone(blocked.reach_year)
+        analysis = analyze_extended_goal_horizon(
+            as_of_date=AS_OF,
+            current=_usd(),
+            fx_schedule=_approved_through_2036(),
+            contribution_plan=_plan(),
+        )
+        current = next(
+            row for row in analysis.earliest_reach if row.starting_monthly == Decimal("60000")
+        )
+        reached = earliest_target_reach(
+            as_of_date=AS_OF,
+            current=_usd(),
+            contribution_plan=_plan(),
+            fx_schedule=_approved_through_2036(),
+        )
+        self.assertEqual(reached.reach_year, current.reach_year)
+        self.assertEqual(reached.reach_date, current.reach_date)
 
     def test_available_in_memory_schedule_does_not_mutate_persisted_path(self) -> None:
         persisted = _persisted_fx()

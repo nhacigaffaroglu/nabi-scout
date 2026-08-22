@@ -8,14 +8,26 @@ import pandas as pd
 import streamlit as st
 
 from components.nabi_design_system import (
-    render_data_quality_banner,
-    render_executive_hero,
+    inject_nabi_theme,
     render_kpi_row,
     render_section_title,
     render_status_badge,
 )
+from components.wealth_new_money_allocation_ui import render_new_money_allocation
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.ui_formatters import format_date_dmy
+from services.wealth_goal_center_presentation import (
+    CurrentPlanPresentation,
+    DataQualityPresentation,
+    GoalCenterDashboard,
+    GoalHeaderPresentation,
+    NabiEvaluationPresentation,
+    RequiredContributionPresentation,
+    ScenarioCardPresentation,
+    TargetDateAlternativePresentation,
+    build_goal_center_dashboard,
+    format_money_display,
+)
 from services.wealth_goal_models import (
     ContributionPlan,
     CurrentWealthSnapshot,
@@ -35,6 +47,7 @@ from services.wealth_goal_planning import (
     projected_surplus,
     solve_required_starting_monthly,
 )
+from services.wealth_goal_scenario_service import BASE_RETURN_RATE
 from services.wealth_planning_fx import (
     PLANNING_FX_DISCLAIMER,
     PLANNING_FX_NONE_COPY,
@@ -104,6 +117,85 @@ LIMITATION_COPY = {
         "Ölçülen servet hedef para biriminde değil."
     ),
 }
+
+GOAL_CENTER_CSS = """
+<style>
+    .nabi-goal-stack {
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1.35rem 1.5rem 1.15rem 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .nabi-goal-current {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #1a365d;
+        letter-spacing: -0.02em;
+        line-height: 1.1;
+        margin: 0;
+    }
+    .nabi-goal-rule {
+        border: none;
+        border-top: 2px solid #cbd5e1;
+        margin: 0.65rem 0 0.55rem 0;
+        max-width: 16rem;
+    }
+    .nabi-goal-target {
+        font-size: 1.35rem;
+        font-weight: 600;
+        color: #334155;
+        margin: 0;
+    }
+    .nabi-goal-progress-copy {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #1e293b;
+        margin: 0.75rem 0 0 0;
+    }
+    .nabi-goal-status {
+        margin-top: 0.65rem;
+        font-size: 1.05rem;
+        font-weight: 600;
+    }
+    .nabi-goal-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1rem 1.1rem 1.05rem 1.1rem;
+        height: 100%;
+    }
+    .nabi-goal-card-title {
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+        margin: 0 0 0.65rem 0;
+    }
+    .nabi-goal-card-value {
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: #1a365d;
+        margin: 0 0 0.35rem 0;
+    }
+    .nabi-goal-card-line {
+        font-size: 0.92rem;
+        color: #334155;
+        margin: 0.15rem 0;
+    }
+    .nabi-eval {
+        background: #f1f5f9;
+        border-left: 3px solid #2b6cb0;
+        border-radius: 0 8px 8px 0;
+        padding: 0.85rem 1rem;
+        color: #1e293b;
+        font-size: 0.95rem;
+        line-height: 1.45;
+        margin: 0.25rem 0 1rem 0;
+    }
+</style>
+"""
 
 
 def _money(value: Optional[Decimal | float], currency: str) -> str:
@@ -212,7 +304,6 @@ def render_wealth_goal_center(
         contribution_plan=plan,
         fx_schedule=fx_schedule,
     )
-    status = _primary_status(bands)
     txns = wealth.list_transactions(limit=2000)
     account_ids = [str(row.get("id") or "") for row in accounts]
     reconciliations = contribution_reconciliations_for_wealth(wealth, portfolio_id)
@@ -232,113 +323,322 @@ def render_wealth_goal_center(
         fx_schedule=fx_schedule,
     )
     current_recon = reconciliations[0] if reconciliations else None
-    _render_goal_hero(goal, snapshot, status, bands)
-    _render_this_month(intelligence)
-    render_planning_fx_assumptions(
-        wealth=wealth,
-        portfolio_id=portfolio_id,
-        as_of=as_of_date,
+    decision = _decision_preview(
+        view,
+        as_of_date=as_of_date,
         goal=goal,
         plan=plan,
-        current=fx_schedule,
-    )
-    render_contribution_tracking_start_setup(
-        wealth=wealth,
-        portfolio_id=portfolio_id,
-        current=tracking_start,
-        transactions=txns,
+        snapshot=snapshot,
+        intelligence=intelligence,
+        txns=txns,
         account_ids=account_ids,
+        positions=positions,
+        assets=assets,
+        tracking_start=tracking_start,
+        fx_schedule=fx_schedule,
         reconciliations=reconciliations,
     )
-    render_contribution_cash_flow_entry(
-        wealth=wealth,
-        portfolio_id=portfolio_id,
-        accounts=accounts,
+    dashboard = build_goal_center_dashboard(
+        as_of_date=as_of_date,
+        goal=goal,
+        plan=plan,
+        snapshot=snapshot,
+        fx_schedule=fx_schedule,
+        intelligence=intelligence,
         tracking_start=tracking_start,
-        plan_currency=plan.currency,
+        decision=decision,
+        bands=bands,
     )
-    render_contribution_reconciliation_action(
+    _render_goal_dashboard(dashboard)
+    _render_this_month(intelligence, dashboard=dashboard)
+    render_new_money_allocation(
+        portfolio_view=view,
         wealth=wealth,
-        portfolio_id=portfolio_id,
+        plan=plan,
+        fx_schedule=fx_schedule,
         as_of=as_of_date,
-        current=current_recon,
-        tracking_start=tracking_start,
+        assets=assets,
+        positions=positions,
     )
-    _render_plan_and_performance(intelligence)
-    _render_scenario_table(bands, goal.currency)
-    _render_contribution_plan(plan, as_of_date, goal.target_date.year)
-    _render_plan_vs_actual(intelligence)
-    _render_what_if_and_required(
+    _render_scenario_explorer(
         as_of_date=as_of_date,
         current=snapshot,
         plan=plan,
         goal=goal,
         fx_schedule=fx_schedule,
     )
+    with st.expander("Gelişmiş Varsayımlar", expanded=False):
+        _render_advanced_assumptions(dashboard)
+        render_planning_fx_assumptions(
+            wealth=wealth,
+            portfolio_id=portfolio_id,
+            as_of=as_of_date,
+            goal=goal,
+            plan=plan,
+            current=fx_schedule,
+        )
+        _render_scenario_table(bands, goal.currency)
+        _render_contribution_plan(plan, as_of_date, goal.target_date.year)
+    with st.expander("Katkı takibi ve mutabakat", expanded=False):
+        render_contribution_tracking_start_setup(
+            wealth=wealth,
+            portfolio_id=portfolio_id,
+            current=tracking_start,
+            transactions=txns,
+            account_ids=account_ids,
+            reconciliations=reconciliations,
+        )
+        render_contribution_cash_flow_entry(
+            wealth=wealth,
+            portfolio_id=portfolio_id,
+            accounts=accounts,
+            tracking_start=tracking_start,
+            plan_currency=plan.currency,
+        )
+        render_contribution_reconciliation_action(
+            wealth=wealth,
+            portfolio_id=portfolio_id,
+            as_of=as_of_date,
+            current=current_recon,
+            tracking_start=tracking_start,
+        )
+        _render_plan_and_performance(intelligence)
+        _render_plan_vs_actual(intelligence)
 
 
-def _render_goal_hero(
+def _decision_preview(
+    portfolio_view: PortfolioIntelligenceView,
+    *,
+    as_of_date: date,
     goal,
+    plan: ContributionPlan,
     snapshot: CurrentWealthSnapshot,
-    status: GoalEvidenceStatus,
-    bands: Sequence[ProjectionResult],
+    intelligence,
+    txns,
+    account_ids,
+    positions,
+    assets,
+    tracking_start,
+    fx_schedule,
+    reconciliations,
+):
+    try:
+        from services.portfolio_decision_intelligence import build_portfolio_decision
+
+        return build_portfolio_decision(
+            portfolio_view,
+            as_of_date=as_of_date,
+            goal=goal,
+            plan=plan,
+            current_wealth=snapshot,
+            contribution=intelligence,
+            transactions=txns,
+            account_ids=account_ids,
+            positions=positions,
+            assets=assets,
+            contribution_tracking_start=tracking_start,
+            fx_schedule=fx_schedule,
+            contribution_reconciliations=reconciliations,
+        )
+    except Exception:
+        return None
+
+
+def _inject_goal_theme() -> None:
+    inject_nabi_theme()
+    st.markdown(GOAL_CENTER_CSS, unsafe_allow_html=True)
+
+
+def _render_goal_dashboard(dashboard: GoalCenterDashboard) -> None:
+    _inject_goal_theme()
+    _render_data_quality(dashboard.data_quality, dashboard.snapshot)
+    _render_goal_header(dashboard.header, dashboard)
+    _render_current_plan_card(dashboard.current_plan)
+    _render_required_card(dashboard.required)
+    _render_target_date_alternative(dashboard.target_date_alternative, dashboard)
+    _render_scenario_cards(dashboard.scenario_cards)
+    _render_nabi_evaluation(dashboard.nabi)
+
+
+def _render_data_quality(
+    quality: DataQualityPresentation,
+    snapshot: CurrentWealthSnapshot,
 ) -> None:
-    partial = not snapshot.valuation_complete
-    lower = snapshot.current_value_lower_bound
+    if quality.partial_warning:
+        st.warning(quality.partial_warning)
+        st.caption(
+            f"Ölçülebilen servet: en az {_money(snapshot.current_value_lower_bound, snapshot.currency)}"
+        )
+        if snapshot.unvalued_symbols:
+            st.caption("Eksik varlıklar: " + ", ".join(snapshot.unvalued_symbols))
+    if quality.fx_warning:
+        st.warning(quality.fx_warning)
+
+
+def _render_goal_header(header: GoalHeaderPresentation, dashboard: GoalCenterDashboard) -> None:
+    snapshot = dashboard.snapshot
+    goal = dashboard.goal
+    status = dashboard.current_plan.status
+    partial = not header.valuation_complete
     if partial:
-        primary = f"en az {_money(lower, snapshot.currency)}"
+        primary = f"en az {header.current_wealth_label}"
         subtitle = (
-            f"Ölçülebilen servet: en az {_money(lower, snapshot.currency)} · "
+            f"Ölçülebilen servet: en az {_money(snapshot.current_value_lower_bound, snapshot.currency)} · "
             f"Hedef {_money(goal.target_amount, goal.currency)} · "
             f"{format_date_dmy(goal.target_date)}"
-        )
-        partial_note = (
-            "Kısmi değerleme: USD portföy değerli, BIST piyasa değeri yok. "
-            "Hedef ilerlemesi alt sınırdır; eksik varlıklar sıfır sayılmaz."
         )
     else:
-        primary = _money(lower, snapshot.currency)
-        subtitle = (
-            f"Ölçülebilen servet: {_money(lower, snapshot.currency)} · "
-            f"Hedef {_money(goal.target_amount, goal.currency)} · "
-            f"{format_date_dmy(goal.target_date)}"
-        )
-        partial_note = None
-
-    base = next((row for row in bands if row.scenario_name == "Base"), bands[0])
-    render_executive_hero(
-        primary_label="2031 Servet Hedefi",
-        primary_value=primary,
-        subtitle=subtitle,
-        partial=partial,
-        partial_note=partial_note,
-        delta_lines=[
-            (_status_label(status), GOAL_STATUS_TONES[status]),
-        ],
+        primary = header.current_wealth_label
+        subtitle = None
+    st.markdown(
+        f"""
+        <div class="nabi-goal-stack">
+            <p class="nabi-hero-label">2031 Servet Hedefi</p>
+            <p class="nabi-goal-current">{primary}</p>
+            <hr class="nabi-goal-rule" />
+            <p class="nabi-goal-target">{header.target_wealth_label}</p>
+            <p class="nabi-goal-progress-copy">{header.progress_caption}</p>
+            <div class="nabi-goal-status">{dashboard.current_plan.status_copy}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+    if subtitle:
+        st.caption(subtitle)
     st.markdown(
         render_status_badge(_status_label(status), GOAL_STATUS_TONES[status]),
         unsafe_allow_html=True,
     )
-    issues: list[str] = []
-    if partial:
-        issues.append("USD değerli · BIST piyasa değeri yok")
-    if snapshot.unvalued_symbols:
-        issues.append("BIST: " + ", ".join(snapshot.unvalued_symbols))
-    if ProjectionLimitation.FX_CONVERSION_REQUIRED in base.limitations:
-        issues.append("TRY→USD kur varsayımı yok")
-    render_data_quality_banner(issues=issues, partial=partial)
-    progress = min(max(float(base.progress_pct_lower_bound) / 100.0, 0.0), 1.0)
+    progress = min(max(float(header.progress_pct) / 100.0, 0.0), 1.0)
     st.progress(progress)
-    st.caption(
-        f"Alt sınır ilerleme: {_pct(base.progress_pct_lower_bound)} · "
-        f"Hedefe kalan ölçülebilir fark: {_money(base.measurable_gap, goal.currency)}"
+    if partial and header.measurable_gap_label:
+        st.caption(
+            f"Hedefe kalan ölçülebilir fark: {_money(dashboard.base_projection.measurable_gap, goal.currency)}"
+            if dashboard.base_projection is not None
+            else f"Hedefe kalan ölçülebilir fark: {header.measurable_gap_label}"
+        )
+    if partial:
+        st.caption("Değerleme ayrıntısı için Portföy Zekâsı sayfasına bakın.")
+
+
+def _render_current_plan_card(plan_view: CurrentPlanPresentation) -> None:
+    render_section_title("Mevcut Plan")
+    st.caption(USER_ASSUMPTION_NOTE)
+    st.markdown(
+        f"""
+        <div class="nabi-goal-card">
+            <p class="nabi-goal-card-value">{plan_view.starting_monthly_label}</p>
+            <p class="nabi-goal-card-line">Yıllık artış: {plan_view.annual_increase_label}</p>
+            <p class="nabi-goal-card-line">Base expected return: {plan_view.base_return_label}</p>
+            <p class="nabi-goal-card-line">2031 tahmini: {plan_view.projected_wealth_label}</p>
+            <p class="nabi-goal-card-line">Hedef gerçekleşme: {plan_view.attainment_label}</p>
+            <p class="nabi-goal-card-line">{"Tahmini fazla" if plan_view.gap_is_surplus else "Tahmini açık"}: {plan_view.gap_label}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.caption("Değerleme ayrıntısı için Portföy Zekâsı sayfasına bakın.")
 
 
-def _render_this_month(view: ContributionIntelligenceView) -> None:
+def _render_required_card(required: RequiredContributionPresentation) -> None:
+    render_section_title(
+        "Gerekli aylık katkı",
+        description="2031 hedefi için gereken başlangıç aylık katkı",
+    )
+    if not required.available:
+        st.info("Gerekli katkı hesaplanamadı — kur varsayımı veya değerleme yetersiz.")
+        return
+    render_kpi_row(
+        [
+            ("Gerekli", required.required_label, None),
+            ("Mevcut", required.current_label, None),
+            ("Fark", required.difference_label, None),
+        ]
+    )
+    if required.pct_increase_label:
+        st.caption(f"Gerekli artış: {required.pct_increase_label}")
+
+
+def _render_target_date_alternative(
+    alternative: TargetDateAlternativePresentation,
+    dashboard: GoalCenterDashboard,
+) -> None:
+    render_section_title("Katkıyı değiştirmezsem?")
+    if alternative.blocked or alternative.missing_fx_years:
+        st.warning(
+            "Hedef tarihi uzatması için planlama kuru eksik: "
+            + ", ".join(str(year) for year in alternative.missing_fx_years)
+        )
+        return
+    if not alternative.available:
+        st.info("Mevcut katkı planıyla hedef, onaylı planlama ufku içinde yakalanmıyor.")
+        return
+    st.markdown(
+        f"""
+        <div class="nabi-goal-card">
+            <p class="nabi-goal-card-line">Mevcut katkı planıyla {dashboard.header.target_wealth_label} hedefi:</p>
+            <p class="nabi-goal-card-value">{alternative.reach_year}</p>
+            <p class="nabi-goal-card-line">Tahmini ulaşma: {alternative.reach_date_label or "—"}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_scenario_cards(cards: Sequence[ScenarioCardPresentation]) -> None:
+    render_section_title("Katkı senaryoları")
+    if not cards:
+        return
+    cols = st.columns(len(cards))
+    for col, card in zip(cols, cards):
+        with col:
+            st.markdown(
+                f"""
+                <div class="nabi-goal-card">
+                    <p class="nabi-goal-card-title">{card.monthly_label}</p>
+                    <p class="nabi-goal-card-line">2031: {card.projected_2031_label}</p>
+                    <p class="nabi-goal-card-line">{card.attainment_label}</p>
+                    <p class="nabi-goal-card-line">Hedef: {card.earliest_year_label}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def _render_nabi_evaluation(nabi: NabiEvaluationPresentation) -> None:
+    render_section_title("NABI Değerlendirmesi")
+    st.markdown(f'<div class="nabi-eval">{nabi.copy}</div>', unsafe_allow_html=True)
+
+
+def _render_advanced_assumptions(dashboard: GoalCenterDashboard) -> None:
+    render_kpi_row(
+        [
+            ("Yıllık katkı artışı", dashboard.current_plan.annual_increase_label, None),
+            ("Beklenen getiri", dashboard.current_plan.base_return_label, None),
+            ("Hedef tarihi", format_date_dmy(dashboard.goal.target_date), None),
+        ]
+    )
+    st.caption("Projeksiyon kuralı")
+    st.caption(dashboard.compounding_convention)
+    rows = [
+        {"Yıl": year, "USDTRY": format(rate, "f")}
+        for year, rate in (
+            (row.year, row.usdtry) for row in dashboard.fx_schedule.rates
+        )
+    ]
+    if rows:
+        st.caption("Planlama kur takvimi (USER_DEFINED)")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
+def _render_this_month(
+    view: ContributionIntelligenceView,
+    *,
+    dashboard: Optional[GoalCenterDashboard] = None,
+) -> None:
     render_section_title("Bu Ay")
+    if dashboard is not None and dashboard.tracking_prestart_copy:
+        st.info(dashboard.tracking_prestart_copy)
+        return
     planned = _money(view.planned_monthly_contribution, view.currency)
     actual = format_contribution_actual_label(
         view.monthly_evidence_quality,
@@ -832,7 +1132,7 @@ def render_planning_fx_assumptions(
         st.error(str(exc))
 
 
-def _render_what_if_and_required(
+def _render_scenario_explorer(
     *,
     as_of_date: date,
     current: CurrentWealthSnapshot,
@@ -840,37 +1140,29 @@ def _render_what_if_and_required(
     goal,
     fx_schedule: PlanningFxSchedule,
 ) -> None:
-    render_section_title("Ne olur, eğer?", description=USER_ASSUMPTION_NOTE)
+    render_section_title(
+        "Senaryo İncele",
+        description="Bu yalnızca senaryodur; mevcut planınızı değiştirmez.",
+    )
+    st.caption(USER_ASSUMPTION_NOTE)
     st.caption(
         "Gelecek TRY katkılar kaydedilmiş yıllık kur varsayımlarıyla USD'ye çevrilir; "
         "mevcut portföy değeri yeniden kurlandılmaz."
     )
     left, right = st.columns(2)
     monthly = left.number_input(
-        "Aylık katkı",
+        "Aylık katkı (geçici)",
         min_value=0.0,
         value=float(plan.starting_monthly),
         step=1000.0,
-        key="wealth_os_2031_monthly",
+        key="goal_ux_explorer_monthly",
     )
-    increase_pct = right.number_input(
-        "Yıllık artış %",
+    return_pct = right.number_input(
+        "Yıllık getiri varsayımı % (geçici)",
         min_value=-99.0,
-        value=float(plan.annual_increase_rate * 100),
-        step=1.0,
-        key="wealth_os_2031_increase_pct",
-    )
-    return_pct = left.number_input(
-        "Yıllık getiri varsayımı %",
-        min_value=-99.0,
-        value=8.0,
+        value=float(BASE_RETURN_RATE * 100),
         step=0.5,
-        key="wealth_os_2031_return_pct",
-    )
-    target_date = right.date_input(
-        "Hedef tarihi",
-        value=goal.target_date,
-        key="wealth_os_2031_target_date",
+        key="goal_ux_explorer_return_pct",
     )
     try:
         what_if = build_what_if_projection(
@@ -878,9 +1170,9 @@ def _render_what_if_and_required(
             current=current,
             monthly_contribution=Decimal(str(monthly)),
             contribution_currency=plan.currency,
-            annual_increase_rate=Decimal(str(increase_pct)) / Decimal(100),
+            annual_increase_rate=plan.annual_increase_rate,
             annual_return_rate=Decimal(str(return_pct)) / Decimal(100),
-            target_date=target_date,
+            target_date=goal.target_date,
             conversion=None,
             fx_schedule=fx_schedule,
             goal=goal,
@@ -889,7 +1181,7 @@ def _render_what_if_and_required(
         st.error(str(exc))
         return
 
-    missing = fx_schedule.missing_years(required_planning_fx_years(as_of_date, target_date))
+    missing = fx_schedule.missing_years(required_planning_fx_years(as_of_date, goal.target_date))
     if not what_if.projection_complete:
         if ProjectionLimitation.FX_CONVERSION_REQUIRED in what_if.limitations:
             st.warning(
@@ -901,66 +1193,24 @@ def _render_what_if_and_required(
                 "Projeksiyon için kanıt yetersiz.",
             ) if what_if.limitations else "Projeksiyon için kanıt yetersiz."
             st.warning(detail)
-    else:
-        surplus = projected_surplus(what_if)
-        surplus_label = "Fazla" if surplus is not None and surplus >= 0 else "Açık"
-        render_kpi_row(
-            [
-                (
-                    "Hedef tarihi değeri (planlama)",
-                    _money(what_if.projected_target_date_value, goal.currency),
-                    None,
-                ),
-                (
-                    "Tahmini ulaşım",
-                    format_date_dmy(what_if.projected_goal_reach_date)
-                    if what_if.projected_goal_reach_date
-                    else "—",
-                    None,
-                ),
-                (surplus_label, _money(surplus, goal.currency), None),
-                (
-                    "Toplam gelecek katkı",
-                    _money(what_if.total_projected_contributions, goal.currency),
-                    None,
-                ),
-                (
-                    "Yatırım artışı",
-                    _money(what_if.projected_investment_growth, goal.currency),
-                    None,
-                ),
-            ]
-        )
-        st.caption(_status_label(what_if.status) + " · planlama / projeksiyon")
-
-    render_section_title("Gerekli aylık katkı")
-    required = solve_required_starting_monthly(
-        as_of_date=as_of_date,
-        current=current,
-        contribution_currency=plan.currency,
-        annual_increase_rate=Decimal(str(increase_pct)) / Decimal(100),
-        annual_return_rate=Decimal(str(return_pct)) / Decimal(100),
-        conversion=None,
-        fx_schedule=fx_schedule,
-        goal=goal,
-    )
-    if not required.available:
-        if required.limitation == ProjectionLimitation.FX_CONVERSION_REQUIRED:
-            st.info(missing_years_copy(missing) if missing else PLANNING_FX_NONE_COPY)
-        else:
-            st.info(
-                LIMITATION_COPY.get(
-                    required.limitation,
-                    "Gerekli katkı hesaplanamadı — kanıt yetersiz veya hedef bu varsayımlarla ulaşılamaz.",
-                )
-            )
         return
-    st.metric(
-        f"Gerekli başlangıç aylık katkı ({required.currency})",
-        _money(required.starting_monthly, required.currency),
+    surplus = projected_surplus(what_if)
+    surplus_label = "Fazla" if surplus is not None and surplus >= 0 else "Açık"
+    render_kpi_row(
+        [
+            (
+                "2031 tahmini",
+                format_money_display(what_if.projected_target_date_value, goal.currency),
+                None,
+            ),
+            (
+                "Tahmini ulaşım",
+                format_date_dmy(what_if.projected_goal_reach_date)
+                if what_if.projected_goal_reach_date
+                else "—",
+                None,
+            ),
+            (surplus_label, format_money_display(surplus, goal.currency), None),
+        ]
     )
-    st.caption(
-        f"Bu katkı ile projeksiyon: {_money(required.projected_target_date_value, goal.currency)}"
-    )
-    if required.starting_monthly is not None and required.starting_monthly >= Decimal("1000000"):
-        st.caption("Bu gerekli katkı çok yüksek; varsayımları gözden geçirin.")
+    st.caption(_status_label(what_if.status) + " · planlama / projeksiyon")

@@ -660,6 +660,50 @@ def _reach_row(
     )
 
 
+def earliest_target_reach(
+    *,
+    as_of_date: date,
+    current: CurrentWealthSnapshot,
+    contribution_plan: ContributionPlan,
+    fx_schedule: PlanningFxSchedule,
+    goal: Optional[WealthGoal] = None,
+    starting_monthly: Optional[Decimal] = None,
+    annual_return_rate: Decimal = BASE_RETURN_RATE,
+    horizon_end: date = EXTENDED_HORIZON_END,
+) -> EarliestReachRow:
+    """Current-plan or what-if earliest reach through the approved FX horizon.
+
+    Read-only. Reuses `_reach_row` / `project_wealth_goal`. Does not persist
+    planning FX, invent missing years, or change the contribution plan.
+    """
+    active_goal = goal or default_wealth_goal_2031()
+    monthly = (
+        contribution_plan.starting_monthly
+        if starting_monthly is None
+        else Decimal(str(starting_monthly))
+    )
+    missing = fx_schedule.missing_years(required_planning_fx_years(as_of_date, horizon_end))
+    if missing:
+        return EarliestReachRow(
+            starting_monthly=monthly,
+            annual_return_rate=annual_return_rate,
+            reached=False,
+            reach_year=None,
+            reach_date=None,
+            label=EXTENDED_HORIZON_BLOCKED,
+        )
+    return _reach_row(
+        as_of_date=as_of_date,
+        current=current,
+        contribution_plan=contribution_plan,
+        fx_schedule=fx_schedule,
+        goal=active_goal,
+        starting_monthly=monthly,
+        annual_return_rate=annual_return_rate,
+        horizon_end=horizon_end,
+    )
+
+
 def analyze_extended_goal_horizon(
     *,
     as_of_date: date,
