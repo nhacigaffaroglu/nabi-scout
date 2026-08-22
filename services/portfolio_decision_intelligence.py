@@ -21,6 +21,7 @@ from services.wealth_contribution_intelligence import (
     PlanAdequacyStatus,
     build_contribution_intelligence,
 )
+from services.wealth_external_cash_flow import ContributionTrackingScope
 from services.wealth_goal_models import (
     ContributionPlan,
     ConversionAssumption,
@@ -31,6 +32,7 @@ from services.wealth_goal_models import (
     default_wealth_goal_2031,
 )
 from services.wealth_history_service import WealthHistoryView
+from services.wealth_planning_fx import PlanningFxSchedule, missing_years_copy, required_planning_fx_years
 from services.wealth_timeline_contract import PortfolioSnapshotView
 
 # Existing PI product review trigger (not a sell recommendation).
@@ -126,11 +128,24 @@ def _sort_key(action: DecisionAction) -> Tuple[int, int, str]:
     )
 
 
-def _planning_fx_missing(plan: ContributionPlan, goal: WealthGoal, conversion) -> bool:
-    return (
-        plan.currency.strip().upper() != goal.currency.strip().upper()
-        and conversion is None
-    )
+def _planning_fx_missing(
+    plan: ContributionPlan,
+    goal: WealthGoal,
+    conversion,
+    *,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
+    as_of: Optional[date] = None,
+) -> bool:
+    if plan.currency.strip().upper() == goal.currency.strip().upper():
+        return False
+    if fx_schedule is not None:
+        return not fx_schedule.is_complete(
+            as_of=as_of or date.today(),
+            target_date=goal.target_date,
+            contribution_currency=plan.currency,
+            goal_currency=goal.currency,
+        )
+    return conversion is None
 
 
 def _largest_priced_holding(
@@ -152,6 +167,14 @@ def _rule_partial_valuation(current: CurrentWealthSnapshot) -> Optional[Decision
         return None
     symbols = current.unvalued_symbols
     listed = ", ".join(symbols) if symbols else "unpriced holdings"
+    missing_price = current.missing_price_symbols
+    missing_fx = current.missing_fx_symbols
+    reasons = []
+    if missing_price:
+        reasons.append("missing price: " + ", ".join(missing_price))
+    if missing_fx:
+        reasons.append("missing current FX: " + ", ".join(missing_fx))
+    reason_text = f" {'; '.join(reasons)}." if reasons else ""
     return DecisionAction(
         id="incomplete_valuation",
         category=DecisionCategory.DATA,
@@ -159,7 +182,8 @@ def _rule_partial_valuation(current: CurrentWealthSnapshot) -> Optional[Decision
         title="Complete valuation evidence",
         explanation=(
             "Portfolio totals are a lower bound because some holdings are not "
-            f"in the comparable base-currency valuation ({listed}). "
+            f"in the comparable base-currency valuation ({listed})."
+            f"{reason_text} "
             "Missing prices remain unavailable and are never assigned a market value of zero."
         ),
         evidence=tuple(symbols) or ("PARTIAL_VALUATION",),
@@ -167,6 +191,8 @@ def _rule_partial_valuation(current: CurrentWealthSnapshot) -> Optional[Decision
         limitations=("PARTIAL_VALUATION", "LOWER_BOUND_MARKET_VALUE"),
         context={
             "unvalued_symbols": list(symbols),
+            "missing_price_symbols": list(missing_price),
+            "missing_fx_symbols": list(missing_fx),
             "current_value_lower_bound": str(current.current_value_lower_bound),
             "valuation_complete": False,
         },
@@ -177,9 +203,21 @@ def _rule_planning_fx(
     plan: ContributionPlan,
     goal: WealthGoal,
     conversion: Optional[ConversionAssumption],
+    *,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
+    as_of: Optional[date] = None,
 ) -> Optional[DecisionAction]:
-    if not _planning_fx_missing(plan, goal, conversion):
+    as_of_date = as_of or date.today()
+    if not _planning_fx_missing(
+        plan, goal, conversion, fx_schedule=fx_schedule, as_of=as_of_date
+    ):
         return None
+    required = required_planning_fx_years(as_of_date, goal.target_date)
+    missing = (
+        fx_schedule.missing_years(required)
+        if fx_schedule is not None
+        else required
+    )
     return DecisionAction(
         id="missing_planning_fx",
         category=DecisionCategory.DATA,
@@ -187,16 +225,26 @@ def _rule_planning_fx(
         title="Planning assumption required",
         explanation=(
             f"{plan.currency}→{goal.currency} 2031 projection cannot be completed "
-            "without an explicit planning FX assumption. No live FX rate is fetched "
-            "or invented."
+            "without explicit yearly planning FX assumptions. No live FX rate is fetched "
+            "or invented. "
+            + missing_years_copy(missing)
         ),
-        evidence=(f"{plan.currency}->{goal.currency}",),
+        evidence=(f"{plan.currency}->{goal.currency}",) + tuple(str(year) for year in missing),
         status=DecisionActionStatus.BLOCKED,
         limitations=("FX_CONVERSION_REQUIRED",),
         context={
             "from_currency": plan.currency,
             "to_currency": goal.currency,
-            "conversion_present": False,
+            "conversion_present": conversion is not None,
+            "missing_years": list(missing),
+            "fx_completeness": (
+                None if fx_schedule is None else fx_schedule.completeness(
+                    as_of=as_of_date,
+                    target_date=goal.target_date,
+                    contribution_currency=plan.currency,
+                    goal_currency=goal.currency,
+                ).value
+            ),
         },
     )
 
@@ -204,18 +252,29 @@ def _rule_planning_fx(
 def _rule_contribution_evidence(
     contribution: ContributionIntelligenceView,
 ) -> Optional[DecisionAction]:
+    if contribution.monthly_tracking_scope == ContributionTrackingScope.NOT_TRACKED:
+        return None
     if contribution.evidence_quality == ContributionEvidenceQuality.COMPLETE:
         return None
     actual = contribution.actual_monthly_net_contribution
+    unconfigured = (
+        contribution.monthly_tracking_scope == ContributionTrackingScope.UNCONFIGURED
+    )
+    explanation = (
+        "Contribution tracking start date is not set, so actual contribution is unknown "
+        "and missing evidence is not treated as zero."
+        if unconfigured
+        else (
+            "Contribution records are not reconciled, so actual contribution is unknown. "
+            "BUY lots are not deposits and missing evidence is not treated as zero."
+        )
+    )
     return DecisionAction(
         id="contribution_evidence_incomplete",
         category=DecisionCategory.DATA,
         priority=DecisionPriority.MEDIUM,
         title="Add contribution evidence",
-        explanation=(
-            "Plan-versus-actual contribution tracking cannot yet be verified. "
-            "BUY lots are not deposits and are not treated as contribution actuals."
-        ),
+        explanation=explanation,
         evidence=(
             contribution.evidence_quality.value,
             contribution.monthly_evidence_quality.value,
@@ -224,8 +283,15 @@ def _rule_contribution_evidence(
         limitations=("CONTRIBUTION_EVIDENCE_INCOMPLETE",),
         context={
             "evidence_quality": contribution.evidence_quality.value,
+            "monthly_evidence_quality": contribution.monthly_evidence_quality.value,
+            "tracking_scope": contribution.monthly_tracking_scope.value,
             "actual_monthly_net_contribution": (
                 None if actual is None else str(actual)
+            ),
+            "monthly_remaining": (
+                None
+                if contribution.monthly_remaining is None
+                else str(contribution.monthly_remaining)
             ),
             "actual_is_zero": False,
         },
@@ -459,6 +525,9 @@ def build_portfolio_decision(
     end_snapshot: Optional[PortfolioSnapshotView] = None,
     current_wealth: Optional[CurrentWealthSnapshot] = None,
     allocation_signals: Optional[AllocationDecisionSignals] = None,
+    contribution_reconciliations=None,
+    contribution_tracking_start=None,
+    fx_schedule=None,
 ) -> PortfolioDecisionView:
     """Deterministic evidence/action-priority engine. No LLM, providers, or writes."""
     as_of = as_of_date or date.today()
@@ -483,13 +552,21 @@ def build_portfolio_decision(
         annual_return_rate=BASE_RETURN_RATE,
         start_snapshot=start_snapshot,
         end_snapshot=end_snapshot,
+        contribution_reconciliations=contribution_reconciliations,
+        portfolio_id=str(portfolio_view.portfolio_id or "") or None,
+        contribution_tracking_start=contribution_tracking_start,
+        fx_schedule=fx_schedule,
     )
-    fx_missing = _planning_fx_missing(plan, goal, conversion)
+    fx_missing = _planning_fx_missing(
+        plan, goal, conversion, fx_schedule=fx_schedule, as_of=as_of
+    )
 
     actions: list[DecisionAction] = []
     for builder in (
         lambda: _rule_partial_valuation(current),
-        lambda: _rule_planning_fx(plan, goal, conversion),
+        lambda: _rule_planning_fx(
+            plan, goal, conversion, fx_schedule=fx_schedule, as_of=as_of
+        ),
         lambda: _rule_contribution_evidence(contrib),
         lambda: _rule_economic_exposure_incomplete(allocation_signals),
         lambda: _rule_goal_plan(

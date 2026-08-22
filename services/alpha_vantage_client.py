@@ -87,6 +87,26 @@ class AlphaVantageClient:
         classify_alpha_payload(payload, expect="time_series_daily")
         return payload
 
+    def global_quote(self, symbol: str) -> Dict[str, Any]:
+        payload = self._request(function="GLOBAL_QUOTE", symbol=symbol)
+        classify_alpha_payload(payload, expect="global_quote")
+        quote = payload.get("Global Quote") or payload.get("globalQuote") or {}
+        return quote if isinstance(quote, dict) else {}
+
+    def currency_exchange_rate(
+        self,
+        from_currency: str,
+        to_currency: str,
+    ) -> Dict[str, Any]:
+        payload = self._request(
+            function="CURRENCY_EXCHANGE_RATE",
+            from_currency=str(from_currency or "").strip().upper(),
+            to_currency=str(to_currency or "").strip().upper(),
+        )
+        classify_alpha_payload(payload, expect="currency_exchange_rate")
+        block = payload.get("Realtime Currency Exchange Rate") or {}
+        return block if isinstance(block, dict) else {}
+
     def _request(self, **params: str) -> Dict[str, Any]:
         query = dict(params)
         query["apikey"] = self.api_key
@@ -186,6 +206,32 @@ def classify_alpha_payload(payload: Dict[str, Any], *, expect: str) -> str:
             "Alpha Vantage fiyat geçmişi boş veya geçersiz.",
             error_class="malformed",
             status=STATUS_MALFORMED,
+        )
+
+    if expect == "global_quote":
+        quote = payload.get("Global Quote") or payload.get("globalQuote")
+        price = ""
+        if isinstance(quote, dict):
+            price = str(quote.get("05. price") or quote.get("05.price") or "").strip()
+        if price:
+            return STATUS_OK
+        raise AlphaVantageError(
+            "Alpha Vantage global quote boş veya geçersiz.",
+            error_class="not_found",
+            status=STATUS_NOT_FOUND,
+        )
+
+    if expect == "currency_exchange_rate":
+        block = payload.get("Realtime Currency Exchange Rate")
+        rate = ""
+        if isinstance(block, dict):
+            rate = str(block.get("5. Exchange Rate") or "").strip()
+        if rate:
+            return STATUS_OK
+        raise AlphaVantageError(
+            "Alpha Vantage döviz kuru boş veya geçersiz.",
+            error_class="not_found",
+            status=STATUS_NOT_FOUND,
         )
 
     raise AlphaVantageError(

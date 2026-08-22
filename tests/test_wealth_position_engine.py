@@ -60,14 +60,15 @@ class WealthPositionEngineTests(unittest.TestCase):
         self.assertEqual(qty, 800)
         self.assertAlmostEqual(avg, 1.0)
 
-    def test_dividend_increases_cash(self) -> None:
+    def test_dividend_does_not_increase_cash_quantity(self) -> None:
         qty, avg = materialize_position_from_transactions(
             [
                 _txn("deposit", quantity=0, amount=500),
                 _txn("dividend", quantity=0, amount=25),
             ]
         )
-        self.assertEqual(qty, 525)
+        self.assertEqual(qty, 500)
+        self.assertAlmostEqual(avg, 1.0)
 
     def test_fee_reduces_cash(self) -> None:
         qty, _ = materialize_position_from_transactions(

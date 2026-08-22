@@ -19,6 +19,7 @@ from services.wealth_goal_models import (
 )
 from services.wealth_performance_engine import aggregate_cash_flows
 from services.wealth_projection_engine import project_wealth_goal
+from services.wealth_planning_fx import PlanningFxSchedule
 
 PLANNING_ASSUMPTION_NOTE = "Planlama varsayımı — tahmin değildir."
 USER_ASSUMPTION_NOTE = "Kullanıcı varsayımı; NABI tahmini değildir."
@@ -199,6 +200,7 @@ def build_what_if_projection(
     annual_return_rate: Decimal,
     target_date: Optional[date] = None,
     conversion: Optional[ConversionAssumption] = None,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
     goal: Optional[WealthGoal] = None,
 ) -> ProjectionResult:
     base_goal = goal or default_wealth_goal_2031()
@@ -221,6 +223,7 @@ def build_what_if_projection(
         contribution_plan=plan,
         scenario=ReturnScenario("What-if", annual_return_rate),
         conversion=conversion,
+        fx_schedule=fx_schedule,
     )
 
 
@@ -238,6 +241,7 @@ def solve_required_starting_monthly(
     annual_increase_rate: Decimal,
     annual_return_rate: Decimal,
     conversion: Optional[ConversionAssumption] = None,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
     goal: Optional[WealthGoal] = None,
     tolerance: Decimal = Decimal("1.00"),
     max_monthly: Decimal = Decimal("100000000"),
@@ -259,6 +263,7 @@ def solve_required_starting_monthly(
             ),
             scenario=scenario,
             conversion=conversion,
+            fx_schedule=fx_schedule,
         )
 
     probe = _run(Decimal("0"))

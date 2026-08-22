@@ -68,6 +68,7 @@ from services.wealth_timeline_service import WealthTimelineService
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
 from components.wealth_goal_center_ui import render_wealth_goal_center
 from components.wealth_history_ui import render_wealth_history
+from services.wealth_external_cash_flow import contribution_reconciliations_for_wealth
 from services.wealth_history_service import build_wealth_history
 
 
@@ -747,6 +748,10 @@ with tab_history:
         timeline_view.snapshots,
         transactions=wealth.list_transactions(limit=2000),
         account_ids=[str(row.get("id") or "") for row in accounts],
+        contribution_reconciliations=contribution_reconciliations_for_wealth(
+            wealth, str(portfolio["id"])
+        ),
+        portfolio_id=str(portfolio["id"]),
     )
     render_wealth_history(history_view)
 

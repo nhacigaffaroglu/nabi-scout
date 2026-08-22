@@ -20,6 +20,7 @@ from services.wealth_goal_models import (
     default_wealth_goal_2031,
     quantize_money,
 )
+from services.wealth_planning_fx import PlanningFxSchedule, conversion_for_year
 
 
 def month_end(year: int, month: int) -> date:
@@ -78,18 +79,30 @@ def _convert_contribution(
     plan: ContributionPlan,
     goal: WealthGoal,
     conversion: Optional[ConversionAssumption],
+    fx_schedule: Optional[PlanningFxSchedule] = None,
+    step_year: Optional[int] = None,
 ) -> Tuple[Optional[Decimal], Tuple[ProjectionLimitation, ...]]:
     plan_ccy = plan.currency.strip().upper()
     goal_ccy = goal.currency.strip().upper()
     if plan_ccy == goal_ccy:
         return amount, ()
-    if conversion is None:
+    active = conversion
+    if fx_schedule is not None and step_year is not None:
+        active = conversion_for_year(
+            fx_schedule,
+            year=step_year,
+            contribution_currency=plan_ccy,
+            goal_currency=goal_ccy,
+        )
+        if active is None:
+            return None, (ProjectionLimitation.FX_CONVERSION_REQUIRED,)
+    if active is None:
         return None, (ProjectionLimitation.FX_CONVERSION_REQUIRED,)
-    from_ccy = conversion.from_currency.strip().upper()
-    to_ccy = conversion.to_currency.strip().upper()
+    from_ccy = active.from_currency.strip().upper()
+    to_ccy = active.to_currency.strip().upper()
     if from_ccy != plan_ccy or to_ccy != goal_ccy:
         return None, (ProjectionLimitation.CONTRIBUTION_CURRENCY_MISMATCH,)
-    return conversion.convert(amount), ()
+    return active.convert(amount), ()
 
 
 def _status_for(
@@ -118,6 +131,7 @@ def project_wealth_goal(
     contribution_plan: ContributionPlan,
     scenario: ReturnScenario,
     conversion: Optional[ConversionAssumption] = None,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
 ) -> ProjectionResult:
     goal = goal or default_wealth_goal_2031()
     goal.validate()
@@ -154,13 +168,28 @@ def project_wealth_goal(
         progress = (usable_lower_bound / target) * Decimal(100)
         already_reached = usable_lower_bound >= target
 
+    schedule_incomplete = False
+    if fx_schedule is not None:
+        schedule_incomplete = not fx_schedule.is_complete(
+            as_of=as_of_date,
+            target_date=goal.target_date,
+            contribution_currency=contribution_plan.currency,
+            goal_currency=goal.currency,
+        )
+        if schedule_incomplete:
+            limitations.append(ProjectionLimitation.FX_CONVERSION_REQUIRED)
     converted_probe, conv_limits = _convert_contribution(
         contribution_plan.starting_monthly,
         plan=contribution_plan,
         goal=goal,
         conversion=conversion,
+        fx_schedule=fx_schedule,
+        step_year=as_of_date.year,
     )
-    limitations.extend(conv_limits)
+    if schedule_incomplete:
+        converted_probe = None
+    else:
+        limitations.extend(conv_limits)
     can_project = usable_lower_bound is not None and converted_probe is not None
     steps = iter_month_ends_after(as_of_date, goal.target_date)
 
@@ -190,6 +219,8 @@ def project_wealth_goal(
                 plan=contribution_plan,
                 goal=goal,
                 conversion=conversion,
+                fx_schedule=fx_schedule,
+                step_year=step.year,
             )
             if usd_contrib is None:
                 can_project = False
@@ -269,6 +300,7 @@ def project_wealth_goal_scenarios(
     contribution_plan: ContributionPlan,
     scenarios: Optional[Sequence[ReturnScenario]] = None,
     conversion: Optional[ConversionAssumption] = None,
+    fx_schedule: Optional[PlanningFxSchedule] = None,
 ) -> Tuple[ProjectionResult, ...]:
     selected = tuple(scenarios) if scenarios is not None else default_return_scenarios()
     return tuple(
@@ -279,6 +311,7 @@ def project_wealth_goal_scenarios(
             contribution_plan=contribution_plan,
             scenario=scenario,
             conversion=conversion,
+            fx_schedule=fx_schedule,
         )
         for scenario in selected
     )

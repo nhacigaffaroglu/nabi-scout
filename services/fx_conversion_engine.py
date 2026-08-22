@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.fx_rate_contract import FxConversionResult
 from services.fx_rate_service import FxRateService
 from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
@@ -25,6 +26,25 @@ class FxAdjustedTotals:
         return asdict(self)
 
 
+def convert_native_to_base_market_value(
+    *,
+    native_market_value: Optional[float],
+    native_currency: str,
+    base_currency: str,
+    fx_service: FxRateService,
+) -> FxConversionResult:
+    """Canonical native MV → base MV.
+
+    USDTRY is TRY per 1 USD. TRY→USD divides; never multiply by USDTRY.
+    Same-currency amounts are returned unchanged (no second conversion).
+    """
+    return fx_service.convert_amount(
+        amount=native_market_value,
+        from_currency=native_currency,
+        to_currency=base_currency,
+    )
+
+
 def apply_fx_to_position_rows(
     rows: List[PositionValuationRow],
     *,
@@ -39,11 +59,28 @@ def apply_fx_to_position_rows(
     limitations: List[str] = []
 
     for row in rows:
+        native_currency = normalize_currency(row.valuation_currency)
         if not row.price_available or row.market_value is None:
-            adjusted.append(row)
+            if native_currency != base:
+                probe = convert_native_to_base_market_value(
+                    native_market_value=1.0,
+                    native_currency=native_currency,
+                    base_currency=base,
+                    fx_service=fx_service,
+                )
+                adjusted.append(
+                    replace(
+                        row,
+                        fx_unavailable=bool(probe.unavailable),
+                        fx_rate_used=probe.rate_used if probe.converted else None,
+                        fx_rate_date=probe.rate_date,
+                        fx_stale=probe.stale,
+                    )
+                )
+            else:
+                adjusted.append(row)
             continue
 
-        native_currency = normalize_currency(row.valuation_currency)
         native_mv = float(row.market_value)
 
         if native_currency == base:
@@ -51,10 +88,11 @@ def apply_fx_to_position_rows(
             adjusted.append(row)
             continue
 
-        fx = fx_service.convert_amount(
-            amount=native_mv,
-            from_currency=native_currency,
-            to_currency=base,
+        fx = convert_native_to_base_market_value(
+            native_market_value=native_mv,
+            native_currency=native_currency,
+            base_currency=base,
+            fx_service=fx_service,
         )
         if fx.converted and fx.converted_amount is not None:
             if fx.stale:
@@ -97,6 +135,7 @@ def apply_fx_to_position_rows(
                     fx_rate_date=fx.rate_date,
                     fx_stale=fx.stale,
                     fx_unavailable=False,
+                    price_as_of=row.price_as_of,
                 )
             )
         else:
@@ -126,6 +165,7 @@ def apply_fx_to_position_rows(
                     native_market_value=native_mv,
                     fx_converted=False,
                     fx_unavailable=True,
+                    price_as_of=row.price_as_of,
                 )
             )
 
@@ -191,9 +231,7 @@ def apply_fx_to_portfolio_view(
         priced_total_unrealized_pl=rerolled.priced_total_unrealized_pl,
         priced_position_count=rerolled.priced_position_count,
         unpriced_position_count=rerolled.unpriced_position_count,
-        foreign_currency_position_count=sum(
-            1 for row in adjusted_rows if row.fx_unavailable and row.price_available
-        ),
+        foreign_currency_position_count=rerolled.foreign_currency_position_count,
         total_position_count=rerolled.total_position_count,
         mixed_currency_warning=mixed_currency_warning_from_rows(
             adjusted_rows, view.base_currency
@@ -201,9 +239,7 @@ def apply_fx_to_portfolio_view(
         fx_supported=totals.conversion_coverage_pct is not None,
         priced_positions=rerolled.priced_positions,
         unpriced_positions=rerolled.unpriced_positions,
-        foreign_currency_positions=[
-            row for row in adjusted_rows if row.fx_unavailable and row.price_available
-        ],
+        foreign_currency_positions=rerolled.foreign_currency_positions,
         asset_class_allocation=rerolled.asset_class_allocation,
         account_allocation=rerolled.account_allocation,
         health=rerolled.health,

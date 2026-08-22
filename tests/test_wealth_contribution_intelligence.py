@@ -30,6 +30,7 @@ from services.wealth_goal_models import (
     default_contribution_plan,
     default_wealth_goal_2031,
 )
+from services.wealth_external_cash_flow import ContributionReconciliation
 from services.wealth_goal_planning import (
     monthly_for_year,
     planning_conversion,
@@ -90,6 +91,13 @@ def _txn(
     }
 
 
+def _recon(through: date = AS_OF, portfolio_id: str = "pf-1") -> tuple[ContributionReconciliation, ...]:
+    return (ContributionReconciliation(portfolio_id=portfolio_id, reconciled_through=through),)
+
+
+_DEFAULT_TRACKING = object()
+
+
 def _intel(
     transactions,
     *,
@@ -100,7 +108,13 @@ def _intel(
     as_of=AS_OF,
     start_snapshot=None,
     end_snapshot=None,
+    reconciled: bool = False,
+    contribution_reconciliations=None,
+    tracking_start=_DEFAULT_TRACKING,
 ):
+    recons = contribution_reconciliations
+    if recons is None and reconciled:
+        recons = _recon(as_of)
     return build_contribution_intelligence(
         as_of_date=as_of,
         current=current or _usd("10000", complete=False, unvalued=("BIMAS",)),
@@ -111,6 +125,10 @@ def _intel(
         conversion=conversion,
         start_snapshot=start_snapshot,
         end_snapshot=end_snapshot,
+        contribution_reconciliations=recons,
+        contribution_tracking_start=(
+            date(as_of.year, 1, 1) if tracking_start is _DEFAULT_TRACKING else tracking_start
+        ),
     )
 
 
@@ -169,7 +187,7 @@ class MonthlyPlanTests(unittest.TestCase):
 
 class ActualContributionSemanticsTests(unittest.TestCase):
     def test_monthly_actual_deposits(self) -> None:
-        view = _intel([_txn(TXN_TYPE_DEPOSIT, 40000)])
+        view = _intel([_txn(TXN_TYPE_DEPOSIT, 40000)], reconciled=True)
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
         self.assertEqual(
             view.monthly_evidence_quality, ContributionEvidenceQuality.COMPLETE
@@ -180,7 +198,8 @@ class ActualContributionSemanticsTests(unittest.TestCase):
             [
                 _txn(TXN_TYPE_DEPOSIT, 50000),
                 _txn(TXN_TYPE_WITHDRAW, 10000, executed_at="2026-08-12T12:00:00+00:00"),
-            ]
+            ],
+            reconciled=True,
         )
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
@@ -189,7 +208,8 @@ class ActualContributionSemanticsTests(unittest.TestCase):
             [
                 _txn(TXN_TYPE_DEPOSIT, 40000),
                 _txn(TXN_TYPE_BUY, 25000, currency="USD"),
-            ]
+            ],
+            reconciled=True,
         )
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
@@ -198,7 +218,8 @@ class ActualContributionSemanticsTests(unittest.TestCase):
             [
                 _txn(TXN_TYPE_DEPOSIT, 40000),
                 _txn(TXN_TYPE_SELL, 18000, currency="USD"),
-            ]
+            ],
+            reconciled=True,
         )
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
@@ -210,6 +231,7 @@ class ActualContributionSemanticsTests(unittest.TestCase):
                 _txn(TXN_TYPE_TRANSFER_IN, 50000, account_id="acc-2"),
             ],
             account_ids=["acc-1", "acc-2"],
+            reconciled=True,
         )
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
@@ -218,7 +240,8 @@ class ActualContributionSemanticsTests(unittest.TestCase):
             [
                 _txn(TXN_TYPE_DEPOSIT, 40000),
                 _txn(TXN_TYPE_DIVIDEND, 8000),
-            ]
+            ],
+            reconciled=True,
         )
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
@@ -238,12 +261,27 @@ class ActualContributionSemanticsTests(unittest.TestCase):
 
 class EvidenceStateTests(unittest.TestCase):
     def test_evidence_complete(self) -> None:
-        view = _intel([_txn(TXN_TYPE_DEPOSIT, 10000)])
+        view = _intel([_txn(TXN_TYPE_DEPOSIT, 10000)], reconciled=True)
         self.assertEqual(
             view.monthly_evidence_quality, ContributionEvidenceQuality.COMPLETE
         )
         self.assertEqual(view.ytd_evidence_quality, ContributionEvidenceQuality.COMPLETE)
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("10000.00"))
+
+    def test_deposit_without_reconciliation_is_partial(self) -> None:
+        view = _intel([_txn(TXN_TYPE_DEPOSIT, 10000)])
+        self.assertEqual(
+            view.monthly_evidence_quality, ContributionEvidenceQuality.PARTIAL
+        )
+        self.assertIsNone(view.actual_monthly_net_contribution)
+        self.assertIsNone(view.monthly_remaining)
+
+    def test_reconciled_zero_flow_is_complete_zero(self) -> None:
+        view = _intel([], reconciled=True)
+        self.assertEqual(
+            view.monthly_evidence_quality, ContributionEvidenceQuality.COMPLETE
+        )
+        self.assertEqual(view.actual_monthly_net_contribution, Decimal("0.00"))
 
     def test_evidence_partial(self) -> None:
         view = _intel([_txn(TXN_TYPE_SELL, 3000, currency="USD")])
@@ -271,21 +309,21 @@ class EvidenceStateTests(unittest.TestCase):
 
 class MonthlyActionTests(unittest.TestCase):
     def test_monthly_remaining(self) -> None:
-        view = _intel([_txn(TXN_TYPE_DEPOSIT, 40000)])
+        view = _intel([_txn(TXN_TYPE_DEPOSIT, 40000)], reconciled=True)
         self.assertEqual(view.monthly_remaining, Decimal("20000.00"))
         self.assertEqual(view.monthly_surplus, Decimal("0.00"))
         self.assertEqual(view.monthly_action_status, MonthlyActionStatus.CONTRIBUTION_DUE)
         self.assertIn("20,000.00 TRY", view.monthly_action_summary)
 
     def test_monthly_surplus(self) -> None:
-        view = _intel([_txn(TXN_TYPE_DEPOSIT, 80000)])
+        view = _intel([_txn(TXN_TYPE_DEPOSIT, 80000)], reconciled=True)
         self.assertEqual(view.monthly_remaining, Decimal("0.00"))
         self.assertEqual(view.monthly_surplus, Decimal("20000.00"))
         self.assertEqual(view.monthly_action_status, MonthlyActionStatus.AHEAD)
         self.assertEqual(view.monthly_action_summary, "Bu ayki katkı planı karşılandı.")
 
     def test_on_plan_and_incomplete_action_copy(self) -> None:
-        on_plan = _intel([_txn(TXN_TYPE_DEPOSIT, 60000)])
+        on_plan = _intel([_txn(TXN_TYPE_DEPOSIT, 60000)], reconciled=True)
         self.assertEqual(on_plan.monthly_action_status, MonthlyActionStatus.ON_PLAN)
         self.assertEqual(on_plan.monthly_action_summary, "Bu ayki katkı planı karşılandı.")
         incomplete = _intel([_txn(TXN_TYPE_BUY, 1, currency="USD")])
@@ -313,14 +351,16 @@ class YtdTrackingTests(unittest.TestCase):
                 _txn(TXN_TYPE_DEPOSIT, 10000, executed_at="2026-03-01T12:00:00+00:00"),
                 _txn(TXN_TYPE_DEPOSIT, 40000),
                 _txn(TXN_TYPE_FEE, 50),
-            ]
+            ],
+            reconciled=True,
         )
         self.assertEqual(view.actual_ytd_net_contribution, Decimal("50000.00"))
         self.assertEqual(view.actual_monthly_net_contribution, Decimal("40000.00"))
 
     def test_ytd_completion(self) -> None:
         view = _intel(
-            [_txn(TXN_TYPE_DEPOSIT, 240000, executed_at="2026-02-01T12:00:00+00:00")]
+            [_txn(TXN_TYPE_DEPOSIT, 240000, executed_at="2026-02-01T12:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(view.ytd_remaining, Decimal("240000.00"))
         self.assertEqual(view.ytd_completion_pct, Decimal("50.00"))
@@ -474,6 +514,7 @@ class PerformancePlanningTests(unittest.TestCase):
         view = _intel(
             [_txn(TXN_TYPE_DEPOSIT, 10000)],
             current=_usd("10000"),
+            reconciled=True,
         )
         self.assertEqual(
             view.ytd_evidence_quality, ContributionEvidenceQuality.COMPLETE
@@ -487,6 +528,7 @@ class PerformancePlanningTests(unittest.TestCase):
         view = _intel(
             [_txn(TXN_TYPE_DEPOSIT, 900000, executed_at="2026-02-01T12:00:00+00:00")],
             current=_usd("10000"),
+            reconciled=True,
         )
         self.assertEqual(view.attribution_status, PlanAttributionStatus.AHEAD)
 
@@ -508,6 +550,7 @@ class PerformancePlanningTests(unittest.TestCase):
             plan=plan,
             start_snapshot=start,
             end_snapshot=end,
+            reconciled=True,
         )
         self.assertTrue(view.planning_benchmark_available)
         self.assertEqual(view.attribution_status, PlanAttributionStatus.PERFORMANCE_GAP)
@@ -529,6 +572,7 @@ class PerformancePlanningTests(unittest.TestCase):
             plan=ContributionPlan(Decimal("60000"), "USD", Decimal("0")),
             start_snapshot=start,
             end_snapshot=end,
+            reconciled=True,
         )
         self.assertEqual(view.attribution_status, PlanAttributionStatus.BOTH)
 
@@ -548,6 +592,7 @@ class PerformancePlanningTests(unittest.TestCase):
                 captured_at="2026-08-17T23:59:59+00:00",
                 value=10000.0,
             ),
+            reconciled=True,
         )
         self.assertIsNotNone(probe.planning_path_value)
         path = float(probe.planning_path_value)
@@ -561,6 +606,7 @@ class PerformancePlanningTests(unittest.TestCase):
                 captured_at="2026-08-17T23:59:59+00:00",
                 value=path,
             ),
+            reconciled=True,
         )
         self.assertEqual(view.attribution_status, PlanAttributionStatus.ON_TRACK)
 
@@ -580,6 +626,7 @@ class PerformancePlanningTests(unittest.TestCase):
                 captured_at="2026-08-17T23:59:59+00:00",
                 value=20000.0,
             ),
+            reconciled=True,
         )
         self.assertEqual(view.attribution_status, PlanAttributionStatus.AHEAD)
 
@@ -587,6 +634,7 @@ class PerformancePlanningTests(unittest.TestCase):
         view = _intel(
             [_txn(TXN_TYPE_DEPOSIT, 480000, executed_at="2026-02-01T12:00:00+00:00")],
             current=_usd("10000"),
+            reconciled=True,
         )
         self.assertEqual(view.ytd_evidence_quality, ContributionEvidenceQuality.COMPLETE)
         self.assertEqual(view.ytd_remaining, Decimal("0.00"))
@@ -639,9 +687,18 @@ class SafetyAndUiTests(unittest.TestCase):
         ui = Path("components/wealth_goal_center_ui.py").read_text(encoding="utf-8")
         self.assertIn('render_section_title("Bu Ay")', ui)
         self.assertIn("build_contribution_intelligence", ui)
-        self.assertEqual(ui.count("wealth_os_2031_usdtry"), 2)
+        self.assertIn("Kur varsayımlarını kaydet", ui)
+        self.assertIn("Planlama Kur Varsayımları", ui)
+        self.assertNotIn("wealth_os_2031_usdtry", ui)
         self.assertIn("st.caption(USER_ASSUMPTION_NOTE)", ui)
-        self.assertIn("Kanıt eksik", ui)
+        self.assertIn("CONTRIBUTION_HISTORY_PARTIAL_COPY", ui)
+        self.assertIn("CONTRIBUTION_HISTORY_UNAVAILABLE_COPY", ui)
+        self.assertIn("format_contribution_actual_label", ui)
+        self.assertIn("render_contribution_reconciliation_action", ui)
+        self.assertIn("CONTRIBUTION_TRACKING_UNCONFIGURED_COPY", ui)
+        self.assertIn("CONTRIBUTION_TRACKING_NOT_TRACKED_COPY", ui)
+        self.assertIn("record_tracked_external_cash_flow", ui)
+        self.assertIn("Para Girişi", ui)
         self.assertNotIn("60000", ui)
         self.assertIn("Plan ve Performans", ui)
 

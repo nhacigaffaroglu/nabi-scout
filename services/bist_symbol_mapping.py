@@ -10,6 +10,90 @@ BIST_PORTFOLIO_SYMBOLS = frozenset({"BIMAS", "ASELS", "TUPRS"})
 BIST_EXCHANGES = frozenset({"IST", "BIST", "ISTANBUL"})
 US_MARKETS = frozenset({"US", "USA", "ABD", "NASDAQ", "NYSE", "AMEX"})
 
+# Proven Prompt 8 mappings. Onboarding quotes these tickers; it does not search.
+CANONICAL_BIST_PROVIDER_MAPPINGS = {
+    "TUPRS": {
+        "portfolio_symbol": "TUPRS",
+        "provider_symbol": "TUPRS.IS",
+        "company_name": "Türkiye Petrol Rafinerileri A.S.",
+        "currency": "TRY",
+        "exchange": "IST",
+        "market": "TR",
+    },
+    "ASELS": {
+        "portfolio_symbol": "ASELS",
+        "provider_symbol": "ASELS.IS",
+        "company_name": "Aselsan Elektronik Sanayi ve Ticaret A.S. Class B",
+        "currency": "TRY",
+        "exchange": "IST",
+        "market": "TR",
+    },
+    "BIMAS": {
+        "portfolio_symbol": "BIMAS",
+        "provider_symbol": "BIMAS.IS",
+        "company_name": "BIM Birlesik Magazalar A.S.",
+        "currency": "TRY",
+        "exchange": "IST",
+        "market": "TR",
+    },
+}
+
+# Adapter-local Alpha Vantage Istanbul tickers. Canonical assets stay TUPRS/ASELS/BIMAS.
+ALPHA_VANTAGE_BIST_PROVIDER_SYMBOLS = {
+    "TUPRS": "TUPRS.IS",
+    "ASELS": "ASELS.IS",
+    "BIMAS": "BIMAS.IS",
+}
+
+# Prompt 10 live capability: Alpha Vantage GLOBAL_QUOTE does not cover these BIST names.
+ALPHA_VANTAGE_BIST_CAPABLE = False
+
+# Adapter-local Twelve Data Borsa Istanbul identity. Canonical assets stay TUPRS/ASELS/BIMAS.
+TWELVE_DATA_BIST_MIC = "XIST"
+TWELVE_DATA_BIST_EXCHANGES = frozenset({"XIST", "BIST", "IST", "ISTANBUL"})
+TWELVE_DATA_BIST_PROVIDER_REQUESTS = {
+    "TUPRS": {"symbol": "TUPRS", "mic_code": TWELVE_DATA_BIST_MIC},
+    "ASELS": {"symbol": "ASELS", "mic_code": TWELVE_DATA_BIST_MIC},
+    "BIMAS": {"symbol": "BIMAS", "mic_code": TWELVE_DATA_BIST_MIC},
+}
+
+# Official Borsa İstanbul daily bulletin instrument series. Canonical assets stay TUPRS/ASELS/BIMAS.
+BORSA_ISTANBUL_EOD_SERIES_SUFFIX = ".E"
+BORSA_ISTANBUL_EOD_PROVIDER_SERIES = {
+    "TUPRS": "TUPRS.E",
+    "ASELS": "ASELS.E",
+    "BIMAS": "BIMAS.E",
+}
+
+
+def canonical_bist_provider_mapping(portfolio_symbol: str) -> Optional[Dict[str, str]]:
+    wanted = normalize_symbol(portfolio_symbol)
+    row = CANONICAL_BIST_PROVIDER_MAPPINGS.get(wanted)
+    return dict(row) if row else None
+
+
+def alpha_vantage_bist_provider_symbol(portfolio_symbol: str) -> Optional[str]:
+    wanted = normalize_symbol(portfolio_symbol)
+    return ALPHA_VANTAGE_BIST_PROVIDER_SYMBOLS.get(wanted)
+
+
+def twelve_data_bist_request(portfolio_symbol: str) -> Optional[Dict[str, str]]:
+    wanted = normalize_symbol(portfolio_symbol)
+    row = TWELVE_DATA_BIST_PROVIDER_REQUESTS.get(wanted)
+    return dict(row) if row else None
+
+
+def borsa_istanbul_eod_series(portfolio_symbol: str) -> Optional[str]:
+    wanted = normalize_symbol(portfolio_symbol)
+    if not wanted:
+        return None
+    known = BORSA_ISTANBUL_EOD_PROVIDER_SERIES.get(wanted)
+    if known:
+        return known
+    if wanted.isalnum():
+        return f"{wanted}{BORSA_ISTANBUL_EOD_SERIES_SUFFIX}"
+    return None
+
 
 def fmp_search_hits(fmp_client, query: str) -> List[Dict[str, Any]]:
     search = getattr(fmp_client, "search_symbol", None)

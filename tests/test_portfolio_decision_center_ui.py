@@ -36,7 +36,9 @@ from services.portfolio_intelligence_contract import (
     PositionValuationRow,
 )
 from services.wealth_contract import TXN_TYPE_BUY, TXN_TYPE_DEPOSIT
-from services.wealth_goal_models import ContributionPlan
+from services.wealth_external_cash_flow import ContributionReconciliation
+from services.wealth_goal_models import ContributionPlan, default_wealth_goal_2031
+from services.wealth_planning_fx import required_planning_fx_years, schedule_from_mapping
 
 AS_OF = date(2026, 8, 18)
 ACCOUNT = "acc-1"
@@ -238,6 +240,7 @@ def _live_like_decision() -> PortfolioDecisionView:
         as_of_date=AS_OF,
         transactions=[_buy(1000)],
         account_ids=[ACCOUNT],
+        contribution_tracking_start=date(2026, 1, 1),
     )
 
 
@@ -305,7 +308,7 @@ class PresentationTests(unittest.TestCase):
         presented = present_action_center(_live_like_decision())
         fx = next(row for row in presented.visible_actions if row.id == "missing_planning_fx")
         self.assertEqual(fx.title, "2031 planı için kur varsayımı gerekli")
-        self.assertIn("planlama kur varsayımı", fx.explanation)
+        self.assertIn("planlama kur varsayımları", fx.explanation)
         self.assertIn("tahmin değildir", fx.explanation)
         self.assertEqual(fx.direction, FX_DIRECTION)
         text = flatten_presentation_text(presented)
@@ -362,6 +365,10 @@ class PresentationTests(unittest.TestCase):
             ),
             transactions=[_deposit(20000)],
             account_ids=[ACCOUNT],
+            contribution_reconciliations=(
+                ContributionReconciliation(portfolio_id="pf-1", reconciled_through=AS_OF),
+            ),
+            contribution_tracking_start=date(2026, 1, 1),
         )
         presented = present_action_center(decision)
         self.assertTrue(presented.healthy)
@@ -408,7 +415,7 @@ class PresentationTests(unittest.TestCase):
         self.assertNotIn("generated_from", summary)
         self.assertNotIn("{", summary)
 
-    def test_session_fx_does_not_invent_rate_when_absent(self) -> None:
+    def test_session_fx_does_not_complete_yearly_assumptions(self) -> None:
         wealth = MagicMock()
         wealth.list_assets.return_value = []
         wealth.list_positions.return_value = []
@@ -421,15 +428,64 @@ class PresentationTests(unittest.TestCase):
             as_of=AS_OF,
         )
         self.assertIn("missing_planning_fx", [row.id for row in decision.actions])
-        converted = build_decision_for_ui(
+        still_missing = build_decision_for_ui(
             _partial_bist_view(),
             wealth=wealth,
             accounts=[{"id": ACCOUNT}],
             session_state={"wealth_os_2031_usdtry": 34.0},
             as_of=AS_OF,
         )
+        self.assertIn("missing_planning_fx", [row.id for row in still_missing.actions])
+        years = required_planning_fx_years(AS_OF, default_wealth_goal_2031().target_date)
+        complete = schedule_from_mapping({year: Decimal("40") for year in years})
+        with patch(
+            "components.portfolio_decision_center_ui.load_planning_fx_schedule",
+            return_value=complete,
+        ):
+            converted = build_decision_for_ui(
+                _partial_bist_view(),
+                wealth=wealth,
+                accounts=[{"id": ACCOUNT}],
+                session_state={},
+                as_of=AS_OF,
+            )
         self.assertNotIn("missing_planning_fx", [row.id for row in converted.actions])
         wealth.list_transactions.assert_called_with(limit=2000)
+
+    def test_wrapper_loads_reconciliation_and_does_not_treat_partial_as_zero(self) -> None:
+        wealth = MagicMock()
+        wealth.list_assets.return_value = []
+        wealth.list_positions.return_value = []
+        wealth.list_transactions.return_value = [_buy(1000)]
+        without = build_decision_for_ui(
+            _partial_bist_view(),
+            wealth=wealth,
+            accounts=[{"id": ACCOUNT}],
+            session_state={},
+            as_of=AS_OF,
+            portfolio_id="pf-1",
+        )
+        contrib = next(row for row in without.actions if row.id == "contribution_evidence_incomplete")
+        self.assertIsNone(contrib.context["actual_monthly_net_contribution"])
+        self.assertIsNone(contrib.context["monthly_remaining"])
+        self.assertFalse(contrib.context["actual_is_zero"])
+        recon = ContributionReconciliation(portfolio_id="pf-1", reconciled_through=AS_OF)
+        with patch(
+            "components.portfolio_decision_center_ui.contribution_reconciliations_for_wealth",
+            return_value=(recon,),
+        ), patch(
+            "components.portfolio_decision_center_ui.load_contribution_tracking_start",
+            return_value=date(2026, 1, 1),
+        ):
+            complete = build_decision_for_ui(
+                _partial_bist_view(),
+                wealth=wealth,
+                accounts=[{"id": ACCOUNT}],
+                session_state={},
+                as_of=AS_OF,
+                portfolio_id="pf-1",
+            )
+        self.assertNotIn("contribution_evidence_incomplete", [row.id for row in complete.actions])
 
 
 def _fake_streamlit(recorded: list[str]):
@@ -464,6 +520,22 @@ def _fake_streamlit(recorded: list[str]):
         def expander(self, label, **_k):
             recorded.append(str(label))
             return _Ctx()
+
+        def error(self, message, **_k):
+            recorded.append(str(message))
+
+        def rerun(self):
+            return None
+
+        def date_input(self, label, **_k):
+            recorded.append(str(label))
+            from datetime import date
+
+            return _k.get("value") or date.today()
+
+        def button(self, label, **_k):
+            recorded.append(str(label))
+            return False
 
     return _St()
 

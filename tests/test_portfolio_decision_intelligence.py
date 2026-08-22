@@ -38,6 +38,7 @@ from services.wealth_goal_models import (
     default_wealth_goal_2031,
 )
 from services.wealth_goal_planning import solve_required_starting_monthly
+from services.wealth_external_cash_flow import ContributionReconciliation
 from services.wealth_history_service import (
     HistoryAttributionStatus,
     WealthHistoryState,
@@ -46,6 +47,10 @@ from services.wealth_history_service import (
 
 AS_OF = date(2026, 8, 18)
 ACCOUNT = "acc-1"
+
+
+def _recon(through: date = AS_OF):
+    return (ContributionReconciliation(portfolio_id="pf-1", reconciled_through=through),)
 PROVIDER_TOKENS = (
     "FMPClient",
     "fmp_client",
@@ -316,10 +321,12 @@ class ContributionEvidenceTests(unittest.TestCase):
                 currency="USD",
                 annual_increase_rate=Decimal("0"),
             ),
+            contribution_tracking_start=date(2026, 1, 1),
         )
         action = next(row for row in view.actions if row.id == "contribution_evidence_incomplete")
         self.assertEqual(action.category, DecisionCategory.DATA)
         self.assertIsNone(action.context["actual_monthly_net_contribution"])
+        self.assertIsNone(action.context["monthly_remaining"])
         self.assertFalse(action.context["actual_is_zero"])
         self.assertIn("not deposits", action.explanation.lower())
 
@@ -365,6 +372,7 @@ class GoalPlanTests(unittest.TestCase):
             conversion=conversion,
             transactions=[_deposit(50000)],
             account_ids=[ACCOUNT],
+            contribution_reconciliations=_recon(),
         )
         self.assertIn("contribution_plan_below_required", _ids(view))
         action = next(row for row in view.actions if row.id == "contribution_plan_below_required")
@@ -395,6 +403,7 @@ class GoalPlanTests(unittest.TestCase):
             conversion=conversion,
             transactions=[_deposit(50000)],
             account_ids=[ACCOUNT],
+            contribution_reconciliations=_recon(),
         )
         self.assertNotIn("contribution_plan_below_required", _ids(view))
 
@@ -411,6 +420,7 @@ class ConcentrationTests(unittest.TestCase):
             conversion=None,
             transactions=[_deposit(50000)],
             account_ids=[ACCOUNT],
+            contribution_reconciliations=_recon(),
         )
         action = next(row for row in view.actions if row.id == "concentration_review")
         self.assertEqual(action.category, DecisionCategory.PORTFOLIO)
@@ -458,6 +468,8 @@ class PerformanceAndFallbackTests(unittest.TestCase):
             ),
             transactions=[_deposit(20000)],
             account_ids=[ACCOUNT],
+            contribution_reconciliations=_recon(),
+            contribution_tracking_start=date(2026, 1, 1),
         )
         self.assertIn("continue_observation", _ids(view))
         self.assertNotIn("incomplete_valuation", _ids(view))

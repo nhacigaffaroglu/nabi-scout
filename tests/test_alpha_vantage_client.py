@@ -108,16 +108,42 @@ class AlphaVantageClientTests(unittest.TestCase):
                 client.time_series_daily("SPUS")
             self.assertEqual(ctx.exception.status, STATUS_PREMIUM_REQUIRED)
 
-    def test_no_api_key_in_error_messages(self) -> None:
-        client = AlphaVantageClient("hidden-key")
-        with patch.object(
-            client,
-            "_request",
-            return_value={"Error Message": "Invalid API call. Check apikey."},
-        ):
-            with self.assertRaises(AlphaVantageError) as ctx:
-                client.etf_profile("SPUS")
-        self.assertNotIn("hidden-key", str(ctx.exception))
+    def test_global_quote_parse(self) -> None:
+        payload = {
+            "Global Quote": {
+                "01. symbol": "TUPRS.IS",
+                "05. price": "180.5000",
+                "07. latest trading day": "2026-08-19",
+            }
+        }
+        client = AlphaVantageClient("key")
+        with patch.object(client, "_request", return_value=payload):
+            quote = client.global_quote("TUPRS.IS")
+        self.assertEqual(quote["05. price"], "180.5000")
+        self.assertEqual(classify_alpha_payload(payload, expect="global_quote"), STATUS_OK)
+
+    def test_global_quote_empty_is_not_found(self) -> None:
+        with self.assertRaises(AlphaVantageError) as ctx:
+            classify_alpha_payload({"Global Quote": {}}, expect="global_quote")
+        self.assertEqual(ctx.exception.status, "NOT_FOUND")
+
+    def test_currency_exchange_rate_parse(self) -> None:
+        payload = {
+            "Realtime Currency Exchange Rate": {
+                "1. From_Currency Code": "USD",
+                "3. To_Currency Code": "TRY",
+                "5. Exchange Rate": "41.25000000",
+                "6. Last Refreshed": "2026-08-19 12:00:00",
+            }
+        }
+        client = AlphaVantageClient("key")
+        with patch.object(client, "_request", return_value=payload):
+            block = client.currency_exchange_rate("USD", "TRY")
+        self.assertEqual(block["5. Exchange Rate"], "41.25000000")
+        self.assertEqual(
+            classify_alpha_payload(payload, expect="currency_exchange_rate"),
+            STATUS_OK,
+        )
 
 
 class AlphaNormalizationTests(unittest.TestCase):

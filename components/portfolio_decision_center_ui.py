@@ -22,6 +22,11 @@ from services.wealth_goal_models import (
     default_wealth_goal_2031,
 )
 from services.wealth_goal_planning import planning_conversion
+from services.wealth_external_cash_flow import (
+    contribution_reconciliations_for_wealth,
+    load_contribution_tracking_start,
+)
+from services.wealth_planning_fx import load_planning_fx_schedule, missing_years_copy
 
 HEADING = "Şimdi neye odaklanmalıyım?"
 DISCLAIMER = (
@@ -81,7 +86,7 @@ LIMITATION_COPY = {
 }
 FX_DIRECTION = "Wealth → 2031 Hedef sekmesindeki planlama kuru alanını kullanın."
 CONTRIBUTION_DIRECTION = (
-    "Katkı takibi için yatırma/çekme geçmişi gerekir; alış kayıtları yeterli değildir."
+    "Katkı takibi için yatırma/çekme geçmişi ve mutabakat gerekir; alış kayıtları yeterli değildir."
 )
 PLAN_DIRECTION = "Wealth → 2031 Hedef sekmesinden katkı planını gözden geçirin."
 ALLOCATION_DIRECTION = (
@@ -197,6 +202,8 @@ def _present_action(action: DecisionAction) -> PresentedAction:
         )
     if action.id == "missing_planning_fx":
         pair = action.evidence[0] if action.evidence else "TRY->USD"
+        missing = action.context.get("missing_years") or ()
+        extra = missing_years_copy(tuple(int(year) for year in missing)) if missing else ""
         return PresentedAction(
             id=action.id,
             category_label=category,
@@ -204,9 +211,10 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             priority_tone=tone,
             title="2031 planı için kur varsayımı gerekli",
             explanation=(
-                "Gelecek TRY katkıları, açık bir planlama kur varsayımı olmadan "
-                "USD hedefe çevrilemez. Kullanıcı varsayımı bir tahmin değildir."
-            ),
+                "Gelecek TRY katkıları, açık yıllık planlama kur varsayımları olmadan "
+                "USD hedefe çevrilemez. Kullanıcı varsayımı bir tahmin değildir. "
+                + extra
+            ).strip(),
             evidence_lines=(f"Eksik planlama dönüşümü: {pair}",),
             limitation=limitation,
             direction=FX_DIRECTION,
@@ -217,16 +225,29 @@ def _present_action(action: DecisionAction) -> PresentedAction:
             or (action.evidence[0] if action.evidence else "")
         ).strip().upper()
         quality_label = EVIDENCE_QUALITY_LABELS.get(quality, "eksik")
+        from services.wealth_contribution_intelligence import (
+            CONTRIBUTION_HISTORY_PARTIAL_COPY,
+            CONTRIBUTION_HISTORY_UNAVAILABLE_COPY,
+            CONTRIBUTION_TRACKING_UNCONFIGURED_COPY,
+        )
+
+        scope = str(action.context.get("tracking_scope") or "").strip().upper()
+        if scope == "UNCONFIGURED":
+            explanation = CONTRIBUTION_TRACKING_UNCONFIGURED_COPY
+        elif quality == "UNAVAILABLE":
+            explanation = CONTRIBUTION_HISTORY_UNAVAILABLE_COPY
+        else:
+            explanation = (
+                f"{CONTRIBUTION_HISTORY_PARTIAL_COPY} "
+                "Alış (BUY) işlemleri nakit yatırma kanıtı değildir."
+            )
         return PresentedAction(
             id=action.id,
             category_label=category,
             priority_label=priority,
             priority_tone=tone,
             title="Katkı geçmişini tamamla",
-            explanation=(
-                "Alış (BUY) işlemleri nakit yatırma kanıtı değildir; gerçek katkı "
-                "takibi henüz tamamlanmadı."
-            ),
+            explanation=explanation,
             evidence_lines=(f"Katkı kanıtı: {quality_label}",),
             limitation=limitation,
             direction=CONTRIBUTION_DIRECTION,
@@ -392,9 +413,13 @@ def _evidence_summary(decision: PortfolioDecisionView) -> Tuple[str, ...]:
         lines.append("2031 projeksiyonu: kur varsayımı tarafı tamam veya gerekmiyor.")
     contrib = by_id.get("contribution_evidence_incomplete")
     if contrib:
-        lines.append(
-            "Katkı kanıtı: eksik — alış işlemleri nakit yatırma sayılmaz."
-        )
+        quality = str(contrib.context.get("evidence_quality") or "").strip().upper()
+        if quality == "UNAVAILABLE":
+            lines.append("Katkı kanıtı: yok — gerçekleşen tutar 0 varsayılmaz.")
+        else:
+            lines.append(
+                "Katkı kanıtı: kısmi — alış işlemleri nakit yatırma sayılmaz."
+            )
     else:
         lines.append("Katkı kanıtı: tamam")
     if "PERFORMANCE_EVIDENCE_INCOMPLETE" in decision.limitations:
@@ -524,15 +549,21 @@ def build_decision_for_ui(
             allocation_signals = allocation.signals
         except Exception:
             allocation_signals = None
+    recons = contribution_reconciliations_for_wealth(wealth, portfolio_id)
+    tracking_start = load_contribution_tracking_start(wealth, portfolio_id)
+    fx_schedule = load_planning_fx_schedule(wealth, portfolio_id)
     return build_portfolio_decision(
         portfolio_view,
         as_of_date=as_of,
-        conversion=_session_conversion(session_state),
+        conversion=None,
         transactions=transactions,
         account_ids=account_ids,
         positions=positions,
         assets=assets,
         allocation_signals=allocation_signals,
+        contribution_reconciliations=recons,
+        contribution_tracking_start=tracking_start,
+        fx_schedule=fx_schedule,
     )
 
 
@@ -623,6 +654,27 @@ def render_portfolio_decision_center(
             )
         presented = present_action_center(view)
         _render_presented(presented)
+        if wealth is not None and portfolio_id:
+            from components.wealth_goal_center_ui import render_contribution_reconciliation_action
+            from services.wealth_external_cash_flow import (
+                contribution_reconciliations_for_wealth,
+                load_contribution_tracking_start,
+            )
+
+            current = None
+            loaded = contribution_reconciliations_for_wealth(wealth, portfolio_id)
+            if loaded:
+                current = loaded[0]
+            as_of_date = getattr(view, "as_of_date", None)
+            from datetime import date as _date
+
+            render_contribution_reconciliation_action(
+                wealth=wealth,
+                portfolio_id=str(portfolio_id),
+                as_of=as_of_date or _date.today(),
+                current=current,
+                tracking_start=load_contribution_tracking_start(wealth, portfolio_id),
+            )
         return presented
     except Exception:
         _render_unavailable()

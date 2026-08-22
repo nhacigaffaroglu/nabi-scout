@@ -13,6 +13,8 @@ from components.nabi_design_system import (
 )
 from services.ui_formatters import format_date_dmy
 from services.wealth_contribution_intelligence import (
+    CONTRIBUTION_HISTORY_PARTIAL_COPY,
+    CONTRIBUTION_HISTORY_UNAVAILABLE_COPY,
     ContributionEvidenceQuality,
     PerformanceEvidenceQuality,
 )
@@ -85,7 +87,11 @@ def render_wealth_history(view: WealthHistoryView) -> None:
             "Net katkı",
             _money(view.net_external_contributions, view.currency)
             if view.contribution_evidence_quality == ContributionEvidenceQuality.COMPLETE
-            else "Kanıt eksik",
+            else (
+                CONTRIBUTION_HISTORY_UNAVAILABLE_COPY
+                if view.contribution_evidence_quality == ContributionEvidenceQuality.UNAVAILABLE
+                else CONTRIBUTION_HISTORY_PARTIAL_COPY
+            ),
             None,
         ),
         (

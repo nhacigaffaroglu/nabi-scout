@@ -367,7 +367,7 @@ class PortfolioManagementService:
         return self.wealth.post_transaction(
             account_id=account_id,
             txn_type=normalized,
-            quantity=amount if normalized == TXN_TYPE_DIVIDEND else 0.0,
+            quantity=0.0,
             amount=amount,
             currency=currency.strip().upper(),
             asset_id=str(asset["id"]) if asset else None,

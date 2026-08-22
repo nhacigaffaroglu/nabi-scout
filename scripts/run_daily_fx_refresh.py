@@ -15,6 +15,8 @@ if str(ROOT) not in sys.path:
 
 from services.fx_rate_refresh_service import FxRateRefreshService
 from services.fmp_client import FMPClient, FMPError
+from services.alpha_vantage_client import AlphaVantageClient, AlphaVantageError
+from services.twelve_data_client import TwelveDataClient, TwelveDataError
 from services.supabase_admin_client import apply_local_secrets_to_env, create_admin_supabase_client
 
 
@@ -30,7 +32,20 @@ def main() -> int:
         fmp = FMPClient.from_env()
     except FMPError:
         fmp = None
-    service = FxRateRefreshService(client, fmp_client=fmp)
+    try:
+        alpha = AlphaVantageClient.from_env()
+    except AlphaVantageError:
+        alpha = None
+    try:
+        twelve = TwelveDataClient.from_env()
+    except TwelveDataError:
+        twelve = None
+    service = FxRateRefreshService(
+        client,
+        fmp_client=fmp,
+        twelve_data_client=twelve,
+        alpha_vantage_client=alpha,
+    )
     gate = service.evaluate_run(
         trigger_type=args.trigger_type,
         allow_second_run=args.allow_second_run_today,

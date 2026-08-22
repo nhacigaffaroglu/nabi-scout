@@ -95,6 +95,7 @@ def value_position(
         weight_pct=None,
         is_cash=cash,
         included_in_base_totals=in_base,
+        price_as_of=getattr(quote, "as_of", None),
     )
 
 

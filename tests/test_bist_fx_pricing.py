@@ -5,7 +5,11 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 from services.bist_price_onboarding_service import onboard_bist_symbol
-from services.bist_symbol_mapping import select_bist_provider_mapping
+from services.bist_symbol_mapping import (
+    alpha_vantage_bist_provider_symbol,
+    canonical_bist_provider_mapping,
+    select_bist_provider_mapping,
+)
 from services.candidate_identity import select_canonical_candidate
 from services.fx_conversion_engine import apply_fx_to_position_rows
 from services.fx_rate_refresh_service import FxRateRefreshService
@@ -58,6 +62,15 @@ class BistSymbolMappingTests(unittest.TestCase):
         )
         self.assertIsNone(mapping)
 
+    def test_canonical_mapping_is_is_suffix_without_search(self) -> None:
+        for symbol in ("TUPRS", "ASELS", "BIMAS"):
+            mapping = canonical_bist_provider_mapping(symbol)
+            self.assertEqual(mapping["provider_symbol"], f"{symbol}.IS")
+            self.assertEqual(mapping["currency"], "TRY")
+            self.assertEqual(mapping["market"], "TR")
+            self.assertEqual(mapping["exchange"], "IST")
+            self.assertEqual(alpha_vantage_bist_provider_symbol(symbol), f"{symbol}.IS")
+
 
 class BistOnboardingTests(unittest.TestCase):
     def test_does_not_persist_without_price_and_does_not_use_abd(self) -> None:
@@ -68,6 +81,8 @@ class BistOnboardingTests(unittest.TestCase):
         fmp.quote.side_effect = RuntimeError("FMP endpoint erişimi reddedildi: quote")
         result = onboard_bist_symbol("BIMAS", fmp_client=fmp, candidate_repo=repo)
         repo.upsert_by_symbol.assert_not_called()
+        fmp.search_symbol.assert_not_called()
+        fmp.quote.assert_called_once_with("BIMAS.IS")
         self.assertFalse(result["persisted"])
         self.assertEqual(result["status"], "no_price")
         self.assertEqual(result["provider_symbol"], "BIMAS.IS")
@@ -111,12 +126,15 @@ class BistOnboardingTests(unittest.TestCase):
         }
         result = onboard_bist_symbol("ASELS", fmp_client=fmp, candidate_repo=repo)
         payload = repo.upsert_by_symbol.call_args.args[0]
+        fmp.search_symbol.assert_not_called()
+        fmp.quote.assert_called_once_with("ASELS.IS")
         self.assertEqual(payload["symbol"], "ASELS")
         self.assertEqual(payload["market"], "TR")
         self.assertEqual(payload["currency"], "TRY")
         self.assertEqual(payload["asset_type"], "Hisse")
         self.assertNotEqual(payload["market"], "ABD")
         self.assertEqual(result["status"], "persisted")
+        self.assertEqual(result["provider_symbol"], "ASELS.IS")
         self.assertEqual(result["duplicate_count"], 0)
 
     def test_canonical_tr_preferred_over_us_when_selecting(self) -> None:
@@ -229,6 +247,22 @@ class FxDirectionTests(unittest.TestCase):
         service = FxRateRefreshService(MagicMock(), fmp_client=fmp)
         rate = service._fetch_rate("USD", "EUR")
         self.assertAlmostEqual(rate, 0.8)
+
+    def test_alpha_vantage_is_primary_when_fmp_absent(self) -> None:
+        av = MagicMock()
+        av.currency_exchange_rate.return_value = {
+            "1. From_Currency Code": "USD",
+            "3. To_Currency Code": "TRY",
+            "5. Exchange Rate": "47.5",
+            "6. Last Refreshed": "2026-08-21 12:00:00",
+        }
+        service = FxRateRefreshService(MagicMock(), alpha_vantage_client=av)
+        rate = service._fetch_rate("USD", "TRY")
+        self.assertAlmostEqual(rate, 47.5)
+        av.currency_exchange_rate.assert_called_once_with(
+            from_currency="USD",
+            to_currency="TRY",
+        )
 
 
 class PiRenderIsolationTests(unittest.TestCase):

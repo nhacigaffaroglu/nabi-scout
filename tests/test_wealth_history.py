@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
+import inspect
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from services.wealth_contribution_intelligence import (
     ContributionEvidenceQuality,
     PerformanceEvidenceQuality,
 )
+from services.wealth_external_cash_flow import ContributionReconciliation
 from services.wealth_history_chart import build_wealth_history_curve
 from services.wealth_history_service import (
     HISTORY_STARTED_COPY,
@@ -89,11 +92,21 @@ def _txn(txn_type: str, amount: float, *, executed_at: str, currency: str = "USD
     }
 
 
-def _history(snaps, txns=(), account_ids=None):
+def _recon(through: str = "2026-02-01") -> tuple[ContributionReconciliation, ...]:
+    return (
+        ContributionReconciliation(
+            portfolio_id="planning",
+            reconciled_through=date.fromisoformat(through[:10]),
+        ),
+    )
+
+
+def _history(snaps, txns=(), account_ids=None, reconciled: bool = False, through: str = "2026-02-01"):
     return build_wealth_history(
         snaps,
         transactions=list(txns),
         account_ids=[ACCOUNT] if account_ids is None else account_ids,
+        contribution_reconciliations=_recon(through) if reconciled else None,
     )
 
 
@@ -131,6 +144,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=11000.0),
             ],
             [_txn(TXN_TYPE_DEPOSIT, 0, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(view.history_state, WealthHistoryState.COMPARABLE)
         self.assertEqual(view.evidence_quality, PerformanceEvidenceQuality.COMPLETE)
@@ -167,6 +181,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=1500.0),
             ],
             [_txn(TXN_TYPE_DEPOSIT, 500, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(view.net_external_contributions, Decimal("500.00"))
         self.assertEqual(view.investment_gain_loss, Decimal("0.00"))
@@ -179,6 +194,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=800.0),
             ],
             [_txn(TXN_TYPE_WITHDRAW, 200, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(view.net_external_contributions, Decimal("-200.00"))
         self.assertEqual(view.investment_gain_loss, Decimal("0.00"))
@@ -194,6 +210,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _txn(TXN_TYPE_TRANSFER_OUT, 400, executed_at="2026-01-10T00:00:00+00:00"),
                 _txn(TXN_TYPE_TRANSFER_IN, 400, executed_at="2026-01-10T00:00:01+00:00"),
             ],
+            reconciled=True,
         )
         self.assertEqual(view.net_external_contributions, Decimal("0.00"))
         self.assertEqual(view.investment_gain_loss, Decimal("100.00"))
@@ -210,6 +227,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _txn(TXN_TYPE_BUY, 400, executed_at="2026-01-17T00:00:00+00:00"),
                 _txn(TXN_TYPE_SELL, 50, executed_at="2026-01-18T00:00:00+00:00"),
             ],
+            reconciled=True,
         )
         self.assertEqual(view.net_external_contributions, Decimal("500.00"))
         self.assertEqual(view.investment_gain_loss, Decimal("100.00"))
@@ -254,6 +272,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=1600.0),
             ],
             [_txn(TXN_TYPE_DEPOSIT, 500, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(both.attribution_status, HistoryAttributionStatus.BOTH)
         contrib = _history(
@@ -262,6 +281,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=1500.0),
             ],
             [_txn(TXN_TYPE_DEPOSIT, 500, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(contrib.attribution_status, HistoryAttributionStatus.CONTRIBUTION_ONLY)
         perf = _history(
@@ -270,6 +290,7 @@ class WealthHistoryContractTests(unittest.TestCase):
                 _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=11000.0),
             ],
             [_txn(TXN_TYPE_DEPOSIT, 0, executed_at="2026-01-15T00:00:00+00:00")],
+            reconciled=True,
         )
         self.assertEqual(perf.attribution_status, HistoryAttributionStatus.PERFORMANCE_ONLY)
 
@@ -379,9 +400,57 @@ class SafetyAndUiTests(unittest.TestCase):
             self.assertNotIn("register_asset", source)
             self.assertNotIn(".delete(", source)
 
+    def test_build_wealth_history_accepts_contribution_reconciliations(self) -> None:
+        sig = inspect.signature(build_wealth_history)
+        self.assertIn("contribution_reconciliations", sig.parameters)
+        self.assertIsNone(sig.parameters["contribution_reconciliations"].default)
+        omitted = build_wealth_history([])
+        self.assertEqual(omitted.snapshot_count, 0)
+        snaps = [
+            _snap(snap_id="s1", captured_at="2026-01-01T00:00:00+00:00", value=10000.0),
+            _snap(snap_id="s2", captured_at="2026-02-01T00:00:00+00:00", value=11000.0),
+        ]
+        try:
+            view = build_wealth_history(
+                snaps,
+                transactions=[],
+                account_ids=[ACCOUNT],
+                contribution_reconciliations=_recon("2026-02-01"),
+                portfolio_id="planning",
+            )
+        except TypeError as exc:
+            self.fail(f"page-shaped call raised TypeError: {exc}")
+        self.assertEqual(view.history_state, WealthHistoryState.COMPARABLE)
+        self.assertEqual(view.contribution_evidence_quality, ContributionEvidenceQuality.COMPLETE)
+
+    def test_wealth_page_imports_canonical_history_signature(self) -> None:
+        page_path = Path("pages/10_Wealth.py")
+        source = page_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "from services.wealth_history_service import build_wealth_history",
+            source,
+        )
+        tree = ast.parse(source, filename=str(page_path))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "build_wealth_history"
+        ]
+        self.assertEqual(len(calls), 1)
+        keywords = {kw.arg for kw in calls[0].keywords}
+        self.assertIn("contribution_reconciliations", keywords)
+        self.assertIn("portfolio_id", keywords)
+        compile(source, str(page_path), "exec")
+        page_fn = inspect.signature(build_wealth_history)
+        for name in keywords:
+            self.assertIn(name, page_fn.parameters)
+
     def test_ui_and_schedule(self) -> None:
         page = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
         self.assertIn("render_wealth_history", page)
+        self.assertIn("contribution_reconciliations_for_wealth", page)
         self.assertIn("Servet Geçmişi", Path("components/wealth_history_ui.py").read_text(encoding="utf-8"))
         self.assertNotIn("st.line_chart", page)
         workflow = Path(".github/workflows/daily_wealth_snapshot.yml").read_text(encoding="utf-8")

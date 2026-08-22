@@ -145,6 +145,8 @@ class LocalSecretsLoaderTests(unittest.TestCase):
                     "publishable_key": "sb_publishable_x",
                 },
                 "fmp": {"api_key": "fmp-key"},
+                "alpha_vantage": {"api_key": "av-key"},
+                "twelve_data": {"api_key": "td-key"},
                 "sec": {"contact_email": "sec@example.com"},
             },
         ):
@@ -152,6 +154,8 @@ class LocalSecretsLoaderTests(unittest.TestCase):
             self.assertEqual(os.environ["SUPABASE_URL"], "https://example.supabase.co")
             self.assertEqual(os.environ["SUPABASE_PUBLISHABLE_KEY"], "sb_publishable_x")
             self.assertEqual(os.environ["FMP_API_KEY"], "fmp-key")
+            self.assertEqual(os.environ["ALPHA_VANTAGE_API_KEY"], "av-key")
+            self.assertEqual(os.environ["TWELVE_DATA_API_KEY"], "td-key")
             self.assertEqual(os.environ["SEC_CONTACT_EMAIL"], "sec@example.com")
 
 

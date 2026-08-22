@@ -6,15 +6,13 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from services.wealth_contract import (
-    TXN_TYPE_BUY,
-    TXN_TYPE_DEPOSIT,
-    TXN_TYPE_SELL,
-    TXN_TYPE_WITHDRAW,
-)
 from services.wealth_contribution_intelligence import (
     ContributionEvidenceQuality,
     PerformanceEvidenceQuality,
+)
+from services.wealth_external_cash_flow import (
+    ContributionReconciliation,
+    contribution_period_evidence,
 )
 from services.wealth_goal_models import quantize_money
 from services.wealth_performance_engine import build_performance_period
@@ -116,29 +114,20 @@ def _contribution_evidence(
     currency: str,
     start: datetime,
     end: datetime,
+    reconciliations: Sequence[ContributionReconciliation] | None = None,
+    portfolio_id: Optional[str] = None,
 ) -> ContributionEvidenceQuality:
-    ccy = currency.strip().upper()
-    external = 0
-    lots = 0
-    for row in transactions:
-        if str(row.get("account_id") or "") not in account_ids:
-            continue
-        executed = _parse_ts(row.get("executed_at"))
-        if executed is None or not (start < executed <= end):
-            continue
-        txn_type = str(row.get("txn_type") or "").strip().lower()
-        if txn_type in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
-            lots += 1
-        if txn_type not in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW}:
-            continue
-        if str(row.get("currency") or "").strip().upper() != ccy:
-            continue
-        external += 1
-    if external > 0:
-        return ContributionEvidenceQuality.COMPLETE
-    if lots > 0:
-        return ContributionEvidenceQuality.PARTIAL
-    return ContributionEvidenceQuality.UNAVAILABLE
+    return ContributionEvidenceQuality(
+        contribution_period_evidence(
+            transactions,
+            account_ids=account_ids,
+            plan_currency=currency,
+            start=start,
+            end=end,
+            reconciliations=reconciliations,
+            portfolio_id=portfolio_id,
+        )
+    )
 
 
 def _attribution(
@@ -184,7 +173,15 @@ def build_wealth_history(
     transactions: Iterable[Dict[str, Any]] = (),
     account_ids: Sequence[str] = (),
     transaction_history_complete: bool = True,
+    contribution_reconciliations: Sequence[ContributionReconciliation] | None = None,
+    portfolio_id: Optional[str] = None,
 ) -> WealthHistoryView:
+    """History evidence from snapshots and the ledger.
+
+    `contribution_reconciliations` is optional completeness evidence for the
+    snapshot-to-snapshot contribution window. Omitting it keeps prior callers
+    working; it does not invent deposits or change Dietz math.
+    """
     ordered = _chronological(snapshots)
     txn_list = list(transactions)
     ids = {str(item) for item in account_ids if str(item or "").strip()}
@@ -266,6 +263,8 @@ def build_wealth_history(
             currency=start.base_currency,
             start=start_at,
             end=end_at,
+            reconciliations=contribution_reconciliations,
+            portfolio_id=portfolio_id,
         )
         if start_at and end_at and ids
         else ContributionEvidenceQuality.UNAVAILABLE

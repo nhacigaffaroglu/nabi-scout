@@ -6,12 +6,6 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
-from services.wealth_contract import (
-    TXN_TYPE_BUY,
-    TXN_TYPE_DEPOSIT,
-    TXN_TYPE_SELL,
-    TXN_TYPE_WITHDRAW,
-)
 from services.wealth_goal_models import (
     ContributionPlan,
     ConversionAssumption,
@@ -28,6 +22,17 @@ from services.wealth_goal_planning import (
     monthly_for_year,
     solve_required_starting_monthly,
 )
+from services.wealth_external_cash_flow import (
+    CONTRIBUTION_TRACKING_MID_PERIOD_COPY,
+    CONTRIBUTION_TRACKING_NOT_TRACKED_COPY,
+    CONTRIBUTION_TRACKING_UNCONFIGURED_COPY,
+    ContributionReconciliation,
+    ContributionTrackingScope,
+    contribution_period_evidence,
+    period_starts_mid_tracking_month,
+    resolve_tracked_window,
+    tracked_ytd_month_count,
+)
 from services.wealth_performance_engine import (
     aggregate_cash_flows,
     build_performance_period,
@@ -41,6 +46,12 @@ PLANNING_BENCHMARK_LABEL = "8% yıllık getiri varsayımına dayalı planlama yo
 PERFORMANCE_UNAVAILABLE_COPY = (
     "Performans ayrıştırması için yeterli dönem başlangıcı / nakit akışı kanıtı yok."
 )
+CONTRIBUTION_HISTORY_UNAVAILABLE_COPY = "Katkı geçmişi henüz mevcut değil."
+CONTRIBUTION_HISTORY_PARTIAL_COPY = "Katkı kayıtları henüz doğrulanmadı."
+CONTRIBUTION_HISTORY_PARTIAL_DETAIL_COPY = (
+    "Katkı geçmişi kısmi — gerçekleşen tutar doğrulama sonrası hesaplanacak."
+)
+CONTRIBUTION_RECONCILE_ACTION_LABEL = "Bu tarihe kadar tüm katkı hareketlerim kayıtlı"
 
 
 class ContributionEvidenceQuality(str, Enum):
@@ -118,6 +129,10 @@ class ContributionIntelligenceView:
     attribution_summary: str
     data_confidence_summary: str
     performance_limitations: Tuple[str, ...]
+    contribution_tracking_start: Optional[date] = None
+    monthly_tracking_scope: ContributionTrackingScope = ContributionTrackingScope.UNCONFIGURED
+    ytd_tracking_scope: ContributionTrackingScope = ContributionTrackingScope.UNCONFIGURED
+    monthly_tracking_note: Optional[str] = None
 
 
 def _parse_ts(value: Any) -> Optional[datetime]:
@@ -158,29 +173,20 @@ def _evidence_quality(
     plan_currency: str,
     start: datetime,
     end: datetime,
+    reconciliations: Sequence[ContributionReconciliation] | None = None,
+    portfolio_id: Optional[str] = None,
 ) -> ContributionEvidenceQuality:
-    plan_ccy = plan_currency.strip().upper()
-    external_in_plan_ccy = 0
-    investment_lots = 0
-    for row in transactions:
-        if str(row.get("account_id") or "") not in account_ids:
-            continue
-        executed = _parse_ts(row.get("executed_at"))
-        if executed is None or not _in_window(executed, start, end):
-            continue
-        txn_type = str(row.get("txn_type") or "").strip().lower()
-        if txn_type in {TXN_TYPE_BUY, TXN_TYPE_SELL}:
-            investment_lots += 1
-        if txn_type not in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW}:
-            continue
-        if str(row.get("currency") or "").strip().upper() != plan_ccy:
-            continue
-        external_in_plan_ccy += 1
-    if external_in_plan_ccy > 0:
-        return ContributionEvidenceQuality.COMPLETE
-    if investment_lots > 0:
-        return ContributionEvidenceQuality.PARTIAL
-    return ContributionEvidenceQuality.UNAVAILABLE
+    return ContributionEvidenceQuality(
+        contribution_period_evidence(
+            transactions,
+            account_ids=account_ids,
+            plan_currency=plan_currency,
+            start=start,
+            end=end,
+            reconciliations=reconciliations,
+            portfolio_id=portfolio_id,
+        )
+    )
 
 
 def _gap_and_surplus(
@@ -571,6 +577,10 @@ def build_contribution_intelligence(
     start_snapshot: Optional[PortfolioSnapshotView] = None,
     end_snapshot: Optional[PortfolioSnapshotView] = None,
     transaction_history_complete: bool = True,
+    contribution_reconciliations: Sequence[ContributionReconciliation] | None = None,
+    portfolio_id: Optional[str] = None,
+    contribution_tracking_start: Optional[date] = None,
+    fx_schedule=None,
 ) -> ContributionIntelligenceView:
     plan = plan or default_contribution_plan()
     goal = goal or default_wealth_goal_2031()
@@ -579,57 +589,66 @@ def build_contribution_intelligence(
     txn_list = list(transactions)
     ids = {str(item) for item in account_ids if str(item or "").strip()}
     monthly = monthly_for_year(plan, as_of=as_of_date, year=as_of_date.year)
-    months_elapsed = as_of_date.month
-    planned_ytd = quantize_money(monthly * Decimal(months_elapsed))
-    planned_year = quantize_money(monthly * Decimal(12))
-
     month_start, month_end = _month_window(as_of_date)
     year_start, year_end = _year_window(as_of_date)
-    monthly_evidence = (
-        _evidence_quality(
-            txn_list,
-            account_ids=ids,
-            plan_currency=plan.currency,
-            start=month_start,
-            end=month_end,
-        )
-        if ids
-        else ContributionEvidenceQuality.UNAVAILABLE
+    monthly_scope, month_flow_start, month_flow_end = resolve_tracked_window(
+        month_start, month_end, contribution_tracking_start
     )
-    ytd_evidence = (
-        _evidence_quality(
-            txn_list,
-            account_ids=ids,
-            plan_currency=plan.currency,
-            start=year_start,
-            end=year_end,
-        )
-        if ids
-        else ContributionEvidenceQuality.UNAVAILABLE
+    ytd_scope, year_flow_start, year_flow_end = resolve_tracked_window(
+        year_start, year_end, contribution_tracking_start
     )
-    overall = ytd_evidence
+    if contribution_tracking_start is None:
+        months_elapsed = 0
+        planned_ytd = quantize_money(Decimal("0"))
+    else:
+        months_elapsed = tracked_ytd_month_count(as_of_date, contribution_tracking_start)
+        planned_ytd = quantize_money(monthly * Decimal(months_elapsed))
+    planned_year = quantize_money(monthly * Decimal(12))
+    monthly_note = None
+    if (
+        contribution_tracking_start is not None
+        and monthly_scope == ContributionTrackingScope.TRACKED
+        and period_starts_mid_tracking_month(as_of_date, contribution_tracking_start)
+    ):
+        monthly_note = CONTRIBUTION_TRACKING_MID_PERIOD_COPY
 
-    month_in, month_out, _d, _f, _w = (
-        aggregate_cash_flows(
+    def _scoped_evidence(scope, start, end) -> ContributionEvidenceQuality:
+        if scope != ContributionTrackingScope.TRACKED or not ids or start is None or end is None:
+            return ContributionEvidenceQuality.UNAVAILABLE
+        return _evidence_quality(
             txn_list,
             account_ids=ids,
-            base_currency=plan.currency,
-            period_start=month_start,
-            period_end=month_end,
+            plan_currency=plan.currency,
+            start=start,
+            end=end,
+            reconciliations=contribution_reconciliations,
+            portfolio_id=portfolio_id,
         )
-        if ids
-        else (0.0, 0.0, 0.0, 0.0, [])
+
+    monthly_evidence = _scoped_evidence(monthly_scope, month_flow_start, month_flow_end)
+    ytd_evidence = _scoped_evidence(ytd_scope, year_flow_start, year_flow_end)
+    overall = (
+        ContributionEvidenceQuality.UNAVAILABLE
+        if ytd_scope != ContributionTrackingScope.TRACKED
+        else ytd_evidence
     )
-    year_in, year_out, _d2, _f2, _w2 = (
-        aggregate_cash_flows(
+
+    def _scoped_flows(scope, start, end):
+        if scope != ContributionTrackingScope.TRACKED or not ids or start is None or end is None:
+            return 0.0, 0.0, 0.0, 0.0, []
+        return aggregate_cash_flows(
             txn_list,
             account_ids=ids,
             base_currency=plan.currency,
-            period_start=year_start,
-            period_end=year_end,
+            period_start=start,
+            period_end=end,
         )
-        if ids
-        else (0.0, 0.0, 0.0, 0.0, [])
+
+    month_in, month_out, _d, _f, _w = _scoped_flows(
+        monthly_scope, month_flow_start, month_flow_end
+    )
+    year_in, year_out, _d2, _f2, _w2 = _scoped_flows(
+        ytd_scope, year_flow_start, year_flow_end
     )
     actual_month = _actual_net(
         evidence=monthly_evidence, inflows=month_in, outflows=month_out
@@ -645,6 +664,7 @@ def build_contribution_intelligence(
         annual_increase_rate=plan.annual_increase_rate,
         annual_return_rate=annual_return_rate,
         conversion=conversion,
+        fx_schedule=fx_schedule,
         goal=goal,
     )
     projection = project_wealth_goal(
@@ -654,10 +674,20 @@ def build_contribution_intelligence(
         contribution_plan=plan,
         scenario=ReturnScenario("Base", annual_return_rate),
         conversion=conversion,
+        fx_schedule=fx_schedule,
     )
     fx_missing = (
         plan.currency.strip().upper() != goal.currency.strip().upper()
         and conversion is None
+        and (
+            fx_schedule is None
+            or not fx_schedule.is_complete(
+                as_of=as_of_date,
+                target_date=goal.target_date,
+                contribution_currency=plan.currency,
+                goal_currency=goal.currency,
+            )
+        )
     )
     adequacy = _adequacy_status(
         current=current,
@@ -672,6 +702,10 @@ def build_contribution_intelligence(
 
     action = _monthly_action(monthly_evidence, month_remaining, month_surplus)
     limitations: list[str] = []
+    if monthly_scope != ContributionTrackingScope.TRACKED:
+        limitations.append("CONTRIBUTION_PERIOD_NOT_TRACKED")
+    if ytd_scope != ContributionTrackingScope.TRACKED:
+        limitations.append("CONTRIBUTION_YTD_NOT_TRACKED")
     if monthly_evidence != ContributionEvidenceQuality.COMPLETE:
         limitations.append("MONTHLY_EVIDENCE_INCOMPLETE")
     if ytd_evidence != ContributionEvidenceQuality.COMPLETE:
@@ -772,4 +806,8 @@ def build_contribution_intelligence(
             fx_missing=fx_missing,
         ),
         performance_limitations=perf_limits,
+        contribution_tracking_start=contribution_tracking_start,
+        monthly_tracking_scope=monthly_scope,
+        ytd_tracking_scope=ytd_scope,
+        monthly_tracking_note=monthly_note,
     )

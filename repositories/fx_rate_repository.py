@@ -39,8 +39,11 @@ class FxRateRepository:
         if on_or_before is not None:
             query = query.lte("rate_date", on_or_before.isoformat())
         response = query.execute()
-        rows = response.data or []
-        return rows[0] if rows else None
+        rows = getattr(response, "data", None)
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0]
+        return row if isinstance(row, dict) else None
 
     def upsert_rate(
         self,

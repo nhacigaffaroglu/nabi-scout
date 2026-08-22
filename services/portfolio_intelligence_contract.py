@@ -15,6 +15,7 @@ class PriceQuote:
     available: bool
     source: str = "unknown"
     error: Optional[str] = None
+    as_of: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class PositionValuationRow:
     fx_rate_date: Optional[str] = None
     fx_stale: bool = False
     fx_unavailable: bool = False
+    price_as_of: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -76,6 +76,8 @@ def apply_local_secrets_to_env() -> None:
 
     supabase = secrets.get("supabase") or {}
     fmp = secrets.get("fmp") or {}
+    alpha_vantage = secrets.get("alpha_vantage") or {}
+    twelve_data = secrets.get("twelve_data") or {}
     sec = secrets.get("sec") or {}
 
     _set("SUPABASE_URL", str(supabase.get("url") or "").strip())
@@ -84,6 +86,14 @@ def apply_local_secrets_to_env() -> None:
         str(supabase.get("publishable_key") or "").strip(),
     )
     _set("FMP_API_KEY", str(fmp.get("api_key") or "").strip())
+    _set(
+        "ALPHA_VANTAGE_API_KEY",
+        str(alpha_vantage.get("api_key") or "").strip(),
+    )
+    _set(
+        "TWELVE_DATA_API_KEY",
+        str(twelve_data.get("api_key") or "").strip(),
+    )
     _set("SEC_CONTACT_EMAIL", str(sec.get("contact_email") or "").strip())
 
     wealth = secrets.get("wealth_adviser") or {}

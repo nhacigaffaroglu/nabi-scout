@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from services.wealth_contract import normalize_market, normalize_symbol
@@ -57,3 +57,32 @@ class WealthPortfolioRepository:
         if not rows:
             raise RuntimeError("Portföy oluşturulamadı.")
         return rows[0]
+
+    def set_contribution_tracking_start_date(
+        self,
+        user_id: str,
+        portfolio_id: str,
+        tracking_start: date,
+    ) -> Dict[str, Any]:
+        payload = {
+            "contribution_tracking_start_date": tracking_start.isoformat(),
+            "updated_at": self._now_iso(),
+        }
+        response = (
+            self.client.table(self.table)
+            .update(payload)
+            .eq("user_id", user_id)
+            .eq("id", portfolio_id)
+            .execute()
+        )
+        rows = response.data or []
+        if rows:
+            return rows[0]
+        existing = [
+            row
+            for row in self.list_for_user(user_id)
+            if str(row.get("id") or "") == str(portfolio_id)
+        ]
+        if not existing:
+            raise RuntimeError("Katkı takibi başlangıç tarihi kaydedilemedi.")
+        return existing[0]

@@ -128,8 +128,11 @@ class PortfolioIntelligenceService:
             unique_price_symbols_fetched=self.price_service.fetch_count,
             valuation_errors=valuation_errors,
         )
-        if self.nabi_client is not None:
-            fx_service = FxRateService(self.nabi_client)
+        fx_client = getattr(self.wealth, "client", None)
+        if fx_client is None:
+            fx_client = self.nabi_client
+        if fx_client is not None:
+            fx_service = FxRateService(fx_client)
             view, _fx_totals = apply_fx_to_portfolio_view(view, fx_service)
         return view
 
@@ -138,25 +141,6 @@ class PortfolioIntelligenceService:
         row,
         intel: InvestmentIntelligenceView,
     ):
-        from services.portfolio_intelligence_contract import PositionValuationRow
+        from dataclasses import replace
 
-        return PositionValuationRow(
-            position_id=row.position_id,
-            account_id=row.account_id,
-            asset_id=row.asset_id,
-            symbol=row.symbol,
-            asset_class=row.asset_class,
-            account_name=row.account_name,
-            quantity=row.quantity,
-            average_cost=row.average_cost,
-            valuation_currency=row.valuation_currency,
-            price=row.price,
-            price_available=row.price_available,
-            market_value=row.market_value,
-            cost_basis=row.cost_basis,
-            unrealized_pl=row.unrealized_pl,
-            weight_pct=row.weight_pct,
-            is_cash=row.is_cash,
-            included_in_base_totals=row.included_in_base_totals,
-            nabi=intel,
-        )
+        return replace(row, nabi=intel)

@@ -534,6 +534,10 @@ class MixedCurrencyWarningSemanticTests(unittest.TestCase):
         self.assertEqual(totals.unconverted_market_value, 0.0)
         self.assertTrue(adjusted.mixed_currency_warning)
         self.assertEqual(fx.remote_calls, 0)
+        self.assertTrue(
+            any(row.symbol == "TUPRS" for row in adjusted.foreign_currency_positions)
+        )
+        self.assertIn("TUPRS", unpriced_symbols_from_view(adjusted))
 
 
 class SafetyTests(unittest.TestCase):
@@ -547,6 +551,8 @@ class SafetyTests(unittest.TestCase):
         self.assertIn("CandidatePriceService", capture)
         self.assertIn("nabi_client=None", capture)
         self.assertIn("enrich_nabi=False", capture)
+        self.assertNotIn("FxRateRefreshService", capture)
+        self.assertNotIn("wealth_planning_fx", capture)
 
     def test_no_ledger_candidate_or_position_writes(self) -> None:
         capture = Path("services/wealth_snapshot_capture_service.py").read_text(encoding="utf-8")

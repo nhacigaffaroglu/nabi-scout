@@ -86,6 +86,9 @@ class GoalCenterWiringTests(unittest.TestCase):
         self.assertIn("2031 Hedef", page)
         self.assertIn("CandidatePriceService", ui)
         self.assertIn("nabi_client=None", ui)
+        self.assertIn("enrich_nabi=False", ui)
+        self.assertIn("persisted current FX", ui)
+        self.assertNotIn("FxRateRefreshService", ui)
 
     def test_partial_valuation_lower_bound_copy(self) -> None:
         ui = Path("components/wealth_goal_center_ui.py").read_text(encoding="utf-8")

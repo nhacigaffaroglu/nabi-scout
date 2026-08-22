@@ -123,7 +123,9 @@ def materialize_position_from_transactions(
     Reversed originals and their reversal rows are excluded as cancelling pairs.
     BUY.amount is the lot's total acquisition cost (execution notional plus
     any commission). BUY.quantity is share count only; commission never
-    increases quantity. ``txn_type=fee`` remains a cash-balance reduction.
+    increases quantity. Ordinary ``txn_type=dividend`` does not change
+    quantity or average cost. ``txn_type=fee`` remains a cash-balance
+    reduction.
     """
     quantity = 0.0
     average_cost = 0.0
@@ -172,13 +174,19 @@ def materialize_position_from_transactions(
             average_cost = total_cost / quantity if quantity > 0 else 0.0
             continue
 
-        if txn_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_DIVIDEND}:
+        if txn_type == TXN_TYPE_DIVIDEND:
+            # Ordinary cash dividend is income on the ledger, not a share
+            # issuance. Quantity/amount on the row must not create or increase
+            # an equity (or cash) position.
+            continue
+
+        if txn_type == TXN_TYPE_DEPOSIT:
             units = qty if qty > 0 else amount
             if units <= 0:
-                raise WealthValidationError("Yatırma/temettü işleminde miktar gerekli.")
+                raise WealthValidationError("Yatırma işleminde miktar gerekli.")
             if quantity == 0:
                 quantity = units
-                average_cost = 1.0 if txn_type == TXN_TYPE_DEPOSIT else 0.0
+                average_cost = 1.0
             else:
                 total_cost = (quantity * average_cost) + (amount if amount > 0 else units)
                 quantity += units

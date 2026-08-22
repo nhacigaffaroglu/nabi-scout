@@ -98,6 +98,7 @@ class CandidatePriceService:
         asset_currency = normalize_currency(
             (candidate or {}).get("currency") or currency
         )
+        as_of = str((candidate or {}).get("source_updated_at") or "").strip() or None
         if price_raw is None:
             quote = PriceQuote(
                 price=None,
@@ -105,6 +106,7 @@ class CandidatePriceService:
                 available=False,
                 source=self.PROVIDER_NAME,
                 error="missing_price",
+                as_of=as_of,
             )
         else:
             quote = PriceQuote(
@@ -112,6 +114,7 @@ class CandidatePriceService:
                 currency=asset_currency,
                 available=True,
                 source=self.PROVIDER_NAME,
+                as_of=as_of,
             )
         self._cache[sym] = quote
         return quote

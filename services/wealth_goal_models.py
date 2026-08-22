@@ -121,6 +121,8 @@ class CurrentWealthSnapshot:
     current_value_lower_bound: Decimal
     valuation_complete: bool
     unvalued_symbols: Tuple[str, ...] = ()
+    missing_price_symbols: Tuple[str, ...] = ()
+    missing_fx_symbols: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -179,16 +181,31 @@ def current_wealth_from_portfolio_view(
     assets: Optional[Sequence[dict]] = None,
 ) -> CurrentWealthSnapshot:
     """Map existing PI valuation output. Does not reprice or treat missing MV as 0."""
-    unvalued: list[str] = []
-    seen = set()
+    missing_price: list[str] = []
+    missing_fx: list[str] = []
+    seen_price: set[str] = set()
+    seen_fx: set[str] = set()
+    seen: set[str] = set()
+
+    def _add(bucket: list[str], seen_bucket: set[str], symbol: str) -> None:
+        if symbol in seen_bucket:
+            return
+        seen_bucket.add(symbol)
+        bucket.append(symbol)
+        seen.add(symbol)
+
     for row in list(view.unpriced_positions) + list(view.foreign_currency_positions):
         if row.included_in_base_totals and row.price_available:
             continue
         symbol = str(row.symbol or "").strip().upper()
-        if not symbol or symbol in seen:
+        if not symbol:
             continue
-        seen.add(symbol)
-        unvalued.append(symbol)
+        if not row.price_available:
+            _add(missing_price, seen_price, symbol)
+        if row.fx_unavailable:
+            _add(missing_fx, seen_fx, symbol)
+        elif row.price_available and not row.included_in_base_totals:
+            _add(missing_fx, seen_fx, symbol)
 
     priced_symbols = {
         str(row.symbol or "").strip().upper()
@@ -204,9 +221,9 @@ def current_wealth_from_portfolio_view(
         symbol = str(asset.get("symbol") or "").strip().upper()
         if not symbol or symbol in seen or symbol in priced_symbols:
             continue
-        seen.add(symbol)
-        unvalued.append(symbol)
+        _add(missing_price, seen_price, symbol)
 
+    unvalued = list(dict.fromkeys([*missing_price, *missing_fx]))
     base = str(view.base_currency or "").strip().upper()
     goal_ccy = str(goal_currency or "").strip().upper()
     complete = (
@@ -223,6 +240,8 @@ def current_wealth_from_portfolio_view(
         current_value_lower_bound=lower_bound,
         valuation_complete=complete,
         unvalued_symbols=tuple(unvalued),
+        missing_price_symbols=tuple(missing_price),
+        missing_fx_symbols=tuple(missing_fx),
     )
 
 

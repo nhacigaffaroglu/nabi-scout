@@ -38,7 +38,13 @@ class FxRateService:
             quote_currency=quote_currency,
             on_or_before=on_or_before,
         )
-        if row is None:
+        if not isinstance(row, dict):
+            return None
+        try:
+            rate = float(row.get("rate") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if rate <= 0:
             return None
         rate_date = _parse_rate_date(str(row.get("rate_date") or ""))
         stale = False
@@ -47,7 +53,7 @@ class FxRateService:
         return FxRateRow(
             base_currency=str(row.get("base_currency") or ""),
             quote_currency=str(row.get("quote_currency") or ""),
-            rate=float(row.get("rate") or 0.0),
+            rate=rate,
             rate_date=str(row.get("rate_date") or ""),
             source=str(row.get("source") or ""),
             data_quality=str(row.get("data_quality") or "good"),
