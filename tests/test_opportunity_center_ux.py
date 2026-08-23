@@ -324,8 +324,8 @@ class RoutingAndLanguageTests(unittest.TestCase):
 
     def test_dashboard_teaser_not_candidate_hub(self) -> None:
         home = HOME.read_text(encoding="utf-8")
-        self.assertIn(FIRSATLAR_PAGE, home)
-        self.assertIn("Fırsatları Gör", home)
+        self.assertIn("FIRSATLAR_PAGE", home)
+        self.assertIn("FIRSATLARI_GOR_LABEL", home)
         self.assertNotIn("pages/2_Aday_Havuzu.py", home)
         dashboard = Path("pages/1_Dashboard.py").read_text(encoding="utf-8")
         self.assertNotIn("build_daily_brief(", dashboard)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from components.nabi_design_system import (
     render_empty_state,
-    render_executive_hero,
+    render_page_header,
     render_section_title,
     render_status_badge,
 )
@@ -10,22 +10,31 @@ from components.portfolio_decision_center_ui import present_action_center
 from components.wealth_brief_ui import compose_wealth_operating_views
 from repositories.candidate_repository import CandidateRepository
 from services.auth_service import get_current_user_id
+from services.candidate_surface_service import filter_equity_candidate_surface
 from services.canonical_current_valuation import (
     build_canonical_current_view,
     canonical_wealth_metrics,
 )
 from services.fx_rate_service import FxRateService
-from services.nabi_dashboard_presentation import (
-    SECTION_GOAL,
-    SECTION_NEW_MONEY,
+from services.nabi_dashboard_presentation import present_wealth_section
+from services.nabi_today_presentation import (
+    ALLOCATION_OPEN_LABEL,
+    FIRSATLARI_GOR_LABEL,
+    NEW_MONEY_ADVISORY,
+    SECTION_ACTIONS,
+    SECTION_DETAILS,
     SECTION_OPPORTUNITIES,
     SECTION_PERFORMANCE,
     SECTION_PORTFOLIO,
     SECTION_PRIORITY,
-    NabiTodayDashboard,
-    build_nabi_today_dashboard,
+    SECTION_STATUS,
+    WEALTH_OPEN_LABEL,
+    WEALTH_PAGE,
+    NabiTodayExecutive,
+    build_nabi_today_executive,
 )
-from services.opportunity_center_presentation import opportunity_teaser_copy
+from services.opportunity_center_presentation import FIRSATLAR_PAGE
+from services.portfolio_cockpit_presentation import build_portfolio_cockpit
 from services.portfolio_intelligence_enrichment_service import build_portfolio_intelligence_dashboard
 from services.wealth_core_service import WealthCoreService
 
@@ -37,120 +46,113 @@ def _load_candidates(client) -> list:
         return []
 
 
-def render_nabi_today(today: NabiTodayDashboard) -> None:
+def _load_opportunity_candidates(client) -> list:
+    try:
+        rows = CandidateRepository(client).get_all(
+            order_by="nabi_score",
+            descending=True,
+        ) or []
+        return filter_equity_candidate_surface(rows)
+    except Exception:
+        return []
+
+
+def render_nabi_today(today: NabiTodayExecutive) -> None:
     import streamlit as st
 
-    wealth = today.wealth
-    try_line = (
-        f"≈ {wealth.try_equivalent.label}"
-        if wealth.try_equivalent.available and wealth.try_equivalent.label
-        else None
-    )
-    subtitle_parts = [wealth.valuation_label]
-    if wealth.coverage_pct is not None:
-        subtitle_parts.append(f"Kapsam %{wealth.coverage_pct:.0f}")
-    render_executive_hero(
-        primary_label=f"{today.title} · TOPLAM SERVET",
-        primary_value=wealth.usd_label,
-        subtitle=" · ".join(subtitle_parts),
-        partial=not wealth.valuation_complete,
-        delta_lines=[(try_line, "info")] if try_line else [],
-        partial_note=wealth.limitation if not wealth.valuation_complete else None,
-    )
-    if try_line is None and wealth.try_equivalent.limitation:
-        st.caption(wealth.try_equivalent.limitation)
-    with st.expander("Kur kanıtı", expanded=False):
-        st.caption(f"USD/TRY · {wealth.try_equivalent.rate or '—'}")
-        st.caption(f"Tarih: {wealth.try_equivalent.rate_date or '—'}")
-    if wealth.change_label:
-        st.caption(wealth.change_label)
+    render_page_header(today.title, caption=today.synthesis)
+    if today.material_alert:
+        st.warning(today.material_alert)
 
-    render_section_title(SECTION_GOAL, description="Hedef Merkezi özeti")
-    goal = today.goal
-    cols = st.columns(3)
-    cols[0].metric("Hedef", goal.target_label)
-    cols[1].metric("İlerleme", goal.current_progress)
-    cols[2].metric("2031 projeksiyon", goal.projected_wealth_label)
-    st.caption(f"Ulaşma: {goal.attainment_label}")
-    st.caption(
-        f"Kayıtlı katkı: {goal.configured_monthly_label} · "
-        f"Gereken: {goal.required_monthly_label}"
-    )
-    if goal.target_date_alternative:
-        st.caption(f"Alternatif ulaşım: {goal.target_date_alternative}")
-    st.caption(goal.status_copy)
-    if st.button("2031 Hedef Merkezi", key="today_go_goal"):
-        st.switch_page("pages/10_Wealth.py")
+    render_section_title(SECTION_STATUS)
+    cols = st.columns(len(today.kpis))
+    for col, kpi in zip(cols, today.kpis):
+        col.metric(kpi.label, kpi.value, kpi.caption)
 
     render_section_title(SECTION_PRIORITY)
-    if today.priority.healthy or not today.priority.items:
-        st.info(today.priority.empty_copy)
+    priority = today.priority
+    if priority.healthy:
+        st.info(priority.empty_copy)
     else:
-        for item in today.priority.items:
-            with st.container(border=True):
+        with st.container(border=True):
+            if priority.severity:
                 st.markdown(
-                    render_status_badge(item.severity, "warning"),
+                    render_status_badge(priority.severity, "warning"),
                     unsafe_allow_html=True,
                 )
-                st.markdown(f"**{item.title}**")
-                st.caption(item.explanation)
-                if item.options:
-                    st.caption("Seçenekler: " + " · ".join(item.options[:3]))
-    if st.button("Karar Merkezi", key="today_go_decision"):
-        st.switch_page("pages/11_Portfolio_Intelligence.py")
+            st.markdown(f"**{priority.title}**")
+            if priority.current_metric:
+                st.caption(f"Mevcut: {priority.current_metric}")
+            if priority.required_metric:
+                st.caption(f"Gerekli: {priority.required_metric}")
+            if priority.overflow_label:
+                st.caption(priority.overflow_label)
+
+    render_section_title(SECTION_ACTIONS)
+    if not today.actions:
+        st.caption("Bugün ek bir yönlendirme yok.")
+    for index, action in enumerate(today.actions):
+        with st.container(border=True):
+            st.markdown(f"**{action.title}**")
+            st.caption(action.why)
+            if st.button(
+                action.destination_label,
+                key=f"today_action_{index}_{action.title}",
+            ):
+                st.switch_page(action.destination_page)
+
+    render_section_title(SECTION_OPPORTUNITIES)
+    st.caption(today.opportunities.teaser)
+    if today.opportunities.research_line:
+        st.caption(today.opportunities.research_line)
+    for card in today.opportunities.cards:
+        score = f"{card.nabi_score:.1f}" if card.nabi_score is not None else None
+        meta = " · ".join(part for part in (card.decision, score) if part)
+        st.markdown(f"**{card.symbol}** · {meta}")
+        if card.why:
+            st.caption(card.why)
+    if st.button(FIRSATLARI_GOR_LABEL, key="today_go_opportunities", type="primary"):
+        st.switch_page(FIRSATLAR_PAGE)
 
     render_section_title(SECTION_PORTFOLIO)
     port = today.portfolio
-    if port.holdings:
-        for row in port.holdings:
-            st.markdown(f"**{row.symbol}** · {row.weight_label} · {row.value_label}")
-    if port.allocation_lines:
-        st.caption(" · ".join(port.allocation_lines))
-    if port.concentration_label:
-        st.caption(port.concentration_label)
-    for warning in port.imbalance_warnings:
-        st.warning(warning)
-    if not port.holdings and not port.allocation_lines:
-        st.caption("Portföy özeti için fiyatlı pozisyon yok.")
-
-    render_section_title(SECTION_OPPORTUNITIES)
-    strong = sum(1 for row in today.opportunities.rows if row.decision == "GÜÇLÜ ADAY")
-    st.info(
-        opportunity_teaser_copy(
-            strong_count=strong,
-            qualified_count=len(today.opportunities.rows),
-            empty_copy=today.opportunities.empty_copy,
+    if port.largest_symbol:
+        st.markdown(
+            f"**{port.largest_symbol}** · {port.largest_weight or '—'}"
         )
-    )
-    if st.button("Fırsatları Gör", key="today_go_opportunities", type="primary"):
-        st.switch_page("pages/5_Firsatlar.py")
-
-    render_section_title(SECTION_NEW_MONEY)
-    st.caption(today.new_money_lead)
-    money = today.new_money
-    if money.unavailable_reason and not money.recommendations:
-        st.caption(money.unavailable_reason)
-    else:
-        for row in money.recommendations:
-            st.markdown(f"**{row.symbol}** · {row.amount_label} · {row.kind_label}")
-            st.caption(row.reason)
-        st.caption(f"Dağıtılan: {money.allocated_label} · Nakit kalan: {money.residual_label}")
-    st.caption("Danışmanlık özetidir; işlem uygulanmaz.")
+    if port.gain_usd:
+        st.caption(f"Gerçekleşmemiş K/Z: {port.gain_usd} {port.gain_pct or ''}".strip())
+    st.caption(f"2031 projeksiyon: {port.projected_label}")
+    if port.reach_year:
+        st.caption(f"Tahmini ulaşma: {port.reach_year}")
+    if port.interpretation:
+        st.caption(port.interpretation)
+    if today.new_money.ready:
+        st.caption(today.new_money.line)
+        if today.new_money.symbols:
+            st.caption("Öneri: " + " · ".join(today.new_money.symbols))
+        st.caption(NEW_MONEY_ADVISORY)
+        if st.button(ALLOCATION_OPEN_LABEL, key="today_go_allocation"):
+            st.switch_page(WEALTH_PAGE)
+    elif today.new_money.limitation:
+        st.caption(today.new_money.limitation)
+    if st.button(WEALTH_OPEN_LABEL, key="today_go_wealth"):
+        st.switch_page(WEALTH_PAGE)
 
     render_section_title(SECTION_PERFORMANCE)
     perf = today.performance
-    if perf.limitation and not perf.return_label:
-        st.info(perf.limitation)
+    if perf.comparable:
+        st.metric("Getiri", perf.period_return or "—")
+        if perf.best:
+            st.caption(f"En iyi: {perf.best}")
+        if perf.weakest:
+            st.caption(f"En zayıf: {perf.weakest}")
     else:
-        st.metric(perf.period_label, perf.return_label or "—")
-        if perf.best_label:
-            st.caption(f"En iyi: {perf.best_label}")
-        if perf.weakest_label:
-            st.caption(f"En zayıf: {perf.weakest_label}")
-        if perf.limitation:
-            st.caption(perf.limitation)
-    if st.button("Performans Merkezi", key="today_go_performance"):
-        st.switch_page("pages/10_Wealth.py")
+        st.info(perf.copy)
+
+    with st.expander(SECTION_DETAILS, expanded=False):
+        for line in today.details:
+            st.caption(line)
 
 
 def render_nabi_home_executive(client) -> None:
@@ -174,6 +176,7 @@ def render_nabi_home_executive(client) -> None:
             st.switch_page("pages/11_Portfolio_Intelligence.py")
         return
 
+    fx_service = FxRateService(client)
     base_view = build_canonical_current_view(
         wealth,
         enrich_nabi=False,
@@ -187,6 +190,7 @@ def render_nabi_home_executive(client) -> None:
     )
     accounts = wealth.list_accounts()
     candidates = _load_candidates(client)
+    opportunity_candidates = _load_opportunity_candidates(client)
     operating = compose_wealth_operating_views(
         portfolio_view=base_view,
         wealth=wealth,
@@ -194,24 +198,28 @@ def render_nabi_home_executive(client) -> None:
         candidates=candidates,
     )
     presented = present_action_center(operating.decision)
-    today = build_nabi_today_dashboard(
-        metrics=metrics,
+    wealth_section = present_wealth_section(
+        metrics,
         coverage_pct=base_view.health.priced_position_coverage_pct,
-        fx_service=FxRateService(client),
-        pi_dashboard=dashboard,
-        brief=operating.brief,
-        presented_actions=presented,
+        fx_service=fx_service,
+        performance=operating.brief.performance,
+    )
+    cockpit = build_portfolio_cockpit(
+        base_view,
+        fx_service=fx_service,
+        accounts=accounts,
+        assets=wealth.list_assets(),
+        positions=positions,
         candidates=candidates,
+        performance=operating.performance,
+    )
+    today = build_nabi_today_executive(
+        wealth=wealth_section,
+        cockpit=cockpit,
+        goal_dashboard=operating.goal_dashboard,
+        presented_actions=presented,
+        candidates=opportunity_candidates,
+        new_money=operating.brief.new_money,
+        performance=operating.performance,
     )
     render_nabi_today(today)
-
-    nav_cols = st.columns(3)
-    with nav_cols[0]:
-        if st.button("Portföy Zekâsı", key="home_nav_portfolio", type="primary"):
-            st.switch_page("pages/11_Portfolio_Intelligence.py")
-    with nav_cols[1]:
-        if st.button("Wealth", key="home_nav_wealth"):
-            st.switch_page("pages/10_Wealth.py")
-    with nav_cols[2]:
-        if st.button("Fırsatları Gör", key="home_nav_candidates"):
-            st.switch_page("pages/5_Firsatlar.py")
