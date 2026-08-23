@@ -303,6 +303,7 @@ class AuthUiIntegrationTests(unittest.TestCase):
             "pages/3_Research_Monitor.py",
             "pages/4_Company_Report.py",
             "pages/_4_Aday_Detayi.py",
+            "pages/5_Firsatlar.py",
             "pages/6_Izleme_Listesi.py",
             "pages/7_Ayarlar.py",
             "pages/8_NABI_Akademi.py",

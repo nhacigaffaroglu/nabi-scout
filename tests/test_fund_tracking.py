@@ -542,9 +542,8 @@ class DashboardFundTrackingSmokeTests(unittest.TestCase):
         self.assertIn("Henüz takip edilen fon yok.", source)
         self.assertIn("format_tracked_participation_label", source)
         tracked_block = source.split("_render_tracked_funds_section")[0]
-        brief_index = source.index("brief = build_daily_brief")
-        tracked_index = source.index("_render_tracked_funds_section()")
-        self.assertLess(tracked_index, brief_index)
+        self.assertIn("_render_tracked_funds_section()", source)
+        self.assertNotIn("brief = build_daily_brief", source)
 
     def test_dashboard_list_load_has_no_alpha_client_in_section(self) -> None:
         with open("pages/1_Dashboard.py", encoding="utf-8") as handle:

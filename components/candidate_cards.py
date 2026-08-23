@@ -45,6 +45,11 @@ def render_candidate_card(candidate: dict) -> str | None:
             f"{workflow['research_status_label']}"
         )
 
+        inspect = d.button(
+            "Şirketi İncele",
+            key=f"inspect_{candidate['id']}",
+            use_container_width=True,
+        )
         edit = d.button(
             "Düzenle",
             key=f"edit_{candidate['id']}",
@@ -58,6 +63,11 @@ def render_candidate_card(candidate: dict) -> str | None:
 
         if candidate.get("critical_risk"):
             st.caption(f"⚠️ Kritik risk: {candidate['critical_risk']}")
+
+    if inspect:
+        st.session_state["company_report_candidate"] = candidate
+        st.query_params["symbol"] = candidate.get("symbol") or ""
+        st.switch_page("pages/4_Company_Report.py")
 
     if edit:
         return "edit"

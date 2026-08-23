@@ -25,6 +25,7 @@ from services.nabi_dashboard_presentation import (
     NabiTodayDashboard,
     build_nabi_today_dashboard,
 )
+from services.opportunity_center_presentation import opportunity_teaser_copy
 from services.portfolio_intelligence_enrichment_service import build_portfolio_intelligence_dashboard
 from services.wealth_core_service import WealthCoreService
 
@@ -113,18 +114,16 @@ def render_nabi_today(today: NabiTodayDashboard) -> None:
         st.caption("Portföy özeti için fiyatlı pozisyon yok.")
 
     render_section_title(SECTION_OPPORTUNITIES)
-    if not today.opportunities.rows:
-        st.info(today.opportunities.empty_copy)
-    else:
-        for index, row in enumerate(today.opportunities.rows):
-            score = f"{row.nabi_score:.1f}" if row.nabi_score is not None else "—"
-            st.markdown(f"**{row.symbol}** · {score} · {row.decision}")
-            if row.reason:
-                st.caption(row.reason)
-            if st.button("Company Report", key=f"today_opp_{row.symbol}_{index}"):
-                st.session_state["company_report_candidate"] = {"symbol": row.symbol}
-                st.query_params["symbol"] = row.symbol
-                st.switch_page("pages/4_Company_Report.py")
+    strong = sum(1 for row in today.opportunities.rows if row.decision == "GÜÇLÜ ADAY")
+    st.info(
+        opportunity_teaser_copy(
+            strong_count=strong,
+            qualified_count=len(today.opportunities.rows),
+            empty_copy=today.opportunities.empty_copy,
+        )
+    )
+    if st.button("Fırsatları Gör", key="today_go_opportunities", type="primary"):
+        st.switch_page("pages/5_Firsatlar.py")
 
     render_section_title(SECTION_NEW_MONEY)
     st.caption(today.new_money_lead)
@@ -214,5 +213,5 @@ def render_nabi_home_executive(client) -> None:
         if st.button("Wealth", key="home_nav_wealth"):
             st.switch_page("pages/10_Wealth.py")
     with nav_cols[2]:
-        if st.button("Aday Havuzu", key="home_nav_candidates"):
-            st.switch_page("pages/2_Aday_Havuzu.py")
+        if st.button("Fırsatları Gör", key="home_nav_candidates"):
+            st.switch_page("pages/5_Firsatlar.py")

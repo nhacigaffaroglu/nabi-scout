@@ -273,7 +273,7 @@ class TurkishHeaderTests(unittest.TestCase):
         self.assertEqual(list(frame.columns), ["symbol", "nabi_score", "decision"])
 
     def test_dashboard_uses_display_headers(self) -> None:
-        source = DASHBOARD.read_text(encoding="utf-8")
+        source = Path("components/opportunity_center_ui.py").read_text(encoding="utf-8")
         self.assertIn("apply_display_headers", source)
         self.assertIn("present_candidate_display_row", source)
 
@@ -448,12 +448,14 @@ class NavigationTests(unittest.TestCase):
 
     def test_company_report_navigation_remains(self) -> None:
         source = UI.read_text(encoding="utf-8")
-        self.assertIn('st.page_link("pages/4_Company_Report.py"', source)
+        self.assertNotIn('st.page_link("pages/4_Company_Report.py"', source)
         self.assertTrue(COMPANY.exists())
         redirect = ADAY.read_text(encoding="utf-8")
         self.assertIn("pages/4_Company_Report.py", redirect)
-        home = HOME.read_text(encoding="utf-8")
-        self.assertIn("pages/4_Company_Report.py", home)
+        firsatlar = Path("services/opportunity_center_presentation.py").read_text(encoding="utf-8")
+        self.assertIn("pages/4_Company_Report.py", firsatlar)
+        self.assertIn("Şirketi İncele", firsatlar)
+        self.assertIn("COMPANY_REPORT_PAGE", Path("components/opportunity_center_ui.py").read_text(encoding="utf-8"))
 
     def test_no_provider_calls_in_presentation(self) -> None:
         source = PRES.read_text(encoding="utf-8")

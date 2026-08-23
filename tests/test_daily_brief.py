@@ -741,11 +741,12 @@ class DailyBriefServiceTests(unittest.TestCase):
         py_compile.compile("pages/4_Company_Report.py", doraise=True)
 
     def test_dashboard_uses_daily_brief(self) -> None:
-        with open("pages/1_Dashboard.py", encoding="utf-8") as handle:
+        with open("pages/5_Firsatlar.py", encoding="utf-8") as handle:
             source = handle.read()
         self.assertIn("build_daily_brief(", source)
-        self.assertIn("data_quality_updates", source)
         self.assertNotIn("build_priority_teaser_from_monitor", source)
+        ui = Path("services/opportunity_center_presentation.py").read_text(encoding="utf-8")
+        self.assertIn("data_quality_updates", ui)
 
 
 if __name__ == "__main__":

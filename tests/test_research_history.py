@@ -686,7 +686,7 @@ class MonitorImportSmokeTests(unittest.TestCase):
         import py_compile
         from pathlib import Path
 
-        page_path = Path("pages/1_Dashboard.py")
+        page_path = Path("pages/5_Firsatlar.py")
         source = page_path.read_text(encoding="utf-8")
         self.assertIn(
             "from services.daily_brief_service import build_daily_brief",
