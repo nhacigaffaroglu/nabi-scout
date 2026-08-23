@@ -1,5 +1,10 @@
 import streamlit as st
 
+from services.candidate_pipeline_presentation import (
+    SCORE_HIDDEN_COPY,
+    display_nabi_score,
+    pipeline_stage_label,
+)
 from services.research_workflow_service import build_research_workflow
 
 
@@ -18,11 +23,13 @@ def render_candidate_card(candidate: dict) -> str | None:
         )
         a.write(candidate.get("investment_thesis") or candidate.get("main_reason") or "Yatırım tezi girilmedi.")
 
+        score = display_nabi_score(candidate)
         b.metric(
             "NABI Score",
-            f"{candidate['nabi_score']:.1f}"
-            if candidate.get("nabi_score") is not None else "—",
+            f"{score:.1f}" if score is not None else "—",
         )
+        if score is None:
+            b.caption(SCORE_HIDDEN_COPY)
 
         c.metric(
             "İskonto",
@@ -32,6 +39,7 @@ def render_candidate_card(candidate: dict) -> str | None:
 
         d.markdown(f"**{candidate.get('decision') or 'VERİ EKSİK'}**")
         workflow = build_research_workflow(candidate)
+        d.caption(pipeline_stage_label(candidate))
         d.caption(
             f"{candidate.get('participation_status') or 'Kontrol Et'} · "
             f"{workflow['research_status_label']}"

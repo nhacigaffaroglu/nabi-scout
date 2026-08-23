@@ -250,20 +250,22 @@ def _status_label(status: GoalEvidenceStatus) -> str:
 
 
 def _db_only_goal_view(wealth) -> Optional[PortfolioIntelligenceView]:
-    """2031 path reads persisted candidate prices + persisted current FX — no FMP/FX remote."""
+    """2031 path reads persisted candidate prices + persisted current FX — no FMP/FX remote.
+
+    CandidatePriceService is used inside build_canonical_current_view
+    with nabi_client=None.
+    """
     try:
-        from services.candidate_price_service import CandidatePriceService
-        from services.portfolio_intelligence_service import PortfolioIntelligenceService
+        from services.canonical_current_valuation import build_canonical_current_view
 
         portfolio = wealth.portfolios.get_default_for_user(wealth.user_id)
         if not portfolio or wealth.client is None:
             return None
-        intelligence = PortfolioIntelligenceService(
+        return build_canonical_current_view(
             wealth,
-            CandidatePriceService(wealth.client),
-            nabi_client=None,
+            enrich_nabi=False,
+            portfolio=portfolio,
         )
-        return intelligence.build_view(portfolio, enrich_nabi=False)
     except Exception:
         return None
 

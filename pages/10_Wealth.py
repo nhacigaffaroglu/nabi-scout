@@ -4,7 +4,6 @@ import streamlit as st
 from services.auth_service import get_current_user_id
 from services.fmp_client import FMPClient, FMPError
 from services.nabi_intelligence_facade import get_investment_intelligence
-from services.portfolio_intelligence_service import PortfolioIntelligenceService
 from services.ui import prepare_protected_page
 from services.ui_formatters import format_date_dmy
 from services.wealth_benchmark_service import WealthBenchmarkService
@@ -61,12 +60,12 @@ from services.wealth_adviser_prompt import extract_focus_symbol
 from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
 from services.wealth_diagnostics_engine import effective_position_count
 from services.wealth_diagnostics_service import WealthDiagnosticsService
-from services.wealth_price_service import WealthPriceService
+from services.canonical_current_valuation import build_canonical_current_view
 from services.wealth_timeline_service import WealthTimelineService
 
 
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
-from components.wealth_brief_ui import render_wealth_brief
+from components.wealth_command_center_ui import render_wealth_command_center
 from components.wealth_goal_center_ui import render_wealth_goal_center
 from components.wealth_history_ui import render_wealth_history
 from components.wealth_institution_center_ui import render_institution_center
@@ -79,14 +78,6 @@ def _format_money(value, currency: str) -> str:
     if value is None:
         return "—"
     return f"{value:,.2f} {currency}"
-
-
-def _load_price_service() -> WealthPriceService:
-    try:
-        fmp = FMPClient.from_streamlit_secrets()
-    except FMPError:
-        fmp = None
-    return WealthPriceService(fmp)
 
 
 def _load_benchmark_service() -> WealthBenchmarkService:
@@ -111,26 +102,13 @@ def _render_allocation(title: str, slices, currency: str) -> None:
 
 client = prepare_protected_page("Wealth | NABI Scout", "💰")
 
-st.info(
-    "Servet durumu **Özet** brief'inde. "
-    "Karar detayı ve portföy analitiği için **Portföy Zekâsı**."
-)
 if st.button("Portföy Zekâsı'na git", key="wealth_go_pi"):
     st.switch_page("pages/11_Portfolio_Intelligence.py")
-st.caption(
-    "Şimdi neye odaklanmalıyım? → **Portföy Zekâsı** eylem merkezi. "
-    "Bu sayfada tam eylem merkezi tekrarlanmaz."
-)
+st.caption("Şimdi neye odaklanmalıyım? → **Portföy Zekâsı**")
 st.divider()
 
 user_id = get_current_user_id(client)
 wealth = WealthCoreService(client, user_id)
-price_service = _load_price_service()
-intelligence = PortfolioIntelligenceService(
-    wealth,
-    price_service,
-    nabi_client=client,
-)
 timeline = WealthTimelineService(wealth)
 diagnostics_service = WealthDiagnosticsService(wealth)
 adviser_service = WealthAdviserService()
@@ -249,25 +227,14 @@ def _render_adviser_response(response) -> None:
 
 
 st.title("NABI Wealth")
-st.caption(
-    "Kayıt, hedef, performans ve karar özeti. "
-    "Pozisyonlar işlem defterinden türetilir. "
-    "Alış/satış tek taraflıdır; nakit bakiyesi otomatik güncellenmez."
-)
 
 portfolio = wealth.ensure_default_portfolio()
 summary = wealth.get_summary()
-portfolio_view = intelligence.build_view(portfolio, enrich_nabi=True)
-
-col1, col2, col3, col4, col5, col6 = st.columns(6)
-col1.metric("Portföy", summary.portfolio_count)
-col2.metric("Hesap", summary.account_count)
-col3.metric("Varlık", summary.asset_count)
-col4.metric("Pozisyon", summary.position_count)
-col5.metric("Borç", summary.liability_count)
-col6.metric("İşlem", summary.transaction_count)
-
-st.divider()
+portfolio_view = build_canonical_current_view(
+    wealth,
+    enrich_nabi=True,
+    portfolio=portfolio,
+)
 
 tab_summary, tab_goal, tab_history, tab_institutions, tab_purification, tab_accounts, tab_assets, tab_txn, tab_positions, tab_liabilities, tab_analysis, tab_adviser = st.tabs(
     [
@@ -296,116 +263,26 @@ account_by_id = {row["id"]: row for row in accounts}
 asset_by_id = {row["id"]: row for row in assets}
 
 with tab_summary:
-    render_wealth_brief(
+    if portfolio_view.total_position_count == 0 and not accounts and not liabilities:
+        st.info("Henüz wealth kaydı yok. Hesap ve varlık ekleyerek başlayın.")
+    try:
+        command_candidates = list(candidate_repo.get_all(limit=500) or [])
+    except Exception:
+        command_candidates = []
+    render_wealth_command_center(
         portfolio_view=portfolio_view,
         wealth=wealth,
         accounts=accounts,
+        assets=assets,
+        positions=positions,
+        candidates=command_candidates,
+        snapshots=timeline.list_snapshots(str(portfolio.get("id") or ""), limit=50),
+        transactions=wealth.list_transactions(limit=2000),
+        account_ids=[str(row.get("id") or "") for row in accounts],
+        portfolio_id=str(portfolio.get("id") or ""),
+        summary=summary,
+        liabilities=liabilities,
     )
-    if portfolio_view.total_position_count == 0 and not accounts and not liabilities:
-        st.info("Henüz wealth kaydı yok. Hesap ve varlık ekleyerek başlayın.")
-    else:
-        with st.expander("Portföy ayrıntıları", expanded=False):
-            st.write(
-                f"**{portfolio_view.portfolio_name}** "
-                f"({portfolio_view.base_currency})"
-            )
-            base_ccy = portfolio_view.base_currency
-            v1, v2, v3, v4 = st.columns(4)
-            partial = (
-                portfolio_view.unpriced_position_count > 0
-                or portfolio_view.foreign_currency_position_count > 0
-                or portfolio_view.priced_position_count < portfolio_view.total_position_count
-            )
-            if partial:
-                st.caption(
-                    f"Toplamlar yalnızca fiyatlı {base_ccy} pozisyonlarını kapsar; "
-                    "tam portföy değeri değildir."
-                )
-
-            v1.metric(
-                f"Piyasa değeri (fiyatlı {base_ccy})",
-                _format_money(portfolio_view.priced_total_market_value, base_ccy),
-            )
-            v2.metric(
-                f"Maliyet (fiyatlı {base_ccy})",
-                _format_money(portfolio_view.priced_total_cost_basis, base_ccy),
-            )
-            v3.metric(
-                f"Gerçekleşmemiş K/Z ({base_ccy})",
-                _format_money(portfolio_view.priced_total_unrealized_pl, base_ccy),
-            )
-            v4.metric(
-                "Nakit / Yatırım (fiyatlı)",
-                f"{portfolio_view.health.cash_pct:.1f}% / "
-                f"{portfolio_view.health.invested_pct:.1f}%",
-            )
-
-            if portfolio_view.mixed_currency_warning:
-                st.warning(
-                    f"{portfolio_view.foreign_currency_position_count} pozisyon "
-                    f"baz para birimi ({base_ccy}) dışında. "
-                    "FX dönüşümü yok; bu pozisyonlar toplam değere dahil değil."
-                )
-            if portfolio_view.unpriced_position_count:
-                st.warning(
-                    f"{portfolio_view.unpriced_position_count} pozisyon için güncel "
-                    "fiyat yok; toplamlardan hariç tutuldu."
-                )
-            if portfolio_view.valuation_errors:
-                with st.expander("Fiyat sağlayıcı uyarıları"):
-                    for msg in portfolio_view.valuation_errors:
-                        st.write(f"- {msg}")
-
-            st.markdown("**Sağlık göstergeleri**")
-            st.caption(
-                "Ağırlık ve yoğunluk: fiyatlı baz para birimi pozisyonları."
-            )
-            h1, h2, h3, h4 = st.columns(4)
-            h1.metric(
-                "En büyük ağırlık",
-                f"{portfolio_view.health.largest_position_weight_pct:.1f}%",
-            )
-            h2.metric(
-                "Top-3 yoğunluk",
-                f"{portfolio_view.health.top3_concentration_pct:.1f}%",
-            )
-            h3.metric(
-                "Varlık sınıfı yoğunluğu",
-                f"{portfolio_view.health.largest_asset_class_concentration_pct:.1f}%",
-            )
-            priced_any = portfolio_view.total_position_count - portfolio_view.unpriced_position_count
-            h4.metric(
-                "Fiyat kapsamı",
-                f"{portfolio_view.health.priced_position_coverage_pct:.0f}%",
-                delta=f"{priced_any}/{portfolio_view.total_position_count}",
-                delta_color="off",
-            )
-
-            _render_allocation(
-                f"Varlık sınıfı dağılımı (fiyatlı {base_ccy})",
-                portfolio_view.asset_class_allocation,
-                base_ccy,
-            )
-            _render_allocation(
-                f"Hesap dağılımı (fiyatlı {base_ccy})",
-                portfolio_view.account_allocation,
-                base_ccy,
-            )
-
-            if accounts:
-                st.markdown("**Hesaplar**")
-                for row in accounts:
-                    st.write(
-                        f"- {row.get('name')} · {row.get('account_type')} · "
-                        f"{row.get('currency')}"
-                    )
-            if liabilities:
-                st.markdown("**Borçlar**")
-                for row in liabilities:
-                    st.write(
-                        f"- {row.get('name')} · {row.get('liability_type')} · "
-                        f"{row.get('principal')} {row.get('currency')}"
-                    )
 
 with tab_goal:
     render_wealth_goal_center(

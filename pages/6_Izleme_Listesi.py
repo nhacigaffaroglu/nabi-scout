@@ -3,6 +3,7 @@ import streamlit as st
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.candidate_pipeline_presentation import display_nabi_score
 from services.research_monitor_service import (
     build_priority_entries,
     summarize_change,
@@ -47,7 +48,8 @@ for index, item in enumerate(entries):
     st.markdown(f"### {symbol} — {company}")
 
     cols = st.columns(5)
-    cols[0].metric("NABI", candidate.get("nabi_score") or 0)
+    score = display_nabi_score(candidate)
+    cols[0].metric("NABI Score", f"{score:.1f}" if score is not None else "—")
     cols[1].metric(
         "Veri Güveni",
         f"%{candidate.get('research_confidence') or 0}",

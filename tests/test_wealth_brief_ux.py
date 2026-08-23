@@ -525,7 +525,7 @@ class RenderAndSafetyTests(unittest.TestCase):
         self.assertIn("present_action_center", pres)
         self.assertIn("build_portfolio_decision", ui)
         self.assertIn("present_institution_center", ui)
-        self.assertIn("render_wealth_brief", Path("pages/10_Wealth.py").read_text(encoding="utf-8"))
+        self.assertIn("render_wealth_command_center", Path("pages/10_Wealth.py").read_text(encoding="utf-8"))
 
     def test_complete_brief_includes_institution_summary(self) -> None:
         view = _complete_usd_view(value=100000.0)

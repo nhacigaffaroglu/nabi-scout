@@ -5,6 +5,7 @@ from repositories.universe_repository import UniverseRepository
 from services.free_universe_client import FreeUniverseClient
 from services.sec_contact_config import resolve_sec_contact_email
 from services.ui import prepare_protected_page
+from services.ui_table_headers import apply_display_headers
 from services.universe_engine import UniverseEngine
 
 client = prepare_protected_page("Evren Motoru v2 | NABI Scout", "🌍")
@@ -135,8 +136,9 @@ if submitted:
             universe_name,
             limit=limit,
         )
+        frame = pd.DataFrame(display_rows)
         st.dataframe(
-            pd.DataFrame(display_rows),
+            apply_display_headers(frame) if not frame.empty else frame,
             use_container_width=True,
             hide_index=True,
         )
@@ -146,8 +148,9 @@ if submitted:
         st.error(f"Evren oluşturulamadı: {exc}")
 
 st.subheader("Son evren çalışmaları")
+runs_frame = pd.DataFrame(repo.get_recent_runs())
 st.dataframe(
-    pd.DataFrame(repo.get_recent_runs()),
+    apply_display_headers(runs_frame) if not runs_frame.empty else runs_frame,
     use_container_width=True,
     hide_index=True,
 )

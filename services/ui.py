@@ -6,6 +6,21 @@ from services.auth_service import is_authenticated, sign_out
 from components.nabi_design_system import inject_nabi_theme
 
 
+HIDDEN_NAV_PAGE_HREFS = ("Aday_Detayi",)
+
+
+def hide_retired_streamlit_pages() -> None:
+    """Hide dead pages from Streamlit's auto-generated sidebar nav."""
+    selectors = ", ".join(
+        f'[data-testid="stSidebarNav"] li:has(a[href*="{href}"])'
+        for href in HIDDEN_NAV_PAGE_HREFS
+    )
+    st.markdown(
+        f"<style>{selectors} {{ display: none !important; }}</style>",
+        unsafe_allow_html=True,
+    )
+
+
 def configure_page(title: str, icon: str) -> None:
     st.set_page_config(
         page_title=title,
@@ -14,6 +29,7 @@ def configure_page(title: str, icon: str) -> None:
         initial_sidebar_state="expanded",
     )
     inject_nabi_theme()
+    hide_retired_streamlit_pages()
 
 
 def render_sidebar() -> None:
@@ -22,11 +38,13 @@ def render_sidebar() -> None:
         st.caption("Yatırım İşletim Sistemi")
         st.divider()
         st.markdown("**Ana Sayfa**")
-        st.page_link("pages/1_Dashboard.py", label="Dashboard", icon="📊")
+        st.page_link("pages/1_Dashboard.py", label="NABI — Bugün", icon="📊")
         st.markdown("**Araştır**")
         st.page_link("pages/2_Aday_Havuzu.py", label="Aday Havuzu", icon="🎯")
+        st.page_link("pages/2_Evren_Motoru.py", label="Evren Motoru", icon="🌌")
         st.page_link("pages/2_Scout_Tarama.py", label="Scout Tarama", icon="🔭")
         st.page_link("pages/3_Research_Monitor.py", label="Araştırma Monitörü", icon="🔬")
+        st.page_link("pages/4_Company_Report.py", label="Company Report", icon="📄")
         st.page_link("pages/6_Izleme_Listesi.py", label="İzleme Listesi", icon="⭐")
         st.markdown("**Portföy**")
         st.page_link("pages/11_Portfolio_Intelligence.py", label="Portföy Zekâsı", icon="💼")

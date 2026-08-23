@@ -22,6 +22,18 @@ def _normalize_symbol(symbol: str) -> str:
     return str(symbol or "").strip().upper()
 
 
+def _queue_sort_key(row: Mapping[str, Any]) -> tuple[int, str]:
+    return (int(row.get("priority") or 100), str(row.get("symbol") or ""))
+
+
+def _retry_is_due(row: Mapping[str, Any], now: datetime) -> bool:
+    next_retry = row.get("next_retry_at")
+    if not next_retry:
+        return True
+    retry_at = datetime.fromisoformat(str(next_retry).replace("Z", "+00:00"))
+    return retry_at <= now
+
+
 class UniverseExpansionRepository:
     TABLE = "universe_expansion_queue"
 
@@ -96,22 +108,25 @@ class UniverseExpansionRepository:
         return response.data or []
 
     def list_eligible(self, now: datetime, *, limit: int = 50) -> List[Dict[str, Any]]:
-        rows = self.list_all()
-        eligible: List[Dict[str, Any]] = []
-        for row in rows:
+        """Return work in deterministic fairness order.
+
+        PENDING always precedes due RETRYABLE so repeated failures cannot
+        starve healthy first-attempt symbols. Within each group, order is
+        (priority, symbol). RETRYABLE rows before ``next_retry_at`` are
+        excluded. COMPLETED / BLOCKED / IN_PROGRESS are never eligible.
+        """
+        pending: List[Dict[str, Any]] = []
+        retryable: List[Dict[str, Any]] = []
+        for row in self.list_all():
             status = row.get("status")
             if status == EXPANSION_STATUS_PENDING:
-                eligible.append(row)
+                pending.append(row)
                 continue
-            if status == EXPANSION_STATUS_RETRYABLE:
-                next_retry = row.get("next_retry_at")
-                if not next_retry:
-                    eligible.append(row)
-                    continue
-                retry_at = datetime.fromisoformat(str(next_retry).replace("Z", "+00:00"))
-                if retry_at <= now:
-                    eligible.append(row)
-        eligible.sort(key=lambda item: (item.get("priority", 100), item.get("symbol", "")))
+            if status == EXPANSION_STATUS_RETRYABLE and _retry_is_due(row, now):
+                retryable.append(row)
+        pending.sort(key=_queue_sort_key)
+        retryable.sort(key=_queue_sort_key)
+        eligible = pending + retryable
         return eligible[: max(1, limit)]
 
     def claim(

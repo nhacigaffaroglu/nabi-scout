@@ -6,7 +6,9 @@ from repositories.tracked_fund_repository import TrackedFundRepository
 from repositories.candidate_repository import CandidateRepository
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
+from services.candidate_pipeline_presentation import present_candidate_display_row
 from services.candidate_surface_service import filter_equity_candidate_surface
+from services.ui_table_headers import apply_display_headers
 from services.daily_brief_service import build_daily_brief
 from services.alpha_vantage_client import AlphaVantageClient
 from services.fmp_client import FMPClient, FMPError
@@ -47,8 +49,8 @@ from services.ui import prepare_protected_page
 
 client = prepare_protected_page("Dashboard | NABI Scout", "📊")
 
-st.title("📊 NABI Scout 2.0 — Ana Sayfa")
-st.caption("Persisted özet — normal render LLM/FMP/SEC/FX uzak çağrısı yapmaz.")
+st.title("NABI — Bugün")
+st.caption("Karar özeti — normal render LLM/FMP/SEC/FX uzak çağrısı yapmaz.")
 render_nabi_home_executive(client)
 st.divider()
 st.subheader("Scout Araçları")
@@ -601,7 +603,7 @@ else:
             df["asset_type"].fillna("Belirsiz").value_counts()
         )
 
-    st.subheader("En yüksek NABI Score")
+    st.subheader("Aday özeti")
     visible = [
         "symbol",
         "company_name",
@@ -614,16 +616,18 @@ else:
         "decision",
         "participation_status",
         "research_status",
+        "pipeline_stage",
     ]
 
-    display_df = df.copy()
+    display_df = pd.DataFrame([present_candidate_display_row(row) for row in rows])
     if "research_status" in display_df.columns:
         display_df["research_status"] = display_df["research_status"].apply(
             lambda value: format_research_status(normalize_research_status(value))
         )
 
+    present = [column for column in visible if column in display_df.columns]
     st.dataframe(
-        display_df[[column for column in visible if column in display_df.columns]],
+        apply_display_headers(display_df, columns=present),
         use_container_width=True,
         hide_index=True,
     )

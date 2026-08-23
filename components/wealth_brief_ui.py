@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Dict, Optional, Sequence
 
@@ -12,7 +13,10 @@ from components.nabi_design_system import (
     render_section_title,
     render_status_badge,
 )
-from services.portfolio_decision_intelligence import build_portfolio_decision
+from services.portfolio_decision_intelligence import (
+    PortfolioDecisionView,
+    build_portfolio_decision,
+)
 from services.portfolio_intelligence_contract import PortfolioIntelligenceView
 from services.wealth_brief_presentation import (
     BRIEF_TITLE,
@@ -30,7 +34,10 @@ from services.wealth_external_cash_flow import (
     contribution_reconciliations_for_wealth,
     load_contribution_tracking_start,
 )
-from services.wealth_goal_center_presentation import build_goal_center_dashboard
+from services.wealth_goal_center_presentation import (
+    GoalCenterDashboard,
+    build_goal_center_dashboard,
+)
 from services.wealth_institution_center_presentation import present_institution_center
 from components.wealth_purification_zakat_ui import try_session_result
 from services.wealth_goal_models import (
@@ -39,8 +46,9 @@ from services.wealth_goal_models import (
     default_wealth_goal_2031,
 )
 from services.wealth_goal_planning import planning_conversion
-from services.wealth_new_money_allocation import allocate_new_money
+from services.wealth_new_money_allocation import AllocationPlan, allocate_new_money
 from services.wealth_performance_center_presentation import (
+    PerformanceCenterView,
     PerformancePeriod,
     build_performance_center,
 )
@@ -84,7 +92,17 @@ def _load_snapshots(wealth, portfolio_id: str):
         return []
 
 
-def compose_wealth_brief(
+@dataclass(frozen=True)
+class WealthOperatingViews:
+    brief: WealthBrief
+    decision: PortfolioDecisionView
+    goal_dashboard: GoalCenterDashboard
+    allocation: Optional[AllocationPlan]
+    performance: PerformanceCenterView
+    portfolio_view: PortfolioIntelligenceView
+
+
+def compose_wealth_operating_views(
     *,
     portfolio_view: PortfolioIntelligenceView,
     wealth,
@@ -96,7 +114,7 @@ def compose_wealth_brief(
     allocation=None,
     decision=None,
     purification_zakat=None,
-) -> WealthBrief:
+) -> WealthOperatingViews:
     as_of_date = as_of or date.today()
     goal = default_wealth_goal_2031()
     plan = default_contribution_plan()
@@ -216,7 +234,7 @@ def compose_wealth_brief(
             assets=assets,
             transactions=txns,
         )
-    return build_wealth_brief(
+    brief = build_wealth_brief(
         as_of_date=as_of_date,
         portfolio_view=portfolio_view,
         dashboard=dashboard,
@@ -227,6 +245,41 @@ def compose_wealth_brief(
         institution_center=institution_center,
         purification_zakat=purification_zakat,
     )
+    return WealthOperatingViews(
+        brief=brief,
+        decision=decision_view,
+        goal_dashboard=dashboard,
+        allocation=allocation_plan,
+        performance=performance,
+        portfolio_view=portfolio_view,
+    )
+
+
+def compose_wealth_brief(
+    *,
+    portfolio_view: PortfolioIntelligenceView,
+    wealth,
+    accounts: Sequence[Dict[str, Any]] = (),
+    as_of: Optional[date] = None,
+    policy=None,
+    candidates=None,
+    snapshots=None,
+    allocation=None,
+    decision=None,
+    purification_zakat=None,
+) -> WealthBrief:
+    return compose_wealth_operating_views(
+        portfolio_view=portfolio_view,
+        wealth=wealth,
+        accounts=accounts,
+        as_of=as_of,
+        policy=policy,
+        candidates=candidates,
+        snapshots=snapshots,
+        allocation=allocation,
+        decision=decision,
+        purification_zakat=purification_zakat,
+    ).brief
 
 
 def _render_brief(brief: WealthBrief) -> None:

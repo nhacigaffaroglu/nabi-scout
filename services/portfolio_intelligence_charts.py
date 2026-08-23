@@ -15,9 +15,11 @@ from services.nabi_chart_theme import (
     CONTRIBUTION,
     INVESTMENT_GAIN,
     MATERIALITY_COLORS,
+    MUTED,
     NABI_ACCENT,
     NABI_PRIMARY,
     NEGATIVE,
+    NEUTRAL,
     PARTICIPATION_COLORS,
     POSITIVE,
     WARNING,
@@ -151,6 +153,97 @@ def build_position_allocation_chart(rows: Sequence[EnrichedPositionRow]) -> alt.
     )
 
 
+def build_allocation_donut(
+    slices: Sequence[AllocationSlice],
+    *,
+    title: str,
+) -> alt.Chart:
+    _ensure_theme()
+    frame = _allocation_frame(slices)
+    if frame.empty:
+        return empty_bar_chart("Dağılım için fiyatlı pozisyon yok")
+    return (
+        alt.Chart(frame)
+        .mark_arc(innerRadius=70, outerRadius=120)
+        .encode(
+            theta=alt.Theta("weight_pct:Q", stack=True),
+            color=alt.Color("label:N", title=None, scale=alt.Scale(scheme="tableau10")),
+            tooltip=[
+                alt.Tooltip("label:N", title="Kalem"),
+                alt.Tooltip("weight_pct:Q", title="Pay %", format=".1f"),
+                alt.Tooltip("market_value:Q", title="Değer", format=",.0f"),
+            ],
+        )
+        .properties(width=CHART_WIDTH, height=CHART_HEIGHT_DEFAULT, title=title)
+    )
+
+
+def build_compact_allocation_chart(
+    slices: Sequence[AllocationSlice],
+    *,
+    title: str = "",
+) -> alt.Chart:
+    _ensure_theme()
+    frame = _allocation_frame(slices)
+    if frame.empty:
+        return empty_bar_chart("Dağılım yok")
+    frame = frame.sort_values("weight_pct", ascending=False)
+    frame["caption"] = [
+        f"%{row.weight_pct:.1f}  ${row.market_value:,.0f}" for row in frame.itertuples()
+    ]
+    height = max(120, 34 * len(frame))
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=3, size=18)
+        .encode(
+            y=alt.Y("label:N", title=None, sort="-x"),
+            x=alt.X("weight_pct:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
+            color=alt.value(NABI_PRIMARY),
+            tooltip=[
+                alt.Tooltip("label:N", title="Kalem"),
+                alt.Tooltip("weight_pct:Q", title="Pay %", format=".1f"),
+                alt.Tooltip("market_value:Q", title="Değer", format=",.0f"),
+            ],
+        )
+    )
+    labels = (
+        alt.Chart(frame)
+        .mark_text(align="left", dx=6, color=NEUTRAL, fontSize=11)
+        .encode(y=alt.Y("label:N", sort="-x"), x="weight_pct:Q", text="caption:N")
+    )
+    return alt.layer(bars, labels).properties(width=CHART_WIDTH, height=height, title=title)
+
+
+def build_target_vs_actual_chart(rows: Sequence[dict], *, title: str) -> alt.Chart:
+    _ensure_theme()
+    frame = pd.DataFrame(list(rows))
+    if frame.empty:
+        return empty_bar_chart("Hedef dağılım yok")
+    melted = frame.melt(
+        id_vars=["label"],
+        value_vars=["actual_pct", "target_pct"],
+        var_name="Tür",
+        value_name="Ağırlık",
+    )
+    melted["Tür"] = melted["Tür"].map({"actual_pct": "Fiili", "target_pct": "Hedef"})
+    return (
+        alt.Chart(melted)
+        .mark_bar()
+        .encode(
+            y=alt.Y("label:N", title=None),
+            x=alt.X("Ağırlık:Q", title="Ağırlık %"),
+            color=alt.Color("Tür:N", scale=alt.Scale(range=[NABI_PRIMARY, NABI_ACCENT])),
+            xOffset="Tür:N",
+            tooltip=[
+                alt.Tooltip("label:N", title="Katman"),
+                alt.Tooltip("Tür:N"),
+                alt.Tooltip("Ağırlık:Q", format=".1f"),
+            ],
+        )
+        .properties(width=CHART_WIDTH, height=max(CHART_HEIGHT_COMPACT, 40 * len(frame)), title=title)
+    )
+
+
 def build_allocation_bar_chart(
     slices: Sequence[AllocationSlice],
     *,
@@ -192,6 +285,209 @@ def build_allocation_bar_chart(
 
 def build_position_weight_chart(rows: Sequence[EnrichedPositionRow]) -> alt.Chart:
     return build_holdings_weight_chart(normalize_enriched_holdings(rows))
+
+
+def build_institution_bar_chart(rows: Sequence[dict], *, title: str = "Kurum") -> alt.Chart:
+    _ensure_theme()
+    frame = pd.DataFrame(list(rows))
+    if frame.empty:
+        return empty_bar_chart("Kurum dağılımı yok")
+    frame["caption"] = [
+        f"%{float(row.weight_pct):.1f}  ${float(row.market_value):,.0f}"
+        for row in frame.itertuples()
+    ]
+    height = max(120, 34 * len(frame))
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=3, size=18)
+        .encode(
+            y=alt.Y("label:N", title=None, sort="-x"),
+            x=alt.X("market_value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
+            color=alt.value(NABI_PRIMARY),
+            tooltip=[
+                alt.Tooltip("label:N", title="Kurum"),
+                alt.Tooltip("market_value:Q", title="Değer", format=",.0f"),
+                alt.Tooltip("weight_pct:Q", title="Pay %", format=".1f"),
+            ],
+        )
+    )
+    labels = (
+        alt.Chart(frame)
+        .mark_text(align="left", dx=6, color=NEUTRAL, fontSize=11)
+        .encode(y=alt.Y("label:N", sort="-x"), x="market_value:Q", text="caption:N")
+    )
+    return alt.layer(bars, labels).properties(width=CHART_WIDTH, height=height, title=title)
+
+
+def _worst_ratio(sizes: Sequence[float], length: float) -> float:
+    if not sizes or length <= 0:
+        return float("inf")
+    total = sum(sizes)
+    if total <= 0:
+        return float("inf")
+    return max(max((length * length * size) / (total * total), (total * total) / (length * length * size)) for size in sizes)
+
+
+def _layout_strip(
+    pairs: list[tuple[dict, float]],
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    *,
+    vertical: bool,
+) -> list[dict]:
+    total = sum(size for _, size in pairs)
+    laid: list[dict] = []
+    offset = 0.0
+    for item, size in pairs:
+        share = (size / total) if total else 0.0
+        if vertical:
+            strip_h = height * share
+            laid.append({**item, "x": x, "y": y + offset, "w": width, "h": strip_h})
+            offset += strip_h
+        else:
+            strip_w = width * share
+            laid.append({**item, "x": x + offset, "y": y, "w": strip_w, "h": height})
+            offset += strip_w
+    return laid
+
+
+def _squarify_pairs(
+    pairs: list[tuple[dict, float]],
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> list[dict]:
+    if not pairs or width <= 0 or height <= 0:
+        return []
+    if len(pairs) == 1:
+        return [{**pairs[0][0], "x": x, "y": y, "w": width, "h": height}]
+    length = height if width >= height else width
+    row = [pairs[0]]
+    index = 1
+    while index < len(pairs):
+        candidate = row + [pairs[index]]
+        if _worst_ratio([size for _, size in candidate], length) <= _worst_ratio(
+            [size for _, size in row], length
+        ):
+            row = candidate
+            index += 1
+        else:
+            break
+    leftover = pairs[index:]
+    row_area = sum(size for _, size in row)
+    if width >= height:
+        strip_w = row_area / height if height else 0.0
+        return _layout_strip(row, x, y, strip_w, height, vertical=True) + _squarify_pairs(
+            leftover, x + strip_w, y, width - strip_w, height
+        )
+    strip_h = row_area / width if width else 0.0
+    return _layout_strip(row, x, y, width, strip_h, vertical=False) + _squarify_pairs(
+        leftover, x, y + strip_h, width, height - strip_h
+    )
+
+
+def _squarify(items: list[dict], x: float, y: float, width: float, height: float) -> list[dict]:
+    """Visual layout only. Does not change market values."""
+    if not items or width <= 0 or height <= 0:
+        return []
+    total = sum(float(item["market_value"]) for item in items)
+    if total <= 0:
+        return []
+    area = width * height
+    ordered = sorted(items, key=lambda item: float(item["market_value"]), reverse=True)
+    pairs = [(item, float(item["market_value"]) / total * area) for item in ordered]
+    return _squarify_pairs(pairs, x, y, width, height)
+
+
+def build_holdings_treemap(rows: Sequence[Any], *, title: str = "Portföy haritası") -> alt.Chart:
+    """Altair treemap. Size is market value; color is reliable unrealized K/Z only."""
+    _ensure_theme()
+    records = []
+    for row in rows:
+        market_value = _optional_number(_holding_get(row, "market_value"))
+        if market_value is None or market_value <= 0:
+            continue
+        gain = _optional_number(_holding_get(row, "unrealized_pl"))
+        cost_ok = not bool(_holding_get(row, "cost_missing", False))
+        reliable = cost_ok and gain is not None
+        records.append(
+            {
+                "symbol": str(_holding_get(row, "symbol") or ""),
+                "market_value": market_value,
+                "weight_pct": float(_optional_number(_holding_get(row, "weight_pct")) or 0.0),
+                "asset_class": str(_holding_get(row, "asset_class") or _holding_get(row, "asset_type") or "—"),
+                "gain": gain if reliable else None,
+                "color_value": gain if reliable else None,
+                "reliable": reliable,
+            }
+        )
+    if not records:
+        return empty_bar_chart("Fiyatlı pozisyon yok")
+    laid = _squarify(records, 0.0, 0.0, 100.0, 60.0)
+    for item in laid:
+        item["show_label"] = item.get("w", 0) >= 7 and item.get("h", 0) >= 7
+    frame = pd.DataFrame(laid)
+    tooltip = [
+        alt.Tooltip("symbol:N", title="Sembol"),
+        alt.Tooltip("market_value:Q", title="Piyasa değeri", format=",.0f"),
+        alt.Tooltip("weight_pct:Q", title="Portföy payı %", format=".1f"),
+        alt.Tooltip("asset_class:N", title="Varlık"),
+        alt.Tooltip("gain:Q", title="K/Z", format=",.0f"),
+    ]
+    reliable = frame[frame["reliable"]]
+    other = frame[~frame["reliable"]]
+    layers = []
+    if not other.empty:
+        layers.append(
+            alt.Chart(other)
+            .transform_calculate(x2="datum.x + datum.w", y2="datum.y + datum.h")
+            .mark_rect(stroke="#ffffff", strokeWidth=1.5, color=MUTED)
+            .encode(
+                x=alt.X("x:Q", axis=None),
+                x2="x2:Q",
+                y=alt.Y("y:Q", axis=None),
+                y2="y2:Q",
+                tooltip=tooltip,
+            )
+        )
+    if not reliable.empty:
+        peak = max(abs(float(reliable["color_value"].min())), abs(float(reliable["color_value"].max())), 1.0)
+        layers.append(
+            alt.Chart(reliable)
+            .transform_calculate(x2="datum.x + datum.w", y2="datum.y + datum.h")
+            .mark_rect(stroke="#ffffff", strokeWidth=1.5)
+            .encode(
+                x=alt.X("x:Q", axis=None),
+                x2="x2:Q",
+                y=alt.Y("y:Q", axis=None),
+                y2="y2:Q",
+                color=alt.Color(
+                    "color_value:Q",
+                    title="K/Z",
+                    scale=alt.Scale(domain=[-peak, 0, peak], range=[NEGATIVE, MUTED, POSITIVE]),
+                    legend=None,
+                ),
+                tooltip=tooltip,
+            )
+        )
+    labeled = frame[frame["show_label"]]
+    if not labeled.empty:
+        layers.append(
+            alt.Chart(labeled)
+            .transform_calculate(cx="datum.x + datum.w / 2", cy="datum.y + datum.h / 2")
+            .mark_text(color="#ffffff", fontSize=12, fontWeight=700)
+            .encode(
+                x=alt.X("cx:Q", axis=None),
+                y=alt.Y("cy:Q", axis=None),
+                text="symbol:N",
+            )
+        )
+    if not layers:
+        return empty_bar_chart("Fiyatlı pozisyon yok")
+    return alt.layer(*layers).properties(width=CHART_WIDTH, height=CHART_HEIGHT_HERO, title=title)
 
 
 def build_holdings_weight_chart(holdings: Sequence[HoldingsChartRow]) -> alt.Chart:
@@ -304,61 +600,171 @@ def build_portfolio_value_history_chart(
     history_points,
     *,
     net_contributions: Optional[float] = None,
+    investment_gain: Optional[float] = None,
     currency: str = "USD",
+    height: int = CHART_HEIGHT_HERO,
+    title: Optional[str] = None,
 ) -> alt.Chart:
     _ensure_theme()
+    comparable = [point for point in history_points if not getattr(point, "is_partial", False)]
     frame = pd.DataFrame(
         [
             {
-                "date": point.captured_at[:10],
+                "date": str(point.captured_at)[:10],
                 "value": float(point.priced_market_value),
-                "partial": point.is_partial,
+                "partial": False,
             }
-            for point in history_points
+            for point in comparable
         ]
     )
     if frame.empty:
         return empty_bar_chart("Yeterli tarihsel snapshot bulunmuyor")
+    frame = frame.drop_duplicates("date", keep="last")
+    frame["label"] = pd.to_datetime(frame["date"]).dt.strftime("%d %b")
 
     line = (
         alt.Chart(frame)
         .mark_line(color=NABI_PRIMARY, strokeWidth=2.5)
         .encode(
-            x=alt.X("date:T", title="Tarih"),
+            x=alt.X("label:N", sort=list(frame["label"]), title=None),
             y=alt.Y("value:Q", title=f"Portföy değeri ({currency})", axis=alt.Axis(format=",.0f")),
             tooltip=[
-                alt.Tooltip("date:T", title="Tarih"),
-                alt.Tooltip("value:Q", title="Değer", format=",.2f"),
+                alt.Tooltip("label:N", title="Tarih"),
+                alt.Tooltip("value:Q", title="Değer", format=",.0f"),
             ],
         )
     )
     area = (
         alt.Chart(frame)
         .mark_area(color=NABI_ACCENT, opacity=0.12)
-        .encode(x="date:T", y="value:Q")
+        .encode(x=alt.X("label:N", sort=list(frame["label"])), y="value:Q")
     )
     layers: list = [area, line]
 
     if net_contributions is not None and net_contributions > 0:
-        ref = pd.DataFrame({"y": [net_contributions]})
+        ref = pd.DataFrame({"y": [net_contributions], "label": ["Net katkı"]})
         layers.append(
             alt.Chart(ref)
             .mark_rule(color=CONTRIBUTION, strokeDash=[6, 4], strokeWidth=1.5)
             .encode(y="y:Q")
         )
+    if investment_gain is not None and not frame.empty:
+        last = frame.iloc[-1]
+        note = pd.DataFrame(
+            [{"label": last["label"], "value": last["value"], "note": f"Yatırım K/Z ${investment_gain:,.0f}"}]
+        )
+        layers.append(
+            alt.Chart(note)
+            .mark_text(align="right", dy=-12, color=INVESTMENT_GAIN, fontSize=11)
+            .encode(x=alt.X("label:N", sort=list(frame["label"])), y="value:Q", text="note:N")
+        )
 
-    partial_note = ""
-    if any(point.is_partial for point in history_points):
-        partial_note = " · Kısmi snapshot"
+    chart_title = title
+    if chart_title is None:
+        chart_title = "Portföy değeri (zaman)"
 
-    return (
-        alt.layer(*layers)
-        .properties(
-            width=CHART_WIDTH,
-            height=CHART_HEIGHT_HERO,
-            title=f"Portföy değeri (zaman){partial_note}",
+    return alt.layer(*layers).properties(width=CHART_WIDTH, height=height, title=chart_title)
+
+
+def build_labeled_holdings_chart(rows: Sequence[Any], *, title: str = "") -> alt.Chart:
+    _ensure_theme()
+    records = []
+    for row in rows:
+        market_value = _optional_number(_holding_get(row, "market_value"))
+        if market_value is None:
+            continue
+        weight = float(_optional_number(_holding_get(row, "weight_pct")) or 0.0)
+        gain_pct = _optional_number(_holding_get(row, "gain_pct"))
+        caption = f"${market_value:,.0f}  %{weight:.1f}"
+        if gain_pct is not None:
+            caption = f"{caption}  {gain_pct:+.1f}%"
+        records.append(
+            {
+                "symbol": str(_holding_get(row, "symbol") or ""),
+                "market_value": market_value,
+                "weight_pct": weight,
+                "gain_pct": gain_pct,
+                "caption": caption,
+            }
+        )
+    if not records:
+        return empty_bar_chart("Fiyatlı pozisyon yok")
+    frame = pd.DataFrame(records).sort_values("market_value", ascending=True)
+    height = max(180, 36 * len(frame))
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=3, size=18)
+        .encode(
+            y=alt.Y("symbol:N", title=None, sort="-x"),
+            x=alt.X("market_value:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
+            color=alt.value(NABI_PRIMARY),
+            tooltip=[
+                alt.Tooltip("symbol:N", title="Sembol"),
+                alt.Tooltip("market_value:Q", title="Değer", format=",.0f"),
+                alt.Tooltip("weight_pct:Q", title="Pay %", format=".1f"),
+                alt.Tooltip("gain_pct:Q", title="K/Z %", format="+.1f"),
+            ],
         )
     )
+    labels = (
+        alt.Chart(frame)
+        .mark_text(align="left", dx=6, color=NEUTRAL, fontSize=11)
+        .encode(y=alt.Y("symbol:N", sort="-x"), x="market_value:Q", text="caption:N")
+    )
+    return alt.layer(bars, labels).properties(width=CHART_WIDTH, height=height, title=title)
+
+
+def build_gain_rank_chart(rows: Sequence[Any], *, title: str = "") -> alt.Chart:
+    _ensure_theme()
+    records = []
+    for row in rows:
+        gain = _optional_number(_holding_get(row, "gain_usd"))
+        if gain is None:
+            continue
+        pct = _optional_number(_holding_get(row, "gain_pct"))
+        weight = float(_optional_number(_holding_get(row, "weight_pct")) or 0.0)
+        market_value = float(_optional_number(_holding_get(row, "market_value")) or 0.0)
+        caption = f"{gain:+,.0f}"
+        if pct is not None:
+            caption = f"{caption} · {pct:+.1f}%"
+        records.append(
+            {
+                "symbol": str(_holding_get(row, "symbol") or ""),
+                "gain_usd": gain,
+                "gain_pct": pct,
+                "weight_pct": weight,
+                "market_value": market_value,
+                "bar": abs(gain),
+                "caption": caption,
+                "positive": gain >= 0,
+            }
+        )
+    if not records:
+        return empty_bar_chart("Sıralama yok")
+    frame = pd.DataFrame(records)
+    height = max(140, 32 * len(frame))
+    bars = (
+        alt.Chart(frame)
+        .mark_bar(cornerRadiusTopRight=3, size=16)
+        .encode(
+            y=alt.Y("symbol:N", title=None, sort="-x"),
+            x=alt.X("bar:Q", title=None, axis=alt.Axis(labels=False, ticks=False, domain=False)),
+            color=alt.condition(alt.datum.positive, alt.value(POSITIVE), alt.value(NEGATIVE)),
+            tooltip=[
+                alt.Tooltip("symbol:N", title="Sembol"),
+                alt.Tooltip("gain_usd:Q", title="K/Z USD", format=",.0f"),
+                alt.Tooltip("gain_pct:Q", title="K/Z %", format="+.1f"),
+                alt.Tooltip("weight_pct:Q", title="Portföy payı", format=".1f"),
+                alt.Tooltip("market_value:Q", title="Piyasa değeri", format=",.0f"),
+            ],
+        )
+    )
+    labels = (
+        alt.Chart(frame)
+        .mark_text(align="left", dx=6, color=NEUTRAL, fontSize=11)
+        .encode(y=alt.Y("symbol:N", sort="-x"), x="bar:Q", text="caption:N")
+    )
+    return alt.layer(bars, labels).properties(width=CHART_WIDTH, height=height, title=title)
 
 
 def build_performance_vs_contributions_chart(

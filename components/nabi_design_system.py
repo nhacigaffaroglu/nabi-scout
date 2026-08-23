@@ -101,6 +101,147 @@ NABI_GLOBAL_CSS = """
         border-radius: 8px;
         padding: 0.5rem 0.75rem;
     }
+    .nabi-cc-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0 0 0.85rem 0;
+    }
+    @media (max-width: 900px) {
+        .nabi-cc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    .nabi-cc-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.85rem 1rem;
+        min-height: 96px;
+    }
+    .nabi-cc-label {
+        font-size: 0.7rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: #64748b;
+        margin: 0 0 0.3rem 0;
+    }
+    .nabi-cc-value {
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: #1a365d;
+        line-height: 1.15;
+        margin: 0;
+        letter-spacing: -0.02em;
+    }
+    .nabi-cc-sub {
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: #2b6cb0;
+        margin: 0.2rem 0 0 0;
+    }
+    .nabi-chip {
+        display: inline-block;
+        background: #eef2f7;
+        color: #475569;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-bottom: 0.65rem;
+    }
+    .nabi-journey {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr auto 1fr;
+        gap: 0.5rem;
+        align-items: center;
+        margin: 0.35rem 0 0.75rem 0;
+    }
+    .nabi-journey-node {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.7rem 0.8rem;
+        text-align: center;
+        min-height: 88px;
+    }
+    .nabi-journey-arrow { color: #94a3b8; font-weight: 700; }
+    .nabi-progress-track {
+        background: #e2e8f0;
+        border-radius: 999px;
+        height: 8px;
+        overflow: hidden;
+        margin: 0.25rem 0 0.55rem 0;
+    }
+    .nabi-progress-fill {
+        height: 8px;
+        border-radius: 999px;
+        background: #2b6cb0;
+    }
+    .nabi-progress-fill-alt { background: #94a3b8; }
+    .nabi-priority-compact {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.55rem 0.8rem;
+        margin: 0 0 0.65rem 0;
+    }
+    .nabi-priority-head {
+        font-size: 0.95rem;
+        font-weight: 650;
+        color: #1e293b;
+        margin: 0;
+        line-height: 1.35;
+    }
+    .nabi-priority-metrics {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 1.35rem;
+        margin: 0.4rem 0 0.15rem 0;
+    }
+    .nabi-priority-metric {
+        margin: 0;
+        font-size: 0.88rem;
+        color: #334155;
+    }
+    .nabi-priority-metric span { color: #64748b; }
+    .nabi-priority-actions {
+        margin: 0.25rem 0 0 0;
+        font-size: 0.82rem;
+        color: #475569;
+    }
+    .nabi-commentary {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.65rem 0.85rem;
+        margin: 0 0 0.75rem 0;
+    }
+    .nabi-commentary li {
+        margin: 0.15rem 0;
+        color: #334155;
+        font-size: 0.9rem;
+    }
+    .nabi-commentary-synthesis {
+        margin: 0.55rem 0 0 0;
+        font-size: 0.9rem;
+        color: #1a365d;
+        font-weight: 600;
+    }
+    .nabi-commentary-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem;
+        margin-top: 0.55rem;
+    }
+    .nabi-commentary-chips .nabi-chip { margin-bottom: 0; }
+    .nabi-history-compact {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.7rem 0.85rem;
+        margin: 0 0 0.65rem 0;
+    }
+    .nabi-history-compact p { margin: 0.2rem 0; }
 </style>
 """
 
@@ -274,3 +415,90 @@ def render_freshness_line(label: str, value: Optional[str], *, stale: bool = Fal
 
 def render_chart_container(title: str, *, subtitle: Optional[str] = None) -> None:
     render_section_title(title, description=subtitle)
+
+
+def render_valuation_chip(label: str) -> None:
+    inject_nabi_theme()
+    _st().markdown(f'<span class="nabi-chip">{label}</span>', unsafe_allow_html=True)
+
+
+def render_command_viewport(cards: list[tuple[str, str, Optional[str]]]) -> None:
+    inject_nabi_theme()
+    cells = []
+    for label, value, sub in cards:
+        sub_html = f'<p class="nabi-cc-sub">{sub}</p>' if sub else ""
+        cells.append(
+            f'<div class="nabi-cc-card"><p class="nabi-cc-label">{label}</p>'
+            f'<p class="nabi-cc-value">{value}</p>{sub_html}</div>'
+        )
+    _st().html(f'<div class="nabi-cc-grid">{"".join(cells)}</div>')
+
+
+def render_compact_priority_card(
+    *,
+    severity: str,
+    title: str,
+    current_metric: Optional[str] = None,
+    required_metric: Optional[str] = None,
+    actions: Optional[list[str]] = None,
+) -> None:
+    inject_nabi_theme()
+    badge = render_status_badge(severity, "warning")
+    metrics = []
+    if current_metric:
+        metrics.append(f'<p class="nabi-priority-metric"><span>Mevcut:</span> {current_metric}</p>')
+    if required_metric:
+        metrics.append(f'<p class="nabi-priority-metric"><span>Gerekli:</span> {required_metric}</p>')
+    metrics_html = f'<div class="nabi-priority-metrics">{"".join(metrics)}</div>' if metrics else ""
+    actions_html = ""
+    if actions:
+        actions_html = f'<p class="nabi-priority-actions">{" · ".join(actions)}</p>'
+    _st().html(
+        f"""
+        <div class="nabi-priority-compact">
+            <p class="nabi-priority-head">{badge} · {title}</p>
+            {metrics_html}
+            {actions_html}
+        </div>
+        """
+    )
+
+
+def render_journey_milestones(
+    *,
+    current_label: str,
+    current_value: str,
+    projected_label: str,
+    projected_value: str,
+    target_label: str,
+    target_value: str,
+    progress_pct: Optional[float],
+    attainment_pct: Optional[float],
+) -> None:
+    inject_nabi_theme()
+    progress = max(0.0, min(float(progress_pct or 0.0), 100.0))
+    attain = max(0.0, min(float(attainment_pct or 0.0), 100.0))
+    _st().html(
+        f"""
+        <div class="nabi-journey">
+            <div class="nabi-journey-node">
+                <p class="nabi-cc-label">{current_label}</p>
+                <p class="nabi-cc-value">{current_value}</p>
+            </div>
+            <div class="nabi-journey-arrow">→</div>
+            <div class="nabi-journey-node">
+                <p class="nabi-cc-label">{projected_label}</p>
+                <p class="nabi-cc-value">{projected_value}</p>
+            </div>
+            <div class="nabi-journey-arrow">→</div>
+            <div class="nabi-journey-node">
+                <p class="nabi-cc-label">{target_label}</p>
+                <p class="nabi-cc-value">{target_value}</p>
+            </div>
+        </div>
+        <p class="nabi-cc-label">Hedef ilerlemesi</p>
+        <div class="nabi-progress-track"><div class="nabi-progress-fill" style="width:{progress:.1f}%;"></div></div>
+        <p class="nabi-cc-label">2031 tahmini ulaşma</p>
+        <div class="nabi-progress-track"><div class="nabi-progress-fill nabi-progress-fill-alt" style="width:{attain:.1f}%;"></div></div>
+        """
+    )

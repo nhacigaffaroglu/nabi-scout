@@ -817,8 +817,9 @@ class WealthTimelineUiTests(unittest.TestCase):
 
     def test_wealth_page_imports_price_and_timeline_services(self) -> None:
         source = self.PAGE.read_text(encoding="utf-8")
-        self.assertIn("from services.wealth_price_service import WealthPriceService", source)
+        self.assertIn("from services.canonical_current_valuation import build_canonical_current_view", source)
         self.assertIn("from services.wealth_timeline_service import WealthTimelineService", source)
+        self.assertNotIn("from services.wealth_price_service import WealthPriceService", source)
         compile(source, str(self.PAGE), "exec")
 
     def test_explicit_snapshot_button_only(self) -> None:

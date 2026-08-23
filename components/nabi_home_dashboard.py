@@ -3,33 +3,155 @@ from __future__ import annotations
 from components.nabi_design_system import (
     render_empty_state,
     render_executive_hero,
-    render_insight_list,
     render_section_title,
-    render_secondary_kpi_row,
     render_status_badge,
 )
+from components.portfolio_decision_center_ui import present_action_center
+from components.wealth_brief_ui import compose_wealth_operating_views
+from repositories.candidate_repository import CandidateRepository
 from services.auth_service import get_current_user_id
-from services.candidate_price_service import CandidatePriceService
-from services.daily_portfolio_brief_service import build_daily_portfolio_brief
-from services.data_quality_center_service import build_data_quality_summary
-from services.monitor_intelligence_service import MonitorIntelligenceService
-from services.nabi_visual_insights import build_portfolio_insights
-from services.portfolio_intelligence_charts import build_portfolio_value_history_chart
+from services.canonical_current_valuation import (
+    build_canonical_current_view,
+    canonical_wealth_metrics,
+)
+from services.fx_rate_service import FxRateService
+from services.nabi_dashboard_presentation import (
+    SECTION_GOAL,
+    SECTION_NEW_MONEY,
+    SECTION_OPPORTUNITIES,
+    SECTION_PERFORMANCE,
+    SECTION_PORTFOLIO,
+    SECTION_PRIORITY,
+    NabiTodayDashboard,
+    build_nabi_today_dashboard,
+)
 from services.portfolio_intelligence_enrichment_service import build_portfolio_intelligence_dashboard
-from services.portfolio_intelligence_service import PortfolioIntelligenceService
-from services.system_health_service import SystemHealthService
-from services.total_wealth_service import compute_total_wealth_metrics
 from services.wealth_core_service import WealthCoreService
-from services.wealth_timeline_service import WealthTimelineService
 
 
-def _streamlit_runtime_active() -> bool:
+def _load_candidates(client) -> list:
     try:
-        from streamlit.runtime.scriptrunner_utils import get_script_run_ctx
-
-        return get_script_run_ctx() is not None
+        return list(CandidateRepository(client).get_all(limit=500) or [])
     except Exception:
-        return False
+        return []
+
+
+def render_nabi_today(today: NabiTodayDashboard) -> None:
+    import streamlit as st
+
+    wealth = today.wealth
+    try_line = (
+        f"≈ {wealth.try_equivalent.label}"
+        if wealth.try_equivalent.available and wealth.try_equivalent.label
+        else None
+    )
+    subtitle_parts = [wealth.valuation_label]
+    if wealth.coverage_pct is not None:
+        subtitle_parts.append(f"Kapsam %{wealth.coverage_pct:.0f}")
+    render_executive_hero(
+        primary_label=f"{today.title} · TOPLAM SERVET",
+        primary_value=wealth.usd_label,
+        subtitle=" · ".join(subtitle_parts),
+        partial=not wealth.valuation_complete,
+        delta_lines=[(try_line, "info")] if try_line else [],
+        partial_note=wealth.limitation if not wealth.valuation_complete else None,
+    )
+    if try_line is None and wealth.try_equivalent.limitation:
+        st.caption(wealth.try_equivalent.limitation)
+    with st.expander("Kur kanıtı", expanded=False):
+        st.caption(f"USD/TRY · {wealth.try_equivalent.rate or '—'}")
+        st.caption(f"Tarih: {wealth.try_equivalent.rate_date or '—'}")
+    if wealth.change_label:
+        st.caption(wealth.change_label)
+
+    render_section_title(SECTION_GOAL, description="Hedef Merkezi özeti")
+    goal = today.goal
+    cols = st.columns(3)
+    cols[0].metric("Hedef", goal.target_label)
+    cols[1].metric("İlerleme", goal.current_progress)
+    cols[2].metric("2031 projeksiyon", goal.projected_wealth_label)
+    st.caption(f"Ulaşma: {goal.attainment_label}")
+    st.caption(
+        f"Kayıtlı katkı: {goal.configured_monthly_label} · "
+        f"Gereken: {goal.required_monthly_label}"
+    )
+    if goal.target_date_alternative:
+        st.caption(f"Alternatif ulaşım: {goal.target_date_alternative}")
+    st.caption(goal.status_copy)
+    if st.button("2031 Hedef Merkezi", key="today_go_goal"):
+        st.switch_page("pages/10_Wealth.py")
+
+    render_section_title(SECTION_PRIORITY)
+    if today.priority.healthy or not today.priority.items:
+        st.info(today.priority.empty_copy)
+    else:
+        for item in today.priority.items:
+            with st.container(border=True):
+                st.markdown(
+                    render_status_badge(item.severity, "warning"),
+                    unsafe_allow_html=True,
+                )
+                st.markdown(f"**{item.title}**")
+                st.caption(item.explanation)
+                if item.options:
+                    st.caption("Seçenekler: " + " · ".join(item.options[:3]))
+    if st.button("Karar Merkezi", key="today_go_decision"):
+        st.switch_page("pages/11_Portfolio_Intelligence.py")
+
+    render_section_title(SECTION_PORTFOLIO)
+    port = today.portfolio
+    if port.holdings:
+        for row in port.holdings:
+            st.markdown(f"**{row.symbol}** · {row.weight_label} · {row.value_label}")
+    if port.allocation_lines:
+        st.caption(" · ".join(port.allocation_lines))
+    if port.concentration_label:
+        st.caption(port.concentration_label)
+    for warning in port.imbalance_warnings:
+        st.warning(warning)
+    if not port.holdings and not port.allocation_lines:
+        st.caption("Portföy özeti için fiyatlı pozisyon yok.")
+
+    render_section_title(SECTION_OPPORTUNITIES)
+    if not today.opportunities.rows:
+        st.info(today.opportunities.empty_copy)
+    else:
+        for index, row in enumerate(today.opportunities.rows):
+            score = f"{row.nabi_score:.1f}" if row.nabi_score is not None else "—"
+            st.markdown(f"**{row.symbol}** · {score} · {row.decision}")
+            if row.reason:
+                st.caption(row.reason)
+            if st.button("Company Report", key=f"today_opp_{row.symbol}_{index}"):
+                st.session_state["company_report_candidate"] = {"symbol": row.symbol}
+                st.query_params["symbol"] = row.symbol
+                st.switch_page("pages/4_Company_Report.py")
+
+    render_section_title(SECTION_NEW_MONEY)
+    st.caption(today.new_money_lead)
+    money = today.new_money
+    if money.unavailable_reason and not money.recommendations:
+        st.caption(money.unavailable_reason)
+    else:
+        for row in money.recommendations:
+            st.markdown(f"**{row.symbol}** · {row.amount_label} · {row.kind_label}")
+            st.caption(row.reason)
+        st.caption(f"Dağıtılan: {money.allocated_label} · Nakit kalan: {money.residual_label}")
+    st.caption("Danışmanlık özetidir; işlem uygulanmaz.")
+
+    render_section_title(SECTION_PERFORMANCE)
+    perf = today.performance
+    if perf.limitation and not perf.return_label:
+        st.info(perf.limitation)
+    else:
+        st.metric(perf.period_label, perf.return_label or "—")
+        if perf.best_label:
+            st.caption(f"En iyi: {perf.best_label}")
+        if perf.weakest_label:
+            st.caption(f"En zayıf: {perf.weakest_label}")
+        if perf.limitation:
+            st.caption(perf.limitation)
+    if st.button("Performans Merkezi", key="today_go_performance"):
+        st.switch_page("pages/10_Wealth.py")
 
 
 def render_nabi_home_executive(client) -> None:
@@ -53,91 +175,44 @@ def render_nabi_home_executive(client) -> None:
             st.switch_page("pages/11_Portfolio_Intelligence.py")
         return
 
-    price_service = CandidatePriceService(client)
-    intelligence = PortfolioIntelligenceService(wealth, price_service, nabi_client=client)
-    base_view = intelligence.build_view(portfolio, enrich_nabi=False)
+    base_view = build_canonical_current_view(
+        wealth,
+        enrich_nabi=False,
+        portfolio=portfolio,
+    )
     dashboard = build_portfolio_intelligence_dashboard(base_view, accounts_by_id={})
-    monitor = MonitorIntelligenceService(client, user_id)
-    brief = build_daily_portfolio_brief(portfolio=portfolio, dashboard=dashboard, monitor=monitor)
-    metrics = compute_total_wealth_metrics(
+    metrics = canonical_wealth_metrics(
         base_view,
         participation_covered_pct=dashboard.participation_eligible_weight_pct,
         research_covered_pct=dashboard.research_coverage_weight_pct,
     )
-    quality = build_data_quality_summary(dashboard)
-    timeline = WealthTimelineService(wealth)
-    perf_history = timeline.build_performance_view(portfolio).history_points
-
-    partial = metrics.partial_total or base_view.unpriced_position_count > 0
-    currency = metrics.base_currency
-    total_display = (
-        f"{metrics.total_wealth:,.0f}"
-        if metrics.total_wealth is not None
-        else f"{base_view.priced_total_market_value:,.0f}"
+    accounts = wealth.list_accounts()
+    candidates = _load_candidates(client)
+    operating = compose_wealth_operating_views(
+        portfolio_view=base_view,
+        wealth=wealth,
+        accounts=accounts,
+        candidates=candidates,
     )
-
-    render_executive_hero(
-        primary_label="NABI — Toplam Servet",
-        primary_value=total_display,
-        subtitle=f"{currency} · Değerleme kapsamı %{base_view.health.priced_position_coverage_pct:.0f}",
-        partial=partial,
-        partial_note=metrics.limitation if partial else None,
+    presented = present_action_center(operating.decision)
+    today = build_nabi_today_dashboard(
+        metrics=metrics,
+        coverage_pct=base_view.health.priced_position_coverage_pct,
+        fx_service=FxRateService(client),
+        pi_dashboard=dashboard,
+        brief=operating.brief,
+        presented_actions=presented,
+        candidates=candidates,
     )
-
-    render_secondary_kpi_row(
-        [
-            ("Nakit", f"{metrics.cash:,.0f} {currency}", None),
-            ("Katılım kapsamı", f"%{dashboard.participation_eligible_weight_pct:.0f}", None),
-            ("Araştırma kapsamı", f"%{dashboard.research_coverage_weight_pct:.0f}", None),
-            (
-                "Monitör",
-                f"{brief.event_counts.get('high_critical', 0)} yüksek/kritik",
-                None,
-            ),
-        ]
-    )
-
-    if perf_history and _streamlit_runtime_active():
-        st.altair_chart(
-            build_portfolio_value_history_chart(perf_history, currency=currency),
-            use_container_width=True,
-        )
-
-    insights = build_portfolio_insights(dashboard=dashboard)
-    render_insight_list(insights)
-
-    render_section_title("BUGÜN", description="Günlük özet — persisted monitör olayları")
-    if brief.unresolved_attention:
-        for item in brief.unresolved_attention[:4]:
-            st.markdown(f"- {item}")
-    else:
-        st.caption("Şu anda incelemen gereken yeni yüksek öncelikli olay yok.")
-
-    if quality.issues:
-        render_section_title("VERİ KALİTESİ")
-        for issue in quality.issues[:3]:
-            st.markdown(
-                render_status_badge(issue.label, "warning" if issue.severity == "watch" else "info"),
-                unsafe_allow_html=True,
-            )
-            st.caption(issue.detail)
-
-    health = SystemHealthService(client)
-    stale_jobs = [
-        row.label
-        for row in health.list_automation_health()
-        if row.status not in {None, "COMPLETED"}
-    ]
-    if stale_jobs:
-        st.caption(f"Otomasyon: {', '.join(stale_jobs[:3])}")
+    render_nabi_today(today)
 
     nav_cols = st.columns(3)
     with nav_cols[0]:
         if st.button("Portföy Zekâsı", key="home_nav_portfolio", type="primary"):
             st.switch_page("pages/11_Portfolio_Intelligence.py")
     with nav_cols[1]:
-        if st.button("Monitör", key="home_nav_monitor"):
-            st.switch_page("pages/12_Monitor.py")
+        if st.button("Wealth", key="home_nav_wealth"):
+            st.switch_page("pages/10_Wealth.py")
     with nav_cols[2]:
-        if st.button("Araştırma Monitörü", key="home_nav_research_monitor"):
-            st.switch_page("pages/3_Research_Monitor.py")
+        if st.button("Aday Havuzu", key="home_nav_candidates"):
+            st.switch_page("pages/2_Aday_Havuzu.py")
