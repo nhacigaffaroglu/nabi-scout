@@ -9,6 +9,9 @@ from components.nabi_design_system import (
 from components.portfolio_decision_center_ui import present_action_center
 from components.wealth_brief_ui import compose_wealth_operating_views
 from repositories.candidate_repository import CandidateRepository
+from repositories.participation_assessment_repository import (
+    ParticipationAssessmentRepository,
+)
 from services.auth_service import get_current_user_id
 from services.candidate_surface_service import filter_equity_candidate_surface
 from services.canonical_current_valuation import (
@@ -17,6 +20,7 @@ from services.canonical_current_valuation import (
 )
 from services.fx_rate_service import FxRateService
 from services.nabi_dashboard_presentation import present_wealth_section
+from services.participation_authority import overlay_candidate_rows
 from services.nabi_today_presentation import (
     ALLOCATION_OPEN_LABEL,
     FIRSATLARI_GOR_LABEL,
@@ -190,7 +194,14 @@ def render_nabi_home_executive(client) -> None:
     )
     accounts = wealth.list_accounts()
     candidates = _load_candidates(client)
-    opportunity_candidates = _load_opportunity_candidates(client)
+    try:
+        snapshots = ParticipationAssessmentRepository(client).list_latest_by_symbol()
+    except Exception:
+        snapshots = {}
+    opportunity_candidates = overlay_candidate_rows(
+        _load_opportunity_candidates(client),
+        snapshots,
+    )
     operating = compose_wealth_operating_views(
         portfolio_view=base_view,
         wealth=wealth,

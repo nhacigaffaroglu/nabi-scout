@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from services.change_detection_engine import detect_changes, rank_changes
+from services.participation_authority import resolve_authoritative_participation
 from services.scan_run_health_service import count_endpoint_warnings, endpoint_status_has_rate_limit
 from services.scan_snapshot import build_scan_snapshot
 from services.scanner_v8_engine import ScannerV8Engine
@@ -42,6 +43,8 @@ class ScanRunResult:
     status: str = "COMPLETED"
     skipped: bool = False
     skip_reason: Optional[str] = None
+    participation_skipped: int = 0
+    participation_skip_reasons: Dict[str, str] = field(default_factory=dict)
 
 
 def run_scan(
@@ -58,6 +61,8 @@ def run_scan(
     minimum_conviction: int = 60,
     portfolio_fit: int = 55,
     participation_defaults: Optional[Dict[str, tuple[str, int]]] = None,
+    participation_snapshots: Optional[Dict[str, Mapping[str, Any]]] = None,
+    existing_candidates: Optional[Dict[str, Mapping[str, Any]]] = None,
     progress_callback: Optional[ProgressCallback] = None,
     inter_symbol_pause_seconds: float = INTER_SYMBOL_PAUSE_SECONDS,
     persist_candidates: bool = True,
@@ -66,6 +71,8 @@ def run_scan(
         raise ValueError("At least one symbol is required to run a scan.")
 
     participation_defaults = participation_defaults or {}
+    participation_snapshots = participation_snapshots or {}
+    existing_candidates = existing_candidates or {}
     fmp_client.reset_scan_state()
     scanner = engine or ScannerV8Engine(fmp_client, sec_client)
 
@@ -78,6 +85,8 @@ def run_scan(
     endpoint_warning_count = 0
     fmp_rate_limited = False
     successful_symbols = 0
+    participation_skipped = 0
+    participation_skip_reasons: Dict[str, str] = {}
 
     try:
         for index, row in enumerate(symbols, 1):
@@ -87,9 +96,23 @@ def run_scan(
                     pause(inter_symbol_pause_seconds)
 
             symbol = row["symbol"]
-            participation_status, participation_score = participation_defaults.get(
+            catalog_entry = participation_defaults.get(symbol)
+            authority = resolve_authoritative_participation(
                 symbol,
-                DEFAULT_PARTICIPATION,
+                candidate=existing_candidates.get(symbol),
+                snapshot=participation_snapshots.get(symbol),
+                catalog_status=catalog_entry[0] if catalog_entry else None,
+            )
+            if not authority.scanner_allowed:
+                participation_skipped += 1
+                participation_skip_reasons[symbol] = authority.skip_reason or "PARTICIPATION_UNRESOLVED"
+                if progress_callback is not None:
+                    progress_callback(index, len(symbols))
+                continue
+
+            participation_status = authority.status
+            participation_score = catalog_entry[1] if catalog_entry else (
+                100 if authority.approved else DEFAULT_PARTICIPATION[1]
             )
 
             try:
@@ -170,7 +193,7 @@ def run_scan(
             if item["change"].get("has_meaningful_change")
         ])
 
-        if successful_symbols == 0:
+        if successful_symbols == 0 and hard_failures > 0:
             scan_repo.fail_run(run_id, error_count=max(errors, len(symbols)))
             status = "FAILED"
         else:
@@ -203,6 +226,8 @@ def run_scan(
             meaningful_changes=meaningful_changes,
             candidates=full_candidates,
             status=status,
+            participation_skipped=participation_skipped,
+            participation_skip_reasons=participation_skip_reasons,
         )
     except Exception:
         scan_repo.fail_run(run_id, error_count=max(errors, 1))

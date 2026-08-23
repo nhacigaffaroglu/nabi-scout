@@ -27,8 +27,11 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.research_monitor_service import summarize_change
+from services.participation_authority import (
+    is_approved_open_research,
+    overlay_candidate_rows,
+)
 from services.research_workflow_service import (
-    is_open_research_status,
     normalize_research_status,
 )
 from services.universe_expansion_contract import (
@@ -294,7 +297,7 @@ def count_strong_opportunities(candidates: Sequence[Mapping[str, Any]]) -> int:
 
 
 def count_research_waiting(candidates: Sequence[Mapping[str, Any]]) -> int:
-    return sum(1 for row in candidates if is_open_research_status(row.get("research_status")))
+    return sum(1 for row in candidates if is_approved_open_research(row))
 
 
 def count_research_completed(candidates: Sequence[Mapping[str, Any]]) -> int:
@@ -415,7 +418,10 @@ def present_watchlist_summary(
     )
 
 
-def discovery_user_label(status: Any) -> str:
+def discovery_user_label(status: Any, participation_status: Any = None) -> str:
+    participation = _text(participation_status)
+    if participation == PARTICIPATION_STATUS_UYGUN_DEGIL:
+        return DISCOVERY_FAILED
     value = _text(status).upper()
     if value == EXPANSION_STATUS_PENDING:
         return DISCOVERY_NEW
@@ -453,7 +459,10 @@ def present_discovery_summary(
     waiting_count = 0
     if queue_rows is not None:
         for row in queue_rows:
-            label = discovery_user_label(row.get("status"))
+            label = discovery_user_label(
+                row.get("status"),
+                row.get("participation_status"),
+            )
             if label == DISCOVERY_NEW:
                 new_count += 1
             elif label == DISCOVERY_WAITING:
@@ -517,7 +526,9 @@ def build_opportunity_center(
     watchlist_priority: Optional[Mapping[str, Mapping[str, Any]]] = None,
     expansion_rows: Optional[Sequence[Mapping[str, Any]]] = None,
     brief: Optional[Mapping[str, Any]] = None,
+    snapshots: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> OpportunityCenterView:
+    candidates = overlay_candidate_rows(candidates, snapshots)
     today = present_today_opportunity_cards(candidates)
     research = present_research_summary(candidates, brief)
     watchlist = present_watchlist_summary(watchlist_entries, watchlist_priority)

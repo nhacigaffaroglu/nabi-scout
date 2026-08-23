@@ -27,10 +27,17 @@ def build_expansion_candidate_payload(
     symbol: str,
 ) -> Dict[str, Any]:
     normalized = str(symbol or result.symbol or "").strip().upper()
-    return {
+    status = ""
+    assessment = getattr(result, "participation_assessment", None)
+    if assessment is not None:
+        status = str(getattr(assessment, "status", "") or "").strip()
+    payload = {
         "symbol": normalized,
         "market": "US",
         "asset_type": "equity",
         "company_name": resolve_expansion_candidate_company_name(result, normalized),
         "data_source": "universe_expansion",
     }
+    if status:
+        payload["participation_status"] = status
+    return payload

@@ -364,6 +364,7 @@ class RunScanPersistCandidatesTests(unittest.TestCase):
             sec_client=MagicMock(),
             engine=engine,
             persist_candidates=False,
+            participation_defaults={"NVDA": ("Uygun", 100)},
         )
         candidate_repo.upsert_by_symbol.assert_not_called()
         self.assertEqual(len(store.results), 1)

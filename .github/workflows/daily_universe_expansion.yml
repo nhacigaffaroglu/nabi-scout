@@ -2,8 +2,9 @@ name: Daily Universe Expansion
 
 on:
   schedule:
-    # 08:00 Europe/Istanbul (UTC+3, no DST) == 05:00 UTC
-    - cron: "0 5 * * *"
+    # Halal-first: participation onboarding before automatic Scanner.
+    # 06:00 Europe/Istanbul (UTC+3, no DST) == 03:00 UTC
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

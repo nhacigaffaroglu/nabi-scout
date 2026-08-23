@@ -332,7 +332,8 @@ class OnboardingPersistenceTests(unittest.TestCase):
                 candidate_repo=candidate_repo,
             )
 
-        self.assertFalse(onboarding.success)
+        self.assertTrue(onboarding.success)
+        self.assertEqual(onboarding.participation_status, PARTICIPATION_STATUS_UYGUN)
         self.assertFalse(onboarding.candidate_upserted)
         payload = candidate_repo.upsert_expansion_candidate.call_args.args[0]
         self.assertEqual(payload["symbol"], "XYZ")

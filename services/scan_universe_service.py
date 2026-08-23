@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any, Dict, List, Optional
 
 from config.scan_universe import SCAN_UNIVERSES
+from services.participation_authority import resolve_authoritative_participation
 from services.scan_snapshot import normalize_universe_name
 
 DAILY_UNIVERSE_KEYS = ("Teknoloji 10", "Katılım ETF 3")
@@ -71,3 +72,29 @@ def build_daily_universe_rows(
         }
 
     return [merged[symbol] for symbol in sorted(merged)]
+
+
+def filter_scanner_eligible_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
+    candidates: Optional[Dict[str, Dict[str, Any]]] = None,
+    catalog_defaults: Optional[Dict[str, tuple[str, int]]] = None,
+) -> List[Dict[str, Any]]:
+    """Keep only participation-approved names for automatic Scanner work."""
+    snapshots = snapshots or {}
+    candidates = candidates or {}
+    catalog_defaults = catalog_defaults or {}
+    eligible: List[Dict[str, Any]] = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        catalog = catalog_defaults.get(symbol)
+        authority = resolve_authoritative_participation(
+            symbol,
+            candidate=candidates.get(symbol),
+            snapshot=snapshots.get(symbol),
+            catalog_status=catalog[0] if catalog else None,
+        )
+        if authority.scanner_allowed:
+            eligible.append(row)
+    return eligible

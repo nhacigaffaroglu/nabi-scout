@@ -2,7 +2,8 @@ name: Daily Scan
 
 on:
   schedule:
-    - cron: "0 3 * * *"
+    # After Daily Universe Expansion (03:00 UTC). 09:00 Istanbul / 06:00 UTC.
+    - cron: "0 6 * * *"
   workflow_dispatch:
 
 concurrency:

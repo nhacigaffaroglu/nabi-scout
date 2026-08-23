@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from uuid import uuid4
 
 from services.supabase_admin_client import raise_friendly_rls_error
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN_DEGIL
 from services.universe_expansion_contract import (
     EXPANSION_STATUS_BLOCKED,
     EXPANSION_STATUS_COMPLETED,
@@ -114,10 +115,14 @@ class UniverseExpansionRepository:
         starve healthy first-attempt symbols. Within each group, order is
         (priority, symbol). RETRYABLE rows before ``next_retry_at`` are
         excluded. COMPLETED / BLOCKED / IN_PROGRESS are never eligible.
+        Terminal Uygun Değil rows never consume the daily safety cap.
         """
         pending: List[Dict[str, Any]] = []
         retryable: List[Dict[str, Any]] = []
         for row in self.list_all():
+            participation = str(row.get("participation_status") or "").strip()
+            if participation == PARTICIPATION_STATUS_UYGUN_DEGIL:
+                continue
             status = row.get("status")
             if status == EXPANSION_STATUS_PENDING:
                 pending.append(row)

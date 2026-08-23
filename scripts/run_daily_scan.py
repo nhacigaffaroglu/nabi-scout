@@ -11,13 +11,20 @@ if str(ROOT) not in sys.path:
 
 from config.scan_universe import PARTICIPATION_DEFAULTS
 from repositories.candidate_repository import CandidateRepository
+from repositories.participation_assessment_repository import (
+    ParticipationAssessmentRepository,
+)
 from repositories.scan_repository import ScanRepository
 from repositories.watchlist_repository import WatchlistRepository
 from services.fmp_client import FMPClient, FMPError
 from services.free_universe_client import FreeUniverseClient
 from services.scan_run_health_service import build_in_memory_scan_run_health
 from services.scan_runner_service import ScanRunResult, run_scan
-from services.scan_universe_service import build_daily_universe_rows, scheduled_universe_name
+from services.scan_universe_service import (
+    build_daily_universe_rows,
+    filter_scanner_eligible_rows,
+    scheduled_universe_name,
+)
 from services.scheduled_scan_service import evaluate_scheduled_run, stale_running_cutoff
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client_factory import SupabaseConfigError, create_supabase_client
@@ -116,9 +123,37 @@ def main() -> int:
         sec_lookup=sec_lookup,
         watchlist_entries=watchlist_entries,
     )
+    snapshots = ParticipationAssessmentRepository(client).list_latest_by_symbol()
+    existing = {
+        str(row.get("symbol") or "").strip().upper(): row
+        for row in (candidate_repo.get_all(limit=500) or [])
+        if row.get("symbol")
+    }
+    symbols = filter_scanner_eligible_rows(
+        symbols,
+        snapshots=snapshots,
+        candidates=existing,
+        catalog_defaults=PARTICIPATION_DEFAULTS,
+    )
     if not symbols:
-        print("Daily universe resolved to zero symbols.", file=sys.stderr)
-        return 1
+        print("Daily universe resolved to zero participation-approved symbols.")
+        skipped = ScanRunResult(
+            run_id="",
+            source="scheduled",
+            universe_name=universe_name,
+            total_symbols=0,
+            scanned=0,
+            updated=0,
+            strong=0,
+            errors=0,
+            excluded=0,
+            symbols_without_previous=0,
+            skipped=True,
+            skip_reason="No participation-approved symbols.",
+            status="SKIPPED",
+        )
+        _print_summary(skipped)
+        return 0
 
     sec_client = SECFinancialClient(contact_email=sec_email)
     result = run_scan(
@@ -130,6 +165,8 @@ def main() -> int:
         fmp_client=fmp_client,
         sec_client=sec_client,
         participation_defaults=PARTICIPATION_DEFAULTS,
+        participation_snapshots=snapshots,
+        existing_candidates=existing,
     )
     _print_summary(result)
     return 0 if result.status == "COMPLETED" else 1

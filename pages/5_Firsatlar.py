@@ -1,4 +1,7 @@
 from repositories.candidate_repository import CandidateRepository
+from repositories.participation_assessment_repository import (
+    ParticipationAssessmentRepository,
+)
 from repositories.scan_repository import ScanRepository
 from repositories.universe_expansion_repository import UniverseExpansionRepository
 from repositories.watchlist_repository import WatchlistRepository
@@ -52,6 +55,7 @@ brief = _safe_list(
     )
 )
 expansion_rows = _safe_list(lambda: UniverseExpansionRepository(client).list_all())
+snapshots = _safe_list(lambda: ParticipationAssessmentRepository(client).list_latest_by_symbol())
 
 view = build_opportunity_center(
     candidates=candidates,
@@ -59,5 +63,6 @@ view = build_opportunity_center(
     watchlist_priority=priority_by_id,
     expansion_rows=expansion_rows,
     brief=brief,
+    snapshots=snapshots,
 )
 render_opportunity_center(view, candidates=candidates)

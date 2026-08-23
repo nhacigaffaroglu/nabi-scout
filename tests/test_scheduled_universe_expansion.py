@@ -160,7 +160,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", content)
         self.assertIn("SUPABASE_SERVICE_ROLE_KEY", content)
         self.assertIn("workflow_dispatch", content)
-        self.assertIn('cron: "0 5 * * *"', content)
+        self.assertIn('cron: "0 3 * * *"', content)
         self.assertNotIn("sb_secret_", content)
         self.assertNotIn("sb_publishable_", content)
 

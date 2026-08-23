@@ -10,7 +10,19 @@ from services.scan_run_health_service import (
     is_excluded_result_row,
     resolve_scheduled_health,
 )
-from services.scan_runner_service import ScanRunResult, run_scan
+from services.scan_runner_service import ScanRunResult, run_scan as _run_scan
+
+_APPROVED_PARTICIPATION = {
+    "AAPL": ("Uygun", 100),
+    "MSFT": ("Uygun", 100),
+    "NVDA": ("Uygun", 100),
+    "HLAL": ("Uygun", 100),
+}
+
+
+def run_scan(*args, **kwargs):
+    kwargs.setdefault("participation_defaults", _APPROVED_PARTICIPATION)
+    return _run_scan(*args, **kwargs)
 from services.ui_formatters import format_scheduled_run_detail, resolve_scheduled_run_status
 
 

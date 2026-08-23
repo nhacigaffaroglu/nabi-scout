@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from repositories.scan_repository import ScanRepository
 from services.fmp_client import FMPError
-from services.scan_runner_service import ScanRunResult, run_scan
+from services.scan_runner_service import ScanRunResult, run_scan as _run_scan
 from services.scan_universe_service import (
     build_daily_universe_rows,
     build_fixed_universe_rows,
@@ -16,6 +16,18 @@ from services.scan_universe_service import (
 )
 from services.scheduled_scan_service import evaluate_scheduled_run, stale_running_cutoff
 from services.supabase_client_factory import SupabaseConfigError, create_supabase_client
+
+_APPROVED_PARTICIPATION = {
+    "AAPL": ("Uygun", 100),
+    "MSFT": ("Uygun", 100),
+    "NVDA": ("Uygun", 100),
+    "HLAL": ("Uygun", 100),
+}
+
+
+def run_scan(*args, **kwargs):
+    kwargs.setdefault("participation_defaults", _APPROVED_PARTICIPATION)
+    return _run_scan(*args, **kwargs)
 
 
 def symbol_row(symbol: str, **overrides) -> Dict[str, Any]:

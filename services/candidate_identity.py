@@ -127,6 +127,10 @@ def merge_preserving_enriched(
         if key in {"market", "asset_type"} and existing.get(key) not in (None, ""):
             continue
         old_val = existing.get(key)
+        if key == "participation_status":
+            if new_val != old_val:
+                patch[key] = new_val
+            continue
         if old_val is not None and old_val != "":
             continue
         patch[key] = new_val

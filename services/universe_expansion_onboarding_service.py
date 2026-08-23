@@ -26,6 +26,10 @@ from services.universe_expansion_error_classifier import (
     classify_sec_error,
 )
 from services.candidate_identity import expansion_insert_has_usable_enrichment
+from services.participation_intelligence_contract import (
+    PARTICIPATION_STATUS_UYGUN,
+    PARTICIPATION_STATUS_UYGUN_DEGIL,
+)
 from services.universe_expansion_candidate_payload import build_expansion_candidate_payload
 from services.universe_expansion_provider_wrappers import (
     map_participation_calls_to_providers,
@@ -145,7 +149,14 @@ def run_participation_onboarding(
         participation_status=participation_status,
         sec_available=result.sec_available,
     )
-    if candidate_repo is not None and not candidate_upserted and error_category is None:
+    # Participation screening is complete once a terminal/approved status exists.
+    # Missing current_price / candidate upsert must not reopen Uygun Değil or Uygun.
+    if participation_status in {
+        PARTICIPATION_STATUS_UYGUN_DEGIL,
+        PARTICIPATION_STATUS_UYGUN,
+    }:
+        error_category = None
+    elif candidate_repo is not None and not candidate_upserted and error_category is None:
         error_category = ERROR_CATEGORY_DATA_INSUFFICIENT
 
     return OnboardingResult(
@@ -166,12 +177,16 @@ def onboarding_final_status(
     *,
     budget_rate_limited: bool,
 ) -> str:
+    if onboarding.participation_status == PARTICIPATION_STATUS_UYGUN_DEGIL:
+        return EXPANSION_STATUS_COMPLETED
     if onboarding.success:
         return EXPANSION_STATUS_COMPLETED
     if budget_rate_limited or onboarding.error_category == ERROR_CATEGORY_RATE_LIMIT:
         return EXPANSION_STATUS_RETRYABLE
     if onboarding.error_category == ERROR_CATEGORY_PLAN_RESTRICTED:
         return EXPANSION_STATUS_BLOCKED
+    if onboarding.participation_status == PARTICIPATION_STATUS_UYGUN:
+        return EXPANSION_STATUS_COMPLETED
     if onboarding.participation_status and onboarding.candidate_upserted:
         return EXPANSION_STATUS_COMPLETED
     return EXPANSION_STATUS_RETRYABLE

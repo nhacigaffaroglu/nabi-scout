@@ -28,6 +28,20 @@ class ParticipationAssessmentRepository:
         rows = response.data or []
         return rows[0] if rows else None
 
+    def list_latest_by_symbol(self) -> Dict[str, Dict[str, Any]]:
+        response = (
+            self.client.table(self.TABLE)
+            .select("*")
+            .order("assessed_at", desc=True)
+            .execute()
+        )
+        latest: Dict[str, Dict[str, Any]] = {}
+        for row in response.data or []:
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if symbol and symbol not in latest:
+                latest[symbol] = row
+        return latest
+
     def get_recent_history(
         self,
         symbol: str,

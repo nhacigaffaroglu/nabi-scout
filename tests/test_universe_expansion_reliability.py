@@ -496,8 +496,15 @@ class ProviderAndSourceContractTests(unittest.TestCase):
             / "workflows"
             / "daily_universe_expansion.yml"
         ).read_text(encoding="utf-8")
-        self.assertIn('cron: "0 5 * * *"', content)
+        self.assertIn('cron: "0 3 * * *"', content)
         self.assertIn("--trigger-type scheduled", content)
+        scan = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "daily_scan.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('cron: "0 6 * * *"', scan)
 
     def test_safety_cap_constant_unchanged(self) -> None:
         self.assertEqual(STOP_REASON_SAFETY_CAP, "SAFETY_CAP")
