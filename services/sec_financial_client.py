@@ -10,6 +10,10 @@ class SECFinancialError(RuntimeError):
     pass
 
 
+# Identifier for the canonical Company Facts extractor. Used in replay/apply
+# provenance; not a religious ruling and not a per-issuer override.
+SEC_FINANCIAL_EXTRACTOR_VERSION = "us-gaap-period-aligned-exclusive-debt-v1"
+
 _ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "40-F"}
 
 _US_GAAP_TAGS = {
