@@ -116,13 +116,29 @@ _IFRS_TAGS = {
     ],
 }
 
-_US_GAAP_DEBT_TAGS = [
+# Exclusive total-debt concepts. First tag present at the assets period wins.
+# Never combine a total with component debt tags.
+_US_GAAP_DEBT_TOTAL_PRECEDENCE: Sequence[str] = (
+    "DebtAndCapitalLeaseObligations",
+    "DebtLongtermAndShorttermCombinedAmount",
+)
+
+# Exclusive current-debt group. First tag present at the assets period wins.
+_US_GAAP_DEBT_CURRENT_PRECEDENCE: Sequence[str] = (
     "LongTermDebtAndFinanceLeaseObligationsCurrent",
     "LongTermDebtCurrent",
-    "ShortTermBorrowings",
-    "LongTermDebtNoncurrent",
+    "DebtCurrent",
+)
+
+# Exclusive noncurrent-debt group. First tag present at the assets period wins.
+_US_GAAP_DEBT_NONCURRENT_PRECEDENCE: Sequence[str] = (
     "LongTermDebtAndFinanceLeaseObligationsNoncurrent",
-]
+    "LongTermDebtAndCapitalLeaseObligations",
+    "LongTermDebtNoncurrent",
+    "LongTermDebt",
+)
+
+_US_GAAP_SHORT_TERM_BORROWINGS_TAG = "ShortTermBorrowings"
 
 _IFRS_DEBT_TAGS = [
     "CurrentPortionOfLongtermBorrowings",
@@ -136,6 +152,10 @@ _US_GAAP_INTEREST_BEARING_SECURITIES_TAG_TIERS: Sequence[Sequence[str]] = (
         "MarketableSecuritiesNoncurrent",
     ),
     ("MarketableSecurities",),
+    (
+        "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+        "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+    ),
     (
         "AvailableForSaleSecuritiesDebtSecurities",
         "ShortTermInvestments",
@@ -409,11 +429,6 @@ class SECFinancialClient:
             tag_map["accounts_receivable"],
             monetary_units,
         )
-        debt = self._debt_series(
-            facts,
-            monetary_units,
-            taxonomy=taxonomy,
-        )
 
         latest = lambda series: self._value(series, 0)
         balance_sheet_end = assets[0]["end"] if assets else None
@@ -432,21 +447,47 @@ class SECFinancialClient:
         dividends_latest = latest(dividends)
 
         assets_latest = self._aligned_instant_value(assets, balance_sheet_end)
-        equity_latest = self._aligned_instant_value(equity, balance_sheet_end)
-        cash_latest = self._aligned_instant_value(cash, balance_sheet_end)
-        current_assets_latest = self._aligned_instant_value(
-            current_assets,
-            balance_sheet_end,
+        equity_latest, _ = self._period_aligned_instant(
+            facts,
+            tag_map["equity"],
+            monetary_units,
+            period_end=balance_sheet_end,
+            fallback_series=equity,
         )
-        current_liabilities_latest = self._aligned_instant_value(
-            current_liabilities,
-            balance_sheet_end,
+        cash_latest, cash_tags = self._period_aligned_instant(
+            facts,
+            tag_map["cash"],
+            monetary_units,
+            period_end=balance_sheet_end,
+            fallback_series=cash,
         )
-        accounts_receivable_latest = self._aligned_instant_value(
-            accounts_receivable,
-            balance_sheet_end,
+        current_assets_latest, _ = self._period_aligned_instant(
+            facts,
+            tag_map["current_assets"],
+            monetary_units,
+            period_end=balance_sheet_end,
+            fallback_series=current_assets,
         )
-        debt_latest = self._aligned_instant_value(debt, balance_sheet_end)
+        current_liabilities_latest, _ = self._period_aligned_instant(
+            facts,
+            tag_map["current_liabilities"],
+            monetary_units,
+            period_end=balance_sheet_end,
+            fallback_series=current_liabilities,
+        )
+        accounts_receivable_latest, accounts_receivable_tags = self._period_aligned_instant(
+            facts,
+            tag_map["accounts_receivable"],
+            monetary_units,
+            period_end=balance_sheet_end,
+            fallback_series=accounts_receivable,
+        )
+        debt_latest, debt_tags = self._debt_at_end(
+            facts,
+            monetary_units,
+            taxonomy=taxonomy,
+            period_end=balance_sheet_end,
+        )
         (
             interest_bearing_securities_latest,
             interest_bearing_securities_tags,
@@ -549,8 +590,19 @@ class SECFinancialClient:
                 "operating_cash_flow_prior": self._value(operating_cash, 1),
                 "capital_expenditure_prior": self._value(capex, 1),
                 "total_assets_prior": self._aligned_instant_value(assets, prior_period_end),
-                "cash_prior": self._aligned_instant_value(cash, prior_period_end),
-                "total_debt_prior": self._aligned_instant_value(debt, prior_period_end),
+                "cash_prior": self._period_aligned_instant(
+                    facts,
+                    tag_map["cash"],
+                    monetary_units,
+                    period_end=prior_period_end,
+                    fallback_series=cash,
+                )[0],
+                "total_debt_prior": self._debt_at_end(
+                    facts,
+                    monetary_units,
+                    taxonomy=taxonomy,
+                    period_end=prior_period_end,
+                )[0],
                 "gross_profit_prior": self._value(gross_profit, 1),
             }
             prior_ocf = prior_payload.get("operating_cash_flow_prior")
@@ -597,11 +649,14 @@ class SECFinancialClient:
             "total_assets": assets_latest,
             "equity": equity_latest,
             "cash": cash_latest,
+            "cash_tags": cash_tags,
             "accounts_receivable": accounts_receivable_latest,
+            "accounts_receivable_tags": accounts_receivable_tags,
             "interest_bearing_securities": interest_bearing_securities_latest,
             "interest_bearing_securities_tags": interest_bearing_securities_tags,
             "balance_sheet_period_end": balance_sheet_end,
             "total_debt": debt_latest,
+            "total_debt_tags": debt_tags,
             "net_debt": net_debt,
             "current_ratio": current_ratio,
             "debt_to_equity": debt_to_equity,
@@ -767,49 +822,131 @@ class SECFinancialClient:
 
         return []
 
-    def _debt_series(
+    def _first_tag_value_at_period(
+        self,
+        facts: Dict[str, Any],
+        tags: Sequence[str],
+        units: Sequence[str],
+        period_end: str,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        for tag in tags:
+            value = self._tag_value_at_period_end(
+                facts,
+                tag,
+                units,
+                period_end,
+            )
+            if value is not None:
+                return value, tag
+        return None, None
+
+    def _period_aligned_instant(
+        self,
+        facts: Dict[str, Any],
+        tags: Sequence[str],
+        units: Sequence[str],
+        *,
+        period_end: Optional[str],
+        fallback_series: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        if period_end:
+            return self._first_tag_value_at_period(
+                facts,
+                tags,
+                units,
+                period_end,
+            )
+        if fallback_series:
+            return fallback_series[0].get("value"), None
+        return None, None
+
+    def _exclusive_group_value_at_end(
+        self,
+        facts: Dict[str, Any],
+        tags: Sequence[str],
+        units: Sequence[str],
+        period_end: str,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        return self._first_tag_value_at_period(facts, tags, units, period_end)
+
+    def _debt_at_end(
         self,
         facts: Dict[str, Any],
         units: Sequence[str],
         *,
         taxonomy: str,
-    ) -> List[Dict[str, Any]]:
-        tags = (
-            _US_GAAP_DEBT_TAGS
-            if taxonomy == "us-gaap"
-            else _IFRS_DEBT_TAGS
-        )
-        by_end: Dict[str, Dict[str, Any]] = {}
+        period_end: Optional[str],
+    ) -> Tuple[Optional[float], Optional[str]]:
+        if not period_end:
+            return None, None
 
-        for tag in tags:
-            for item in self._entries(facts, tag, units):
-                if item.get("form") not in _ANNUAL_FORMS:
-                    continue
-
-                end = item.get("end")
-                value = self._number(item.get("val"))
-                if not end or value is None:
-                    continue
-
-                row = by_end.setdefault(
-                    end,
-                    {
-                        "value": 0.0,
-                        "end": end,
-                        "filed": "",
-                    },
+        if taxonomy != "us-gaap":
+            values: List[float] = []
+            used_tags: List[str] = []
+            for tag in _IFRS_DEBT_TAGS:
+                value = self._tag_value_at_period_end(
+                    facts,
+                    tag,
+                    units,
+                    period_end,
                 )
-                row["value"] += value
-                row["filed"] = max(
-                    row["filed"],
-                    item.get("filed") or "",
-                )
+                if value is not None:
+                    values.append(value)
+                    used_tags.append(tag)
+            if not values:
+                return None, None
+            return sum(values), "+".join(used_tags)
 
-        return sorted(
-            by_end.values(),
-            key=lambda row: row["end"],
-            reverse=True,
+        total_value, total_tag = self._exclusive_group_value_at_end(
+            facts,
+            _US_GAAP_DEBT_TOTAL_PRECEDENCE,
+            units,
+            period_end,
         )
+        if total_value is not None and total_tag:
+            return total_value, total_tag
+
+        current_value, current_tag = self._exclusive_group_value_at_end(
+            facts,
+            _US_GAAP_DEBT_CURRENT_PRECEDENCE,
+            units,
+            period_end,
+        )
+        noncurrent_value, noncurrent_tag = self._exclusive_group_value_at_end(
+            facts,
+            _US_GAAP_DEBT_NONCURRENT_PRECEDENCE,
+            units,
+            period_end,
+        )
+
+        used_tags: List[str] = []
+        total = 0.0
+        found = False
+        if current_value is not None and current_tag:
+            total += current_value
+            used_tags.append(current_tag)
+            found = True
+        if noncurrent_value is not None and noncurrent_tag:
+            total += noncurrent_value
+            used_tags.append(noncurrent_tag)
+            found = True
+
+        short_term_already_in_current = current_tag == "DebtCurrent"
+        if not short_term_already_in_current:
+            stb_value = self._tag_value_at_period_end(
+                facts,
+                _US_GAAP_SHORT_TERM_BORROWINGS_TAG,
+                units,
+                period_end,
+            )
+            if stb_value is not None:
+                total += stb_value
+                used_tags.append(_US_GAAP_SHORT_TERM_BORROWINGS_TAG)
+                found = True
+
+        if not found:
+            return None, None
+        return total, "+".join(used_tags)
 
     @staticmethod
     def _aligned_instant_value(

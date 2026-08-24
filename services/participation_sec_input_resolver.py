@@ -25,6 +25,34 @@ _SEC_XBRL_FIELD_TAGS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+_FIELD_TAG_KEYS: dict[str, str] = {
+    "total_debt": "total_debt_tags",
+    "cash": "cash_tags",
+    "accounts_receivable": "accounts_receivable_tags",
+}
+
+
+def _split_plus_tags(value: Any) -> Tuple[str, ...]:
+    if not value:
+        return ()
+    return tuple(
+        part.strip()
+        for part in str(value).split("+")
+        if part.strip()
+    )
+
+
+def _source_fields_for(
+    sec_financials: Mapping[str, Any],
+    field_name: str,
+) -> Tuple[str, ...]:
+    tag_key = _FIELD_TAG_KEYS.get(field_name)
+    if tag_key:
+        parsed = _split_plus_tags(sec_financials.get(tag_key))
+        if parsed:
+            return parsed
+    return _SEC_XBRL_FIELD_TAGS.get(field_name, (field_name,))
+
 
 @dataclass(frozen=True)
 class ParticipationInputResolutionResult:
@@ -117,6 +145,9 @@ def _build_source_evidence(
         "financial_taxonomy",
         "annual_periods_found",
         "interest_bearing_securities_tags",
+        "total_debt_tags",
+        "cash_tags",
+        "accounts_receivable_tags",
     ):
         value = sec_financials.get(key)
         if value is not None and value != "":
@@ -135,14 +166,10 @@ def _build_source_evidence(
 
 
 def _interest_bearing_source_fields(sec_financials: Mapping[str, Any]) -> Tuple[str, ...]:
-    tags = sec_financials.get("interest_bearing_securities_tags")
-    if not tags:
-        return ("interest_bearing_securities",)
-    return tuple(
-        part.strip()
-        for part in str(tags).split("+")
-        if part.strip()
-    )
+    parsed = _split_plus_tags(sec_financials.get("interest_bearing_securities_tags"))
+    if parsed:
+        return parsed
+    return ("interest_bearing_securities",)
 
 
 def _build_field_provenance(
@@ -174,7 +201,7 @@ def _build_field_provenance(
         if value is not None and field_name in _SEC_XBRL_FIELD_TAGS:
             provenance[field_name] = FinancialFieldProvenance(
                 source=SOURCE_SEC,
-                source_fields=_SEC_XBRL_FIELD_TAGS[field_name],
+                source_fields=_source_fields_for(sec_financials, field_name),
                 period=period_text,
             )
 
