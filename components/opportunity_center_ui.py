@@ -23,6 +23,7 @@ from services.opportunity_center_presentation import (
     COMPANY_REPORT_PAGE,
     DISCOVERY_TITLE,
     INSPECT_LABEL,
+    OTHER_OPPORTUNITIES_LABEL,
     RESEARCH_PAGE,
     RESEARCH_TITLE,
     SCANNER_PAGE,
@@ -31,6 +32,7 @@ from services.opportunity_center_presentation import (
     WATCHLIST_PAGE,
     WATCHLIST_TITLE,
     OpportunityCenterView,
+    OpportunityComparisonCard,
     TodayOpportunityCard,
 )
 from services.research_workflow_service import normalize_research_status
@@ -52,6 +54,30 @@ def _render_hero(view: OpportunityCenterView) -> None:
         for col, kpi in zip(cols, view.hero.kpis):
             col.metric(kpi.label, kpi.value)
     st.caption(view.hero.recommendation)
+
+
+def _render_comparison_card(card: OpportunityComparisonCard, index: int) -> None:
+    tone = "success" if card.decision == "GÜÇLÜ ADAY" else "info"
+    with st.container(border=True):
+        st.markdown(
+            f"**{card.symbol}** · {card.decision or '—'} "
+            + render_status_badge(card.decision or "Aday", tone),
+            unsafe_allow_html=True,
+        )
+        meta = [f"Sıra {card.rank}"]
+        if card.nabi_score is not None:
+            meta.append(f"NABI Score {card.nabi_score:.1f}")
+        if card.fit_label:
+            meta.append(f"Portföy uyumu {card.fit_label}")
+        st.caption(" · ".join(meta))
+        if card.strength:
+            st.caption(f"Güçlü yan: {card.strength}")
+        if card.risk:
+            st.caption(f"Ana risk: {card.risk}")
+        if card.rank_reason:
+            st.caption(card.rank_reason)
+        if st.button(INSPECT_LABEL, key=f"firsat_compare_{card.symbol}_{index}", type="primary"):
+            _open_company_report(card.symbol)
 
 
 def _render_today_card(card: TodayOpportunityCard, index: int) -> None:
@@ -186,7 +212,16 @@ def render_opportunity_center(
     _render_hero(view)
 
     render_section_title(TODAY_TITLE)
-    if view.today:
+    if view.comparison_note:
+        st.caption(view.comparison_note)
+    if view.comparison_cards:
+        for index, card in enumerate(view.comparison_cards):
+            _render_comparison_card(card, index)
+        if view.other_opportunities:
+            with st.expander(OTHER_OPPORTUNITIES_LABEL, expanded=False):
+                for index, card in enumerate(view.other_opportunities):
+                    _render_today_card(card, index)
+    elif view.today:
         for index, card in enumerate(view.today):
             _render_today_card(card, index)
     else:

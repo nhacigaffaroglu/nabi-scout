@@ -34,6 +34,7 @@ from services.participation_authority import (
 from services.research_workflow_service import (
     normalize_research_status,
 )
+from services.nabi_portfolio_fit import fit_label_tr
 from services.universe_expansion_contract import (
     EXPANSION_STATUS_BLOCKED,
     EXPANSION_STATUS_COMPLETED,
@@ -55,6 +56,7 @@ ALL_RESEARCH_LABEL = "Tüm araştırmaları göster"
 ALL_WATCHLIST_LABEL = "Tüm izleme listesini göster"
 INSPECT_LABEL = "Şirketi İncele"
 FIRSATLARI_GOR_LABEL = "Fırsatları Gör"
+OTHER_OPPORTUNITIES_LABEL = "Diğer uygun fırsatlar"
 COMPANY_REPORT_PAGE = "pages/4_Company_Report.py"
 FIRSATLAR_PAGE = "pages/5_Firsatlar.py"
 RESEARCH_PAGE = "pages/3_Research_Monitor.py"
@@ -167,6 +169,18 @@ class TodayOpportunityCard:
 
 
 @dataclass(frozen=True)
+class OpportunityComparisonCard:
+    symbol: str
+    decision: str
+    nabi_score: Optional[float]
+    fit_label: str
+    strength: Optional[str]
+    risk: Optional[str]
+    rank_reason: str
+    rank: int
+
+
+@dataclass(frozen=True)
 class ResearchQueueItem:
     symbol: str
     company_name: str
@@ -231,6 +245,9 @@ class OpportunityCenterView:
     research: ResearchSummary
     watchlist: WatchlistSummary
     discoveries: DiscoverySummary
+    comparison_cards: tuple[OpportunityComparisonCard, ...] = ()
+    comparison_note: Optional[str] = None
+    other_opportunities: tuple[TodayOpportunityCard, ...] = ()
 
 
 def _why(candidate: Mapping[str, Any]) -> Optional[str]:
@@ -495,6 +512,30 @@ def present_discovery_summary(
     )
 
 
+def present_comparison_cards(
+    comparisons: Sequence[Any] = (),
+    *,
+    limit: int = MAX_TODAY_OPPORTUNITIES,
+) -> tuple[OpportunityComparisonCard, ...]:
+    cards: list[OpportunityComparisonCard] = []
+    for item in list(comparisons)[: max(0, limit)]:
+        strengths = tuple(getattr(item, "strengths", ()) or ())
+        risks = tuple(getattr(item, "risks", ()) or ())
+        cards.append(
+            OpportunityComparisonCard(
+                symbol=_text(getattr(item, "symbol", "")).upper(),
+                decision=_text(getattr(item, "decision_class", None)),
+                nabi_score=getattr(item, "nabi_score", None),
+                fit_label=fit_label_tr(getattr(item, "portfolio_fit", "")),
+                strength=strengths[0] if strengths else None,
+                risk=risks[0] if risks else None,
+                rank_reason=_text(getattr(item, "rank_reason", None)),
+                rank=int(getattr(item, "rank", len(cards) + 1) or len(cards) + 1),
+            )
+        )
+    return tuple(cards)
+
+
 def present_hero(
     *,
     candidates: Sequence[Mapping[str, Any]],
@@ -531,12 +572,17 @@ def build_opportunity_center(
     brief: Optional[Mapping[str, Any]] = None,
     snapshots: Optional[Mapping[str, Mapping[str, Any]]] = None,
     intelligence_summary: Optional[str] = None,
+    comparisons: Sequence[Any] = (),
+    comparison_note: Optional[str] = None,
 ) -> OpportunityCenterView:
     candidates = overlay_candidate_rows(candidates, snapshots)
     today = present_today_opportunity_cards(candidates)
     research = present_research_summary(candidates, brief)
     watchlist = present_watchlist_summary(watchlist_entries, watchlist_priority)
     discoveries = present_discovery_summary(expansion_rows, candidates)
+    comparison_cards = present_comparison_cards(comparisons)
+    compared = {card.symbol for card in comparison_cards}
+    other = tuple(card for card in today if card.symbol not in compared)
     hero = present_hero(
         candidates=candidates,
         today=today,
@@ -553,4 +599,7 @@ def build_opportunity_center(
         research=research,
         watchlist=watchlist,
         discoveries=discoveries,
+        comparison_cards=comparison_cards,
+        comparison_note=comparison_note,
+        other_opportunities=other,
     )

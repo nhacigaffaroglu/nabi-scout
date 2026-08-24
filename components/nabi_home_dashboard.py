@@ -73,7 +73,20 @@ def render_nabi_today(today: NabiTodayExecutive) -> None:
         st.markdown(f"**Bugün:** {card.today}")
         st.caption(f"Neden: {card.why}")
         st.caption(f"Yeni para: {card.new_money}")
-        st.caption(f"Fırsat: {card.opportunity}")
+        if card.featured_symbol:
+            st.caption(f"Öne çıkan fırsat: {card.featured_symbol}")
+            if card.featured_why:
+                st.caption(card.featured_why)
+            if card.featured_fit_label:
+                st.caption(f"Portföy uyumu: {card.featured_fit_label}")
+            if card.alternative_symbol:
+                st.caption(f"Alternative: {card.alternative_symbol}")
+            if card.alternative_line:
+                st.caption(card.alternative_line)
+        else:
+            st.caption(f"Fırsat: {card.opportunity}")
+        if card.existing_vs_new:
+            st.caption(card.existing_vs_new)
         st.caption(f"Risk: {card.risk}")
         st.caption(f"Güven: {card.confidence}")
         cta_cols = st.columns(2)
@@ -91,12 +104,6 @@ def render_nabi_today(today: NabiTodayExecutive) -> None:
     st.caption(today.opportunities.teaser)
     if today.opportunities.research_line:
         st.caption(today.opportunities.research_line)
-    for card in today.opportunities.cards:
-        score = f"{card.nabi_score:.1f}" if card.nabi_score is not None else None
-        meta = " · ".join(part for part in (card.decision, score) if part)
-        st.markdown(f"**{card.symbol}** · {meta}")
-        if card.why:
-            st.caption(card.why)
     if st.button(FIRSATLARI_GOR_LABEL, key="today_go_opportunities", type="primary"):
         st.switch_page(FIRSATLAR_PAGE)
 
