@@ -4,7 +4,6 @@ from components.nabi_design_system import (
     render_empty_state,
     render_page_header,
     render_section_title,
-    render_status_badge,
 )
 from components.portfolio_decision_center_ui import present_action_center
 from components.wealth_brief_ui import compose_wealth_operating_views
@@ -25,18 +24,17 @@ from services.nabi_today_presentation import (
     ALLOCATION_OPEN_LABEL,
     FIRSATLARI_GOR_LABEL,
     NEW_MONEY_ADVISORY,
-    SECTION_ACTIONS,
     SECTION_DETAILS,
     SECTION_OPPORTUNITIES,
     SECTION_PERFORMANCE,
     SECTION_PORTFOLIO,
-    SECTION_PRIORITY,
     SECTION_STATUS,
     WEALTH_OPEN_LABEL,
     WEALTH_PAGE,
     NabiTodayExecutive,
     build_nabi_today_executive,
 )
+from services.nabi_recommendation import present_recommendation_card
 from services.opportunity_center_presentation import FIRSATLAR_PAGE
 from services.portfolio_cockpit_presentation import build_portfolio_cockpit
 from services.portfolio_intelligence_enrichment_service import build_portfolio_intelligence_dashboard
@@ -64,46 +62,30 @@ def _load_opportunity_candidates(client) -> list:
 def render_nabi_today(today: NabiTodayExecutive) -> None:
     import streamlit as st
 
-    render_page_header(today.title, caption=today.synthesis)
+    rec = today.recommendation
+    card = present_recommendation_card(rec)
+    render_page_header(today.title, caption=card.today)
     if today.material_alert:
         st.warning(today.material_alert)
+
+    render_section_title(card.section_title)
+    with st.container(border=True):
+        st.markdown(f"**Bugün:** {card.today}")
+        st.caption(f"Neden: {card.why}")
+        st.caption(f"Yeni para: {card.new_money}")
+        st.caption(f"Fırsat: {card.opportunity}")
+        st.caption(f"Risk: {card.risk}")
+        st.caption(f"Güven: {card.confidence}")
+        cta_cols = st.columns(2)
+        if cta_cols[0].button(card.wealth_cta, key="today_rec_wealth"):
+            st.switch_page(WEALTH_PAGE)
+        if cta_cols[1].button(card.firsatlar_cta, key="today_rec_firsatlar"):
+            st.switch_page(FIRSATLAR_PAGE)
 
     render_section_title(SECTION_STATUS)
     cols = st.columns(len(today.kpis))
     for col, kpi in zip(cols, today.kpis):
         col.metric(kpi.label, kpi.value, kpi.caption)
-
-    render_section_title(SECTION_PRIORITY)
-    priority = today.priority
-    if priority.healthy:
-        st.info(priority.empty_copy)
-    else:
-        with st.container(border=True):
-            if priority.severity:
-                st.markdown(
-                    render_status_badge(priority.severity, "warning"),
-                    unsafe_allow_html=True,
-                )
-            st.markdown(f"**{priority.title}**")
-            if priority.current_metric:
-                st.caption(f"Mevcut: {priority.current_metric}")
-            if priority.required_metric:
-                st.caption(f"Gerekli: {priority.required_metric}")
-            if priority.overflow_label:
-                st.caption(priority.overflow_label)
-
-    render_section_title(SECTION_ACTIONS)
-    if not today.actions:
-        st.caption("Bugün ek bir yönlendirme yok.")
-    for index, action in enumerate(today.actions):
-        with st.container(border=True):
-            st.markdown(f"**{action.title}**")
-            st.caption(action.why)
-            if st.button(
-                action.destination_label,
-                key=f"today_action_{index}_{action.title}",
-            ):
-                st.switch_page(action.destination_page)
 
     render_section_title(SECTION_OPPORTUNITIES)
     st.caption(today.opportunities.teaser)
@@ -232,5 +214,8 @@ def render_nabi_home_executive(client) -> None:
         candidates=opportunity_candidates,
         new_money=operating.brief.new_money,
         performance=operating.performance,
+        decision=operating.decision,
+        allocation=operating.allocation,
+        portfolio_view=base_view,
     )
     render_nabi_today(today)

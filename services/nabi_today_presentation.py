@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+from services.portfolio_decision_intelligence import PortfolioDecisionView
+from services.wealth_new_money_allocation import AllocationPlan
+
 from components.portfolio_decision_center_ui import (
     CONTRIBUTION_PLAN_TITLE,
     HEALTHY_MESSAGE,
@@ -42,6 +45,10 @@ from services.wealth_command_center_presentation import (
     _priority_focus,
     build_portfolio_commentary,
     build_performance_strip,
+)
+from services.nabi_recommendation import (
+    NABIRecommendation,
+    build_nabi_recommendation,
 )
 from services.wealth_goal_center_presentation import GoalCenterDashboard
 from services.wealth_performance_center_presentation import PerformanceCenterView
@@ -155,6 +162,7 @@ class NabiTodayExecutive:
     material_alert: Optional[str]
     wealth_usd: str
     details: Tuple[str, ...]
+    recommendation: NABIRecommendation
 
 
 def count_qualified_opportunities(candidates: Sequence[Mapping[str, Any]]) -> int:
@@ -339,6 +347,9 @@ def build_nabi_today_executive(
     candidates: Sequence[Mapping[str, Any]],
     new_money: BriefNewMoney,
     performance: Optional[PerformanceCenterView],
+    decision: Optional[PortfolioDecisionView] = None,
+    allocation: Optional[AllocationPlan] = None,
+    portfolio_view: Any = None,
 ) -> NabiTodayExecutive:
     journey = _journey(goal_dashboard)
     full_priority = present_priority_section(presented_actions)
@@ -377,11 +388,6 @@ def build_nabi_today_executive(
         priority=full_priority,
         decision_available=True,
         gain_available=cockpit.gain_available,
-    )
-    synthesis = build_today_synthesis(
-        commentary_insights=commentary.insights,
-        commentary_synthesis=commentary.synthesis,
-        opportunity_teaser=teaser,
     )
 
     progress = (
@@ -435,11 +441,23 @@ def build_nabi_today_executive(
     elif not wealth.try_equivalent.available and not qualified:
         alert = None
 
+    recommendation = build_nabi_recommendation(
+        candidates=candidates,
+        decision=decision,
+        presented_actions=presented_actions,
+        allocation=allocation,
+        goal_dashboard=goal_dashboard,
+        portfolio_view=portfolio_view,
+        new_money_brief=new_money,
+        valuation_complete=wealth.valuation_complete,
+    )
     details = tuple(
         item
         for item in (
             wealth.limitation,
             shown_priority.explanation,
+            recommendation.why_now,
+            *recommendation.evidence_refs,
             f"USD/TRY · {wealth.try_equivalent.rate or '—'}",
             f"Kur tarihi: {wealth.try_equivalent.rate_date or '—'}",
         )
@@ -448,7 +466,7 @@ def build_nabi_today_executive(
 
     return NabiTodayExecutive(
         title=TODAY_TITLE,
-        synthesis=synthesis,
+        synthesis=recommendation.summary,
         kpis=kpis,
         priority=shown_priority,
         actions=actions,
@@ -459,4 +477,5 @@ def build_nabi_today_executive(
         material_alert=alert,
         wealth_usd=wealth.usd_label,
         details=details,
+        recommendation=recommendation,
     )

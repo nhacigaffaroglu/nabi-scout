@@ -501,6 +501,7 @@ def present_hero(
     today: Sequence[TodayOpportunityCard],
     watchlist: WatchlistSummary,
     discoveries: DiscoverySummary,
+    intelligence_summary: Optional[str] = None,
 ) -> OpportunityHero:
     kpis: list[OpportunityHeroKpi] = []
     strong = count_strong_opportunities(candidates)
@@ -511,7 +512,9 @@ def present_hero(
     if discoveries.available and discoveries.new_count is not None:
         kpis.append(OpportunityHeroKpi(KPI_DISCOVERED, str(discoveries.new_count)))
 
-    if today:
+    if intelligence_summary:
+        recommendation = intelligence_summary
+    elif today:
         names = ", ".join(card.symbol for card in today[:MAX_TODAY_OPPORTUNITIES])
         recommendation = f"NABI bugün {names} fırsatına bakmanı öneriyor."
     else:
@@ -527,6 +530,7 @@ def build_opportunity_center(
     expansion_rows: Optional[Sequence[Mapping[str, Any]]] = None,
     brief: Optional[Mapping[str, Any]] = None,
     snapshots: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    intelligence_summary: Optional[str] = None,
 ) -> OpportunityCenterView:
     candidates = overlay_candidate_rows(candidates, snapshots)
     today = present_today_opportunity_cards(candidates)
@@ -538,6 +542,7 @@ def build_opportunity_center(
         today=today,
         watchlist=watchlist,
         discoveries=discoveries,
+        intelligence_summary=intelligence_summary,
     )
     return OpportunityCenterView(
         title=CENTER_TITLE,
