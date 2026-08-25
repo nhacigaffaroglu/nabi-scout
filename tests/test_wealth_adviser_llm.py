@@ -323,19 +323,23 @@ class WealthAdviserLlmUiTests(unittest.TestCase):
         return Path("pages/10_Wealth.py").read_text(encoding="utf-8").split("with tab_adviser:")[1]
 
     def test_investment_advice_disclaimer_visible(self) -> None:
-        block = self._adviser_block()
-        self.assertIn("yatırım tavsiyesi değildir", block.lower())
-        self.assertIn("otomatik işlem gerçekleştirmez", block.lower())
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8").lower()
+        self.assertIn("yatırım tavsiyesi değildir", ui)
+        self.assertIn("otomatik işlem gerçekleştirmez", ui)
 
     def test_ai_and_deterministic_sections_separated(self) -> None:
         block = self._adviser_block()
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
         self.assertIn("Deterministik bulgular", block)
-        self.assertIn("AI sohbet yorumu", block)
+        self.assertIn("NABI Danışman", ui)
+        self.assertIn("adviser_chat_form", ui)
 
     def test_no_llm_call_on_tab_render(self) -> None:
         block = self._adviser_block()
-        self.assertNotIn(".interpret(", block.split("if send_message")[0])
-        self.assertIn("form_submit_button", block)
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
+        self.assertNotIn("answer_nabi_adviser(", block.split("render_nabi_adviser")[0])
+        self.assertIn("if submitted_question:", ui)
+        self.assertIn("form_submit_button", ui)
 
     def test_no_transaction_execution_controls(self) -> None:
         block = self._adviser_block().lower()

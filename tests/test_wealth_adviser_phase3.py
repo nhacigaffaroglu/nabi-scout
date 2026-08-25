@@ -2,6 +2,7 @@ import inspect
 import json
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from services.wealth_adviser_contract import (
@@ -319,9 +320,11 @@ class Phase3UiStaticTests(unittest.TestCase):
 
     def test_chat_send_only_on_submit(self) -> None:
         block = self._adviser_block()
-        self.assertIn("adviser_chat_form", block)
-        self.assertIn("Gönder", block)
-        self.assertNotIn(".interpret(", block.split("if send_message")[0])
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
+        self.assertIn("adviser_chat_form", ui)
+        self.assertIn("Gönder", ui)
+        self.assertNotIn("answer_nabi_adviser(", ui.split("if submitted_question")[0])
+        self.assertIn("render_nabi_adviser", block)
 
     def test_conversation_key_scoped(self) -> None:
         block = self._adviser_block()

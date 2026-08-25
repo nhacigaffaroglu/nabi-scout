@@ -36,7 +36,6 @@ from services.wealth_adviser_conversation import (
     get_conversation_history,
     record_chat_exchange,
 )
-from services.wealth_adviser_interpretation_service import WealthAdviserInterpretationService
 from services.wealth_adviser_preference_engine import build_adviser_user_context
 from services.wealth_adviser_profile_contract import GoalType, InvestorProfile
 from services.wealth_adviser_service import WealthAdviserService
@@ -47,21 +46,19 @@ from services.wealth_adviser_profile_service import (
     WealthAdviserProfileService,
 )
 from repositories.candidate_repository import CandidateRepository
-from services.company_intelligence_core_service import CompanyIntelligenceCoreService
-from services.company_report_participation_service import build_company_report_participation
-from services.sec_contact_config import get_sec_contact_email
-from services.sec_financial_client import SECFinancialClient
-from services.research_eligibility_service import (
-    evaluate_research_eligibility_from_participation_view,
+from repositories.participation_assessment_repository import (
+    ParticipationAssessmentRepository,
 )
-from services.unified_adviser_service import UnifiedAdviserService
-from services.unified_research_service import UnifiedResearchService
-from services.wealth_adviser_prompt import extract_focus_symbol
+from services.candidate_surface_service import filter_equity_candidate_surface
+from services.participation_authority import overlay_candidate_rows
 from services.wealth_diagnostics_contract import DiagnosticCategory, DiagnosticSeverity
 from services.wealth_diagnostics_engine import effective_position_count
 from services.wealth_diagnostics_service import WealthDiagnosticsService
 from services.canonical_current_valuation import build_canonical_current_view
 from services.wealth_timeline_service import WealthTimelineService
+from components.nabi_adviser_ui import render_nabi_adviser
+from components.wealth_brief_ui import compose_wealth_operating_views
+from services.portfolio_allocation_policy_service import PortfolioAllocationPolicyService
 
 
 from components.portfolio_holdings_ui import render_valuation_holdings_analysis
@@ -112,13 +109,10 @@ wealth = WealthCoreService(client, user_id)
 timeline = WealthTimelineService(wealth)
 diagnostics_service = WealthDiagnosticsService(wealth)
 adviser_service = WealthAdviserService()
-unified_adviser_service = UnifiedAdviserService()
-unified_research_service = UnifiedResearchService()
 candidate_repo = CandidateRepository(client)
 adviser_profile_service = WealthAdviserProfileService(client, user_id)
 adviser_goal_service = WealthAdviserGoalService(client, user_id)
 adviser_llm_config = load_adviser_llm_config()
-adviser_interpretation_service = WealthAdviserInterpretationService(config=adviser_llm_config)
 
 
 def _severity_badge(severity: DiagnosticSeverity) -> str:
@@ -869,291 +863,204 @@ with tab_analysis:
             _render_diagnostic_card(diagnostic)
 
 with tab_adviser:
-    st.subheader("Danışman")
-    st.warning(
-        "Bu özellik yatırım tavsiyesi değildir ve otomatik işlem gerçekleştirmez."
-    )
-    st.caption(
-        "Deterministik Wealth verileri kaynak gerçektir; AI bölümü yalnızca yorum katmanıdır."
-    )
-
     portfolio_id = portfolio.get("id", portfolio_view.portfolio_id)
     chat_key = conversation_session_key(user_id, portfolio_id)
     response_cache_key = adviser_response_cache_key(user_id, portfolio_id)
-
-    st.markdown("**Yatırım profili**")
-    current_profile = adviser_profile_service.load_profile()
-    with st.form("adviser_profile_form", clear_on_submit=False):
-        profile_cols = st.columns(2)
-        investment_horizon = profile_cols[0].selectbox(
-            "Yatırım ufku",
-            ["", *PROFILE_ENUM_OPTIONS["investment_horizon"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["investment_horizon"].index(current_profile.investment_horizon) + 1
-                if current_profile.investment_horizon in PROFILE_ENUM_OPTIONS["investment_horizon"]
-                else 0
+    try:
+        adviser_candidates = overlay_candidate_rows(
+            filter_equity_candidate_surface(
+                candidate_repo.get_all(order_by="nabi_score", descending=True) or []
             ),
+            ParticipationAssessmentRepository(client).list_latest_by_symbol() or {},
         )
-        risk_preference = profile_cols[1].selectbox(
-            "Risk tercihi",
-            ["", *PROFILE_ENUM_OPTIONS["risk_preference"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["risk_preference"].index(current_profile.risk_preference) + 1
-                if current_profile.risk_preference in PROFILE_ENUM_OPTIONS["risk_preference"]
-                else 0
-            ),
-        )
-        profile_cols2 = st.columns(2)
-        liquidity_need = profile_cols2[0].selectbox(
-            "Likidite ihtiyacı",
-            ["", *PROFILE_ENUM_OPTIONS["liquidity_need"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["liquidity_need"].index(current_profile.liquidity_need) + 1
-                if current_profile.liquidity_need in PROFILE_ENUM_OPTIONS["liquidity_need"]
-                else 0
-            ),
-        )
-        concentration_preference = profile_cols2[1].selectbox(
-            "Yoğunlaşma tercihi",
-            ["", *PROFILE_ENUM_OPTIONS["concentration_preference"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["concentration_preference"].index(
-                    current_profile.concentration_preference
-                )
-                + 1
-                if current_profile.concentration_preference
-                in PROFILE_ENUM_OPTIONS["concentration_preference"]
-                else 0
-            ),
-        )
-        profile_cols3 = st.columns(2)
-        income_need = profile_cols3[0].selectbox(
-            "Gelir ihtiyacı",
-            ["", *PROFILE_ENUM_OPTIONS["income_need"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["income_need"].index(current_profile.income_need) + 1
-                if current_profile.income_need in PROFILE_ENUM_OPTIONS["income_need"]
-                else 0
-            ),
-        )
-        experience_level = profile_cols3[1].selectbox(
-            "Deneyim seviyesi",
-            ["", *PROFILE_ENUM_OPTIONS["experience_level"]],
-            index=(
-                PROFILE_ENUM_OPTIONS["experience_level"].index(current_profile.experience_level) + 1
-                if current_profile.experience_level in PROFILE_ENUM_OPTIONS["experience_level"]
-                else 0
-            ),
-        )
-        profile_notes = st.text_area(
-            "Notlar (isteğe bağlı)",
-            value=current_profile.notes or "",
-        )
-        save_profile = st.form_submit_button("Profili kaydet")
-
-    if save_profile:
-        adviser_profile_service.save_profile(
-            investment_horizon=investment_horizon or None,
-            risk_preference=risk_preference or None,
-            liquidity_need=liquidity_need or None,
-            concentration_preference=concentration_preference or None,
-            income_need=income_need or None,
-            experience_level=experience_level or None,
-            notes=profile_notes or None,
-        )
-        st.success("Yatırım profili kaydedildi.")
-        current_profile = adviser_profile_service.load_profile()
-
-    st.markdown("**Hedefler**")
-    active_goals = adviser_goal_service.list_active_goals(portfolio_id=portfolio_id)
-    if active_goals:
-        for goal in active_goals:
-            scope = "Portföy" if goal.portfolio_id else "Genel"
-            st.write(f"- [{scope}] {goal.title} ({goal.goal_type})")
-            if st.button("Arşivle", key=f"archive_goal_{goal.id}"):
-                adviser_goal_service.archive_goal(goal.id)
-                st.rerun()
-    else:
-        st.caption("Aktif hedef yok.")
-
-    with st.form("adviser_goal_form", clear_on_submit=True):
-        goal_title = st.text_input("Hedef başlığı")
-        goal_type = st.selectbox("Hedef türü", GOAL_TYPE_OPTIONS)
-        goal_scope = st.selectbox("Kapsam", ["Bu portföy", "Genel"])
-        goal_notes = st.text_input("Hedef notu (isteğe bağlı)")
-        add_goal = st.form_submit_button("Hedef ekle")
-    if add_goal and goal_title.strip():
-        adviser_goal_service.create_goal(
-            portfolio_id=portfolio_id if goal_scope == "Bu portföy" else None,
-            goal_type=goal_type,
-            title=goal_title.strip(),
-            notes=goal_notes or None,
-        )
-        st.success("Hedef eklendi.")
-        active_goals = adviser_goal_service.list_active_goals(portfolio_id=portfolio_id)
-
-    adviser_performance_view = timeline.build_performance_view(portfolio)
-    adviser_diagnostics_view = diagnostics_service.build_diagnostics_view(
-        portfolio,
-        portfolio_view,
-        performance_view=adviser_performance_view,
-        benchmark_view=None,
+        adviser_snapshots = ParticipationAssessmentRepository(client).list_latest_by_symbol() or {}
+    except Exception:
+        adviser_candidates = []
+        adviser_snapshots = {}
+    operating = compose_wealth_operating_views(
+        portfolio_view=portfolio_view,
+        wealth=wealth,
+        accounts=accounts,
+        candidates=adviser_candidates,
     )
-    user_context = build_adviser_user_context(
-        profile=current_profile,
-        goals=active_goals,
-        context=adviser_service.build_context(
+    try:
+        adviser_policy = PortfolioAllocationPolicyService(client, user_id).get_policy(
+            str(portfolio_id or "")
+        )
+    except Exception:
+        adviser_policy = None
+    render_nabi_adviser(
+        candidates=adviser_candidates,
+        snapshots=adviser_snapshots,
+        portfolio_view=portfolio_view,
+        decision=operating.decision,
+        presented_actions=None,
+        allocation=operating.allocation,
+        goal_dashboard=operating.goal_dashboard,
+        new_money_brief=operating.brief.new_money if operating.brief else None,
+        llm_config=adviser_llm_config,
+        session_state=st.session_state,
+        chat_key=chat_key,
+        policy=adviser_policy,
+        assets=assets,
+        positions=positions,
+    )
+
+    with st.expander("Detaylar", expanded=False):
+        st.markdown("**Yatırım profili**")
+        current_profile = adviser_profile_service.load_profile()
+        with st.form("adviser_profile_form", clear_on_submit=False):
+            profile_cols = st.columns(2)
+            investment_horizon = profile_cols[0].selectbox(
+                "Yatırım ufku",
+                ["", *PROFILE_ENUM_OPTIONS["investment_horizon"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["investment_horizon"].index(current_profile.investment_horizon) + 1
+                    if current_profile.investment_horizon in PROFILE_ENUM_OPTIONS["investment_horizon"]
+                    else 0
+                ),
+            )
+            risk_preference = profile_cols[1].selectbox(
+                "Risk tercihi",
+                ["", *PROFILE_ENUM_OPTIONS["risk_preference"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["risk_preference"].index(current_profile.risk_preference) + 1
+                    if current_profile.risk_preference in PROFILE_ENUM_OPTIONS["risk_preference"]
+                    else 0
+                ),
+            )
+            profile_cols2 = st.columns(2)
+            liquidity_need = profile_cols2[0].selectbox(
+                "Likidite ihtiyacı",
+                ["", *PROFILE_ENUM_OPTIONS["liquidity_need"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["liquidity_need"].index(current_profile.liquidity_need) + 1
+                    if current_profile.liquidity_need in PROFILE_ENUM_OPTIONS["liquidity_need"]
+                    else 0
+                ),
+            )
+            concentration_preference = profile_cols2[1].selectbox(
+                "Yoğunlaşma tercihi",
+                ["", *PROFILE_ENUM_OPTIONS["concentration_preference"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["concentration_preference"].index(
+                        current_profile.concentration_preference
+                    )
+                    + 1
+                    if current_profile.concentration_preference
+                    in PROFILE_ENUM_OPTIONS["concentration_preference"]
+                    else 0
+                ),
+            )
+            profile_cols3 = st.columns(2)
+            income_need = profile_cols3[0].selectbox(
+                "Gelir ihtiyacı",
+                ["", *PROFILE_ENUM_OPTIONS["income_need"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["income_need"].index(current_profile.income_need) + 1
+                    if current_profile.income_need in PROFILE_ENUM_OPTIONS["income_need"]
+                    else 0
+                ),
+            )
+            experience_level = profile_cols3[1].selectbox(
+                "Deneyim seviyesi",
+                ["", *PROFILE_ENUM_OPTIONS["experience_level"]],
+                index=(
+                    PROFILE_ENUM_OPTIONS["experience_level"].index(current_profile.experience_level) + 1
+                    if current_profile.experience_level in PROFILE_ENUM_OPTIONS["experience_level"]
+                    else 0
+                ),
+            )
+            profile_notes = st.text_area(
+                "Notlar (isteğe bağlı)",
+                value=current_profile.notes or "",
+            )
+            save_profile = st.form_submit_button("Profili kaydet")
+        if save_profile:
+            adviser_profile_service.save_profile(
+                investment_horizon=investment_horizon or None,
+                risk_preference=risk_preference or None,
+                liquidity_need=liquidity_need or None,
+                concentration_preference=concentration_preference or None,
+                income_need=income_need or None,
+                experience_level=experience_level or None,
+                notes=profile_notes or None,
+            )
+            st.success("Yatırım profili kaydedildi.")
+            current_profile = adviser_profile_service.load_profile()
+        st.markdown("**Hedefler**")
+        active_goals = adviser_goal_service.list_active_goals(portfolio_id=portfolio_id)
+        if active_goals:
+            for goal in active_goals:
+                scope = "Portföy" if goal.portfolio_id else "Genel"
+                st.write(f"- [{scope}] {goal.title} ({goal.goal_type})")
+                if st.button("Arşivle", key=f"archive_goal_{goal.id}"):
+                    adviser_goal_service.archive_goal(goal.id)
+                    st.rerun()
+        else:
+            st.caption("Aktif hedef yok.")
+        with st.form("adviser_goal_form", clear_on_submit=True):
+            goal_title = st.text_input("Hedef başlığı")
+            goal_type = st.selectbox("Hedef türü", GOAL_TYPE_OPTIONS)
+            goal_scope = st.selectbox("Kapsam", ["Bu portföy", "Genel"])
+            goal_notes = st.text_input("Hedef notu (isteğe bağlı)")
+            add_goal = st.form_submit_button("Hedef ekle")
+        if add_goal and goal_title.strip():
+            adviser_goal_service.create_goal(
+                portfolio_id=portfolio_id if goal_scope == "Bu portföy" else None,
+                goal_type=goal_type,
+                title=goal_title.strip(),
+                notes=goal_notes or None,
+            )
+            st.success("Hedef eklendi.")
+            active_goals = adviser_goal_service.list_active_goals(portfolio_id=portfolio_id)
+        adviser_performance_view = timeline.build_performance_view(portfolio)
+        adviser_diagnostics_view = diagnostics_service.build_diagnostics_view(
+            portfolio,
+            portfolio_view,
+            performance_view=adviser_performance_view,
+            benchmark_view=None,
+        )
+        user_context = build_adviser_user_context(
+            profile=current_profile,
+            goals=active_goals,
+            context=adviser_service.build_context(
+                portfolio_view,
+                adviser_diagnostics_view,
+                performance_view=adviser_performance_view,
+                benchmark_view=None,
+                generated_from_snapshot_count=len(adviser_performance_view.history_points),
+            ),
+        )
+        _, adviser_brief = adviser_service.build_preview(
             portfolio_view,
             adviser_diagnostics_view,
             performance_view=adviser_performance_view,
             benchmark_view=None,
             generated_from_snapshot_count=len(adviser_performance_view.history_points),
-        ),
-    )
-    _, adviser_brief = adviser_service.build_preview(
-        portfolio_view,
-        adviser_diagnostics_view,
-        performance_view=adviser_performance_view,
-        benchmark_view=None,
-        generated_from_snapshot_count=len(adviser_performance_view.history_points),
-        user_context=user_context,
-    )
-
-    st.markdown("**Deterministik bulgular**")
-    st.markdown(f"**{adviser_brief.headline}**")
-    st.write(adviser_brief.portfolio_summary)
-
-    if adviser_brief.data_quality_notes:
-        st.warning("Veri kalitesi sınırlamaları:")
-        for note in adviser_brief.data_quality_notes:
-            st.write(f"- {note}")
-
-    if adviser_brief.preference_summary:
-        st.markdown("**Profil / hedef ilişki gözlemleri**")
-        for line in adviser_brief.preference_summary:
-            st.write(f"- {line}")
-
-    st.markdown("**Öne çıkan bulgular**")
-    if not adviser_brief.top_findings:
-        st.info("Öne çıkan bulgu yok.")
-    else:
-        for finding in adviser_brief.top_findings:
-            _render_adviser_finding(finding)
-
-    if adviser_brief.questions_for_user:
-        st.markdown("**Sorulabilecek sorular**")
-        for question in adviser_brief.questions_for_user:
-            st.write(f"- {question}")
-
-    st.divider()
-    st.markdown("**AI sohbet yorumu**")
-    st.caption(
-        "Şirket sorularında sembol belirtin veya odak sembol girin. "
-        "Her gönderimde en fazla bir AI çağrısı yapılır."
-    )
-    if not adviser_llm_config.is_usable:
-        st.info(
-            "AI yorumu etkin değil. WEALTH_ADVISER_LLM_API_KEY ve "
-            "WEALTH_ADVISER_LLM_ENABLED yapılandırması gerekir."
+            user_context=user_context,
         )
-    else:
-        conversation_history = get_conversation_history(st.session_state, chat_key)
-        for turn in conversation_history:
-            if turn.role == "user":
-                st.markdown(f"**Siz:** {turn.content}")
-            else:
-                label = "AI (doğrulandı)" if turn.grounded else "AI (deterministik yedek)"
-                st.markdown(f"**{label}:** {turn.content}")
-
-        clear_col, _ = st.columns([1, 3])
-        if clear_col.button("Sohbeti temizle", key=f"clear_chat_{portfolio_id}"):
-            clear_conversation_history(st.session_state, chat_key)
-            st.session_state.pop(response_cache_key, None)
-            st.rerun()
-
-        with st.form("adviser_chat_form", clear_on_submit=True):
-            adviser_question = st.text_input(
-                "Sorunuz",
-                placeholder="Örn: AAPL yatırımımı bugün yeniden değerlendir.",
-            )
-            focus_symbol = st.text_input(
-                "Odak sembol (isteğe bağlı)",
-                placeholder="AAPL",
-                max_chars=8,
-            )
-            send_message = st.form_submit_button("Gönder")
-
-        if send_message and adviser_question.strip():
-            unified_research = None
-            symbol = extract_focus_symbol(
-                adviser_question.strip(),
-                explicit_symbol=focus_symbol.strip() or None,
-            )
-            if symbol:
-                try:
-                    candidate = candidate_repo.get_by_symbol(symbol) or {"symbol": symbol}
-                    participation_fmp_client = None
-                    try:
-                        participation_fmp_client = FMPClient.from_streamlit_secrets()
-                    except FMPError:
-                        pass
-                    participation_view = build_company_report_participation(
-                        candidate,
-                        sec_client=SECFinancialClient(contact_email=get_sec_contact_email()),
-                        fmp_client=participation_fmp_client,
-                    )
-                    research_eligibility = evaluate_research_eligibility_from_participation_view(
-                        participation_view
-                    )
-                    if not research_eligibility.research_allowed:
-                        st.warning(research_eligibility.block_message)
-                    else:
-                        fmp_client = participation_fmp_client or FMPClient.from_streamlit_secrets()
-                        intel_view = CompanyIntelligenceCoreService(fmp_client).build_view(
-                            symbol,
-                            research_eligibility=research_eligibility,
-                            sec_financials=(
-                                participation_view.result.sec_financials
-                                if participation_view.result is not None
-                                else None
-                            ),
-                        )
-                        unified_research = unified_research_service.build_context(
-                            symbol=symbol,
-                            research_eligibility=research_eligibility,
-                            company_intelligence_view=intel_view,
-                            candidate=candidate,
-                            participation_view=participation_view,
-                            portfolio_view=portfolio_view,
-                            user_context=user_context,
-                            diagnostics_items=tuple(adviser_diagnostics_view.diagnostics[:3]),
-                        )
-                        adviser_brief = unified_adviser_service.enrich_brief(
-                            adviser_brief,
-                            unified_research,
-                        )
-                except FMPError:
-                    st.warning(
-                        f"{symbol} için şirket verisi yüklenemedi; yanıt yalnızca portföy bağlamında üretilecek."
-                    )
-                except Exception:
-                    st.warning(
-                        "Birleşik araştırma bağlamı oluşturulamadı; portföy bağlamı kullanılacak."
-                    )
-            response = adviser_interpretation_service.interpret(
-                adviser_brief,
-                user_question=adviser_question.strip(),
-                conversation_history=conversation_history,
-                unified_research=unified_research,
-            )
-            record_chat_exchange(
-                st.session_state,
-                chat_key,
-                user_question=adviser_question.strip(),
-                response=response,
-            )
-            st.session_state[response_cache_key] = response
-            st.rerun()
+        st.markdown("**Deterministik bulgular**")
+        st.markdown(f"**{adviser_brief.headline}**")
+        st.write(adviser_brief.portfolio_summary)
+        if adviser_brief.data_quality_notes:
+            st.warning("Veri kalitesi sınırlamaları:")
+            for note in adviser_brief.data_quality_notes:
+                st.write(f"- {note}")
+        if adviser_brief.preference_summary:
+            st.markdown("**Profil / hedef ilişki gözlemleri**")
+            for line in adviser_brief.preference_summary:
+                st.write(f"- {line}")
+        st.markdown("**Öne çıkan bulgular**")
+        if not adviser_brief.top_findings:
+            st.info("Öne çıkan bulgu yok.")
+        else:
+            for finding in adviser_brief.top_findings:
+                _render_adviser_finding(finding)
+        if adviser_brief.questions_for_user:
+            st.markdown("**Sorulabilecek sorular**")
+            for question in adviser_brief.questions_for_user:
+                st.write(f"- {question}")
 
     with st.expander("Teknik bağlam"):
         st.json(adviser_brief.to_dict())
