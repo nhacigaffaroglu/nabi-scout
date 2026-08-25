@@ -48,6 +48,21 @@ def _open_company_report(symbol: str, candidate: Optional[Mapping[str, Any]] = N
     st.switch_page(COMPANY_REPORT_PAGE)
 
 
+def _render_research_brief(brief) -> None:
+    if not brief:
+        return
+    if brief.interesting:
+        st.caption(f"Neden ilginç? {brief.interesting}")
+    if brief.risks:
+        st.caption(f"Riskler: {brief.risks}")
+    if brief.catalysts:
+        st.caption(f"Katalizörler: {brief.catalysts}")
+    if brief.valuation:
+        st.caption(f"Değerleme: {brief.valuation}")
+    if brief.timing:
+        st.caption(f"Neden şimdi / neden değil? {brief.timing}")
+
+
 def _render_hero(view: OpportunityCenterView) -> None:
     if view.hero.kpis:
         cols = st.columns(len(view.hero.kpis))
@@ -76,6 +91,7 @@ def _render_comparison_card(card: OpportunityComparisonCard, index: int) -> None
             st.caption(f"Ana risk: {card.risk}")
         if card.rank_reason:
             st.caption(card.rank_reason)
+        _render_research_brief(card.research_brief)
         if st.button(INSPECT_LABEL, key=f"firsat_compare_{card.symbol}_{index}", type="primary"):
             _open_company_report(card.symbol)
 
@@ -98,6 +114,7 @@ def _render_today_card(card: TodayOpportunityCard, index: int) -> None:
             st.markdown(card.why)
         if card.risk:
             st.caption(f"Önemli sınırlama: {card.risk}")
+        _render_research_brief(card.research_brief)
         if st.button(INSPECT_LABEL, key=f"firsat_inspect_{card.symbol}_{index}", type="primary"):
             _open_company_report(card.symbol)
 

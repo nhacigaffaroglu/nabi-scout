@@ -1,4 +1,4 @@
-"""Fırsatlar Opportunity Center composition. No scoring or research engines."""
+"""Fırsatlar Opportunity Center composition. No scoring engines."""
 
 from __future__ import annotations
 
@@ -35,6 +35,11 @@ from services.research_workflow_service import (
     normalize_research_status,
 )
 from services.nabi_portfolio_fit import fit_label_tr
+from services.research_intelligence_contract import ResearchIntelligenceBrief
+from services.research_intelligence_service import (
+    build_research_intelligence,
+    present_research_intelligence_brief,
+)
 from services.universe_expansion_contract import (
     EXPANSION_STATUS_BLOCKED,
     EXPANSION_STATUS_COMPLETED,
@@ -166,6 +171,7 @@ class TodayOpportunityCard:
     why: Optional[str]
     risk: Optional[str]
     price_label: Optional[str]
+    research_brief: Optional[ResearchIntelligenceBrief] = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +184,7 @@ class OpportunityComparisonCard:
     risk: Optional[str]
     rank_reason: str
     rank: int
+    research_brief: Optional[ResearchIntelligenceBrief] = None
 
 
 @dataclass(frozen=True)
@@ -282,12 +289,25 @@ def select_today_opportunity_candidates(
     return tuple(qualified[: max(0, limit)])
 
 
+def _research_brief_for_candidate(
+    candidate: Optional[Mapping[str, Any]],
+    *,
+    snapshot: Optional[Mapping[str, Any]] = None,
+) -> Optional[ResearchIntelligenceBrief]:
+    if not candidate:
+        return None
+    view = build_research_intelligence(candidate=candidate, snapshot=snapshot)
+    return present_research_intelligence_brief(view)
+
+
 def present_today_opportunity_cards(
     candidates: Sequence[Mapping[str, Any]],
     *,
     limit: int = MAX_TODAY_OPPORTUNITIES,
+    snapshots: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> tuple[TodayOpportunityCard, ...]:
     cards: list[TodayOpportunityCard] = []
+    by_snapshot = snapshots or {}
     for candidate in select_today_opportunity_candidates(candidates, limit=limit):
         symbol = _text(candidate.get("symbol")).upper()
         cards.append(
@@ -300,6 +320,10 @@ def present_today_opportunity_cards(
                 why=_why(candidate),
                 risk=_risk(candidate),
                 price_label=format_current_price(candidate),
+                research_brief=_research_brief_for_candidate(
+                    candidate,
+                    snapshot=by_snapshot.get(symbol),
+                ),
             )
         )
     return tuple(cards)
@@ -516,14 +540,23 @@ def present_comparison_cards(
     comparisons: Sequence[Any] = (),
     *,
     limit: int = MAX_TODAY_OPPORTUNITIES,
+    candidates: Sequence[Mapping[str, Any]] = (),
+    snapshots: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> tuple[OpportunityComparisonCard, ...]:
     cards: list[OpportunityComparisonCard] = []
+    by_symbol = {
+        _text(row.get("symbol")).upper(): row
+        for row in candidates
+        if _text(row.get("symbol"))
+    }
+    by_snapshot = snapshots or {}
     for item in list(comparisons)[: max(0, limit)]:
         strengths = tuple(getattr(item, "strengths", ()) or ())
         risks = tuple(getattr(item, "risks", ()) or ())
+        symbol = _text(getattr(item, "symbol", "")).upper()
         cards.append(
             OpportunityComparisonCard(
-                symbol=_text(getattr(item, "symbol", "")).upper(),
+                symbol=symbol,
                 decision=_text(getattr(item, "decision_class", None)),
                 nabi_score=getattr(item, "nabi_score", None),
                 fit_label=fit_label_tr(getattr(item, "portfolio_fit", "")),
@@ -531,6 +564,10 @@ def present_comparison_cards(
                 risk=risks[0] if risks else None,
                 rank_reason=_text(getattr(item, "rank_reason", None)),
                 rank=int(getattr(item, "rank", len(cards) + 1) or len(cards) + 1),
+                research_brief=_research_brief_for_candidate(
+                    by_symbol.get(symbol),
+                    snapshot=by_snapshot.get(symbol),
+                ),
             )
         )
     return tuple(cards)
@@ -576,11 +613,15 @@ def build_opportunity_center(
     comparison_note: Optional[str] = None,
 ) -> OpportunityCenterView:
     candidates = overlay_candidate_rows(candidates, snapshots)
-    today = present_today_opportunity_cards(candidates)
+    today = present_today_opportunity_cards(candidates, snapshots=snapshots)
     research = present_research_summary(candidates, brief)
     watchlist = present_watchlist_summary(watchlist_entries, watchlist_priority)
     discoveries = present_discovery_summary(expansion_rows, candidates)
-    comparison_cards = present_comparison_cards(comparisons)
+    comparison_cards = present_comparison_cards(
+        comparisons,
+        candidates=candidates,
+        snapshots=snapshots,
+    )
     compared = {card.symbol for card in comparison_cards}
     other = tuple(card for card in today if card.symbol not in compared)
     hero = present_hero(
