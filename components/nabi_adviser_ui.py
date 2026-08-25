@@ -16,9 +16,11 @@ from services.nabi_recommendation import ACTION_REVIEW_GOAL_PLAN, NO_APPROVED_HA
 from services.wealth_adviser_config import AdviserLlmConfig
 from services.wealth_adviser_conversation import (
     clear_conversation_history,
-    conversation_followup_key,
+    ensure_adviser_conversation_store,
+    get_adviser_followup_state,
     get_conversation_history,
     record_chat_exchange,
+    set_adviser_followup_state,
 )
 from services.wealth_adviser_contract import AdviserResponse
 
@@ -35,6 +37,30 @@ def _to_response(result) -> AdviserResponse:
         generated_at="",
         grounded=result.grounded,
     )
+
+
+def submit_nabi_adviser_turn(
+    session_state,
+    chat_key: str,
+    question: str,
+    **answer_kwargs,
+):
+    """Persist one Adviser turn on the live Streamlit conversation key."""
+    ensure_adviser_conversation_store(session_state, chat_key)
+    prior = get_adviser_followup_state(session_state, chat_key)
+    result = answer_nabi_adviser(
+        question,
+        conversation_state=prior,
+        **answer_kwargs,
+    )
+    record_chat_exchange(
+        session_state,
+        chat_key,
+        user_question=question,
+        response=_to_response(result),
+    )
+    set_adviser_followup_state(session_state, chat_key, result.followup_state)
+    return result
 
 
 def render_nabi_adviser(
@@ -56,6 +82,7 @@ def render_nabi_adviser(
 ) -> None:
     import streamlit as st
 
+    session_state = getattr(st, "session_state", None) or session_state
     kwargs = dict(
         candidates=candidates,
         snapshots=snapshots,
@@ -69,7 +96,8 @@ def render_nabi_adviser(
         assets=assets,
         positions=positions,
     )
-    followup_key = conversation_followup_key(chat_key)
+    ensure_adviser_conversation_store(session_state, chat_key)
+    get_adviser_followup_state(session_state, chat_key)
     summary = build_nabi_adviser_context("Bugün ne yapmalıyım?", **kwargs)
     rec = summary.current_recommendation
 
@@ -121,18 +149,12 @@ def render_nabi_adviser(
         submitted_question = adviser_question.strip()
 
     if submitted_question:
-        result = answer_nabi_adviser(
-            submitted_question,
-            llm_config=llm_config,
-            conversation_state=session_state.get(followup_key) or {},
-            **kwargs,
-        )
-        session_state[followup_key] = result.followup_state
-        record_chat_exchange(
+        submit_nabi_adviser_turn(
             session_state,
             chat_key,
-            user_question=submitted_question,
-            response=_to_response(result),
+            submitted_question,
+            llm_config=llm_config,
+            **kwargs,
         )
         st.rerun()
 

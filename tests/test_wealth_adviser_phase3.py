@@ -323,7 +323,10 @@ class Phase3UiStaticTests(unittest.TestCase):
         ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
         self.assertIn("adviser_chat_form", ui)
         self.assertIn("Gönder", ui)
-        self.assertNotIn("answer_nabi_adviser(", ui.split("if submitted_question")[0])
+        render = ui.split("def render_nabi_adviser", 1)[1]
+        self.assertNotIn("answer_nabi_adviser(", render)
+        self.assertNotIn("submit_nabi_adviser_turn(", render.split("if submitted_question")[0])
+        self.assertIn("submit_nabi_adviser_turn(", render.split("if submitted_question")[1])
         self.assertIn("render_nabi_adviser", block)
 
     def test_conversation_key_scoped(self) -> None:

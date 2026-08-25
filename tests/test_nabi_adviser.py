@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from components.nabi_adviser_ui import submit_nabi_adviser_turn
 from services.nabi_adviser_answer import answer_nabi_adviser
 from services.nabi_adviser_contract import (
     AMOUNT_CLARIFICATION,
@@ -35,7 +36,10 @@ from services.participation_intelligence_contract import (
 from services.wealth_adviser_config import AdviserLlmConfig
 from services.wealth_adviser_conversation import (
     clear_conversation_history,
-    conversation_followup_key,
+    conversation_session_key,
+    ensure_adviser_conversation_store,
+    get_adviser_followup_state,
+    get_conversation_history,
 )
 from services.wealth_new_money_allocation import REASON_STRONG_CANDIDATE
 from tests.test_nabi_decision_v3 import (
@@ -368,18 +372,19 @@ class LiveUatFixPackTests(unittest.TestCase):
     def test_clear_conversation_clears_followup_state(self) -> None:
         session = {}
         chat_key = "adviser_chat_user_port"
-        followup_key = conversation_followup_key(chat_key)
-        session[chat_key] = [{"role": "user", "content": "Bugün ne yapmalıyım?"}]
-        session[followup_key] = {
-            "intent": INTENT_TODAY_RECOMMENDATION,
-            "symbols": ["CRM"],
-            PENDING_NEW_MONEY_AMOUNT: True,
+        session[chat_key] = {
+            "turns": [{"role": "user", "content": "Bugün ne yapmalıyım?"}],
+            "nabi_followup": {
+                "intent": INTENT_TODAY_RECOMMENDATION,
+                "symbols": ["CRM"],
+                PENDING_NEW_MONEY_AMOUNT: True,
+            },
         }
         clear_conversation_history(session, chat_key)
         self.assertNotIn(chat_key, session)
-        self.assertNotIn(followup_key, session)
         self.assertIn("Sohbeti temizle", UI.read_text(encoding="utf-8"))
-        self.assertIn("conversation_followup_key", UI.read_text(encoding="utf-8"))
+        self.assertIn("submit_nabi_adviser_turn", UI.read_text(encoding="utf-8"))
+        self.assertIn("get_adviser_followup_state", UI.read_text(encoding="utf-8"))
 
 
 class AdviserUiAndSafetyTests(unittest.TestCase):
@@ -478,14 +483,18 @@ class NewMoneyFollowUpTests(unittest.TestCase):
 
     def test_clear_conversation_clears_pending_amount(self) -> None:
         session = {}
-        chat_key = "adviser_chat_user_port"
-        followup_key = conversation_followup_key(chat_key)
-        session[followup_key] = {PENDING_NEW_MONEY_AMOUNT: True, "intent": INTENT_NEW_MONEY_SCENARIO}
-        clear_conversation_history(session, chat_key)
-        self.assertNotIn(followup_key, session)
-        asked = answer_nabi_adviser("Yeni paramı nasıl dağıtmalıyım?", **_new_money_kwargs())
-        cleared = parse_adviser_question("100.000", {})
+        chat_key = conversation_session_key("user-port", "p1")
+        asked = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "Yeni paramı nasıl dağıtmalıyım?",
+            **_new_money_kwargs(),
+        )
+        self.assertTrue(get_adviser_followup_state(session, chat_key).get(PENDING_NEW_MONEY_AMOUNT))
         self.assertTrue(asked.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+        clear_conversation_history(session, chat_key)
+        self.assertEqual(get_adviser_followup_state(session, chat_key), {})
+        cleared = parse_adviser_question("100.000", get_adviser_followup_state(session, chat_key))
         self.assertNotEqual(cleared.intent, INTENT_NEW_MONEY_SCENARIO)
 
     def test_explicit_full_query_unchanged(self) -> None:
@@ -507,6 +516,139 @@ class NewMoneyFollowUpTests(unittest.TestCase):
             llm_config=_cfg(usable=False),
         )
         self.assertNotIn("UNKNOWN", result.answer)
+
+
+class _RerunSession(dict):
+    """Drop keys that were not read or written during a simulated Streamlit rerun."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._accessed: set[str] = set()
+
+    def get(self, key, default=None):  # noqa: ANN001
+        self._accessed.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key):  # noqa: ANN001
+        self._accessed.add(key)
+        return super().__getitem__(key)
+
+    def __setitem__(self, key, value) -> None:  # noqa: ANN001
+        self._accessed.add(key)
+        super().__setitem__(key, value)
+
+    def pop(self, key, *args):  # noqa: ANN001
+        self._accessed.add(key)
+        return super().pop(key, *args)
+
+    def end_run(self) -> None:
+        keep = {key: value for key, value in list(self.items()) if key in self._accessed}
+        super().clear()
+        super().update(keep)
+        self._accessed = set()
+
+
+def _simulate_adviser_display_rerun(session, chat_key: str) -> None:
+    ensure_adviser_conversation_store(session, chat_key)
+    get_conversation_history(session, chat_key)
+    get_adviser_followup_state(session, chat_key)
+
+
+class StreamlitConversationLifecycleTests(unittest.TestCase):
+    def test_display_rerun_then_bare_amount_uses_pending_on_chat_key(self) -> None:
+        session = _RerunSession()
+        chat_key = conversation_session_key("live-user", "live-port")
+        first = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "Yeni paramı nasıl dağıtmalıyım?",
+            **_new_money_kwargs(),
+        )
+        self.assertEqual(first.answer, AMOUNT_CLARIFICATION)
+        self.assertIn(chat_key, session)
+        self.assertTrue(session[chat_key].get("nabi_followup", {}).get(PENDING_NEW_MONEY_AMOUNT))
+        self.assertNotIn(f"{chat_key}_nabi_followup", session)
+        session.end_run()
+
+        _simulate_adviser_display_rerun(session, chat_key)
+        self.assertTrue(get_adviser_followup_state(session, chat_key).get(PENDING_NEW_MONEY_AMOUNT))
+        session.end_run()
+
+        second = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "100.000",
+            **_new_money_kwargs(),
+        )
+        self.assertEqual(second.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertEqual(second.followup_state.get("amount"), "100000")
+        self.assertIn("100.000 TL", second.answer)
+        self.assertIn("nakitte kalabilir", second.answer)
+        self.assertFalse(get_adviser_followup_state(session, chat_key).get(PENDING_NEW_MONEY_AMOUNT))
+
+    def test_standalone_bare_amount_via_submit_is_not_new_money(self) -> None:
+        session = _RerunSession()
+        chat_key = conversation_session_key("solo-user", "solo-port")
+        _simulate_adviser_display_rerun(session, chat_key)
+        session.end_run()
+        result = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "100.000",
+            **_today_kwargs(),
+        )
+        self.assertNotEqual(result.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertIn("Katkı planını gözden geçir", result.answer)
+
+    def test_explicit_today_clears_pending_before_bare_amount(self) -> None:
+        session = _RerunSession()
+        chat_key = conversation_session_key("clear-user", "clear-port")
+        submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "Yeni paramı nasıl dağıtmalıyım?",
+            **_new_money_kwargs(),
+        )
+        session.end_run()
+        _simulate_adviser_display_rerun(session, chat_key)
+        session.end_run()
+        today = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "Bugün ne yapmalıyım?",
+            **_today_kwargs(),
+        )
+        self.assertEqual(today.intent, INTENT_TODAY_RECOMMENDATION)
+        self.assertFalse(get_adviser_followup_state(session, chat_key).get(PENDING_NEW_MONEY_AMOUNT))
+        session.end_run()
+        _simulate_adviser_display_rerun(session, chat_key)
+        session.end_run()
+        bare = submit_nabi_adviser_turn(
+            session,
+            chat_key,
+            "100.000",
+            **_today_kwargs(),
+        )
+        self.assertNotEqual(bare.intent, INTENT_NEW_MONEY_SCENARIO)
+
+    def test_ui_submit_path_does_not_use_sibling_followup_key(self) -> None:
+        ui = UI.read_text(encoding="utf-8")
+        self.assertIn("submit_nabi_adviser_turn", ui)
+        self.assertIn("get_adviser_followup_state", ui)
+        self.assertIn("ensure_adviser_conversation_store", ui)
+        self.assertNotIn("conversation_followup_key", ui)
+        self.assertIn("session_state = getattr(st, \"session_state\", None) or session_state", ui)
+        submit = UI.read_text(encoding="utf-8")
+        start = submit.index("def submit_nabi_adviser_turn")
+        body = submit[start : submit.index("def render_nabi_adviser")]
+        self.assertLess(
+            body.index("get_adviser_followup_state"),
+            body.index("answer_nabi_adviser"),
+        )
+        self.assertLess(
+            body.index("answer_nabi_adviser"),
+            body.index("set_adviser_followup_state"),
+        )
 
 
 if __name__ == "__main__":
