@@ -89,6 +89,15 @@ def render_nabi_today(today: NabiTodayExecutive) -> None:
             st.caption(card.existing_vs_new)
         st.caption(f"Risk: {card.risk}")
         st.caption(f"Güven: {card.confidence}")
+        if today.decision_v3 is not None:
+            st.caption(f"Final action: {today.decision_v3.final_action}")
+            st.caption(f"Timing: {today.decision_v3.timing_state}")
+            st.caption(
+                "Portfolio fit: "
+                + (today.decision_v3.portfolio_fit or "UNKNOWN")
+            )
+            if today.decision_v3.why:
+                st.caption(f"Why / reason: {today.decision_v3.why}")
         cta_cols = st.columns(2)
         if cta_cols[0].button(card.wealth_cta, key="today_rec_wealth"):
             st.switch_page(WEALTH_PAGE)

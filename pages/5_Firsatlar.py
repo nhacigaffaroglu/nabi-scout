@@ -14,6 +14,10 @@ from services.nabi_recommendation import (
     build_nabi_recommendation,
     opportunity_intelligence_summary,
 )
+from services.nabi_decision_orchestrator import (
+    build_nabi_decision_v3,
+    present_decision_v3_brief,
+)
 from services.participation_authority import overlay_candidate_rows
 from services.research_monitor_service import build_priority_entries
 from services.ui import prepare_protected_page
@@ -98,6 +102,13 @@ recommendation = build_nabi_recommendation(
     portfolio_view=portfolio_view,
     allocation=allocation,
 )
+decision_v3 = build_nabi_decision_v3(
+    candidates=overlaid,
+    snapshots=snapshots,
+    portfolio_view=portfolio_view,
+    allocation=allocation,
+    recommendation=recommendation,
+)
 
 view = build_opportunity_center(
     candidates=candidates,
@@ -113,5 +124,6 @@ view = build_opportunity_center(
         if recommendation.comparisons
         else None
     ),
+    decision_brief=present_decision_v3_brief(decision_v3),
 )
 render_opportunity_center(view, candidates=candidates)

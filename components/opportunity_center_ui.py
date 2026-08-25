@@ -69,6 +69,12 @@ def _render_hero(view: OpportunityCenterView) -> None:
         for col, kpi in zip(cols, view.hero.kpis):
             col.metric(kpi.label, kpi.value)
     st.caption(view.hero.recommendation)
+    if view.decision_brief:
+        st.caption(f"Final action: {view.decision_brief.final_action}")
+        st.caption(f"Timing: {view.decision_brief.timing_state}")
+        st.caption(f"Portfolio fit: {view.decision_brief.portfolio_fit}")
+        if view.decision_brief.why:
+            st.caption(f"Why / reason: {view.decision_brief.why}")
 
 
 def _render_comparison_card(card: OpportunityComparisonCard, index: int) -> None:
