@@ -357,8 +357,10 @@ class WealthAdviserLlmUiTests(unittest.TestCase):
         self.assertIn("AI yorumu deterministik verilerle doğrulandı", source)
 
     def test_technical_context_collapsed(self) -> None:
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
         block = self._adviser_block()
-        self.assertIn("Teknik bağlam", block)
+        self.assertIn("Teknik bağlam", ui)
+        self.assertNotIn('st.expander("Teknik bağlam")', block)
 
 
 class WealthAdviserParseTests(unittest.TestCase):

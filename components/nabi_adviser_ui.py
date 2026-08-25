@@ -6,10 +6,17 @@ from typing import Any, Mapping, Optional, Sequence
 
 from services.nabi_adviser_answer import answer_nabi_adviser
 from services.nabi_adviser_context import build_nabi_adviser_context
-from services.nabi_adviser_contract import QUICK_QUESTIONS
+from services.nabi_adviser_contract import (
+    LLM_DISABLED_COPY,
+    QUICK_QUESTIONS,
+    USER_SOURCE_COPY,
+    present_action_label,
+)
+from services.nabi_recommendation import ACTION_REVIEW_GOAL_PLAN, NO_APPROVED_HALAL_OPPORTUNITY
 from services.wealth_adviser_config import AdviserLlmConfig
 from services.wealth_adviser_conversation import (
     clear_conversation_history,
+    conversation_followup_key,
     get_conversation_history,
     record_chat_exchange,
 )
@@ -62,6 +69,7 @@ def render_nabi_adviser(
         assets=assets,
         positions=positions,
     )
+    followup_key = conversation_followup_key(chat_key)
     summary = build_nabi_adviser_context("Bugün ne yapmalıyım?", **kwargs)
     rec = summary.current_recommendation
 
@@ -69,19 +77,23 @@ def render_nabi_adviser(
     st.warning(
         "Bu özellik yatırım tavsiyesi değildir ve otomatik işlem gerçekleştirmez."
     )
-    st.caption(
-        "Deterministik Wealth verileri kaynak gerçektir; AI bölümü yalnızca yorum katmanıdır."
-    )
+    st.caption(USER_SOURCE_COPY)
     st.markdown(f"**{rec.get('primary_action') or '—'}**")
     if rec.get("why_now"):
-        st.caption(f"Neden: {rec['why_now']}")
-    if rec.get("opportunity_line"):
-        st.caption(rec["opportunity_line"])
-    if rec.get("final_action"):
-        st.caption(f"Kanonik yatırım aksiyonu: {rec['final_action']}")
+        st.caption(rec["why_now"])
+    opportunity_line = rec.get("opportunity_line") or ""
+    if (
+        opportunity_line
+        and rec.get("action_code") != ACTION_REVIEW_GOAL_PLAN
+        and opportunity_line != NO_APPROVED_HALAL_OPPORTUNITY
+    ):
+        st.caption(opportunity_line)
+    final_label = present_action_label(rec.get("final_action"))
+    if final_label and rec.get("action_code") != ACTION_REVIEW_GOAL_PLAN:
+        st.caption(final_label)
 
     if not llm_config.is_usable:
-        st.caption("Serbest sohbet açıklamaları için AI sohbeti etkin değil.")
+        st.caption(LLM_DISABLED_COPY)
 
     conversation_history = get_conversation_history(session_state, chat_key)
     for turn in conversation_history:
@@ -112,8 +124,10 @@ def render_nabi_adviser(
         result = answer_nabi_adviser(
             submitted_question,
             llm_config=llm_config,
+            conversation_state=session_state.get(followup_key) or {},
             **kwargs,
         )
+        session_state[followup_key] = result.followup_state
         record_chat_exchange(
             session_state,
             chat_key,

@@ -21,6 +21,10 @@ def conversation_session_key(user_id: str, portfolio_id: str) -> str:
     return f"adviser_chat_{user_id}_{portfolio_id}"
 
 
+def conversation_followup_key(chat_key: str) -> str:
+    return f"{chat_key}_nabi_followup"
+
+
 def adviser_response_cache_key(user_id: str, portfolio_id: str) -> str:
     return f"adviser_response_{user_id}_{portfolio_id}"
 
@@ -100,3 +104,4 @@ def record_chat_exchange(
 
 def clear_conversation_history(session_state, key: str) -> None:
     session_state.pop(key, None)
+    session_state.pop(conversation_followup_key(key), None)

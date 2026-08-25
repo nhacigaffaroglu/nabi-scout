@@ -1061,6 +1061,3 @@ with tab_adviser:
             st.markdown("**Sorulabilecek sorular**")
             for question in adviser_brief.questions_for_user:
                 st.write(f"- {question}")
-
-    with st.expander("Teknik bağlam"):
-        st.json(adviser_brief.to_dict())

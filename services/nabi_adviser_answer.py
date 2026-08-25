@@ -8,8 +8,10 @@ from typing import Any, Mapping, Optional, Sequence
 from services.nabi_adviser_contract import (
     NabiAdviserAnswer,
     NabiAdviserContext,
+    present_user_text,
 )
-from services.nabi_adviser_context import build_nabi_adviser_context
+from services.nabi_adviser_context import build_followup_state, build_nabi_adviser_context
+from services.nabi_adviser_intent import parse_adviser_question
 from services.nabi_decision_contract import (
     ACTION_CONSIDER_NEW_POSITION,
     ACTION_CONSIDER_TOP_UP,
@@ -100,6 +102,7 @@ def answer_nabi_adviser(
     theses: Optional[Mapping[str, Any]] = None,
     llm_config: Optional[AdviserLlmConfig] = None,
     llm_client: Optional[WealthAdviserLlmClient] = None,
+    conversation_state: Optional[Mapping[str, Any]] = None,
 ) -> NabiAdviserAnswer:
     context = build_nabi_adviser_context(
         question,
@@ -115,12 +118,20 @@ def answer_nabi_adviser(
         assets=assets,
         positions=positions,
         theses=theses,
+        conversation_state=conversation_state,
+    )
+    parsed = parse_adviser_question(question, conversation_state)
+    followup_state = build_followup_state(
+        parsed,
+        context.current_recommendation,
+        context.canonical_answer,
+        context.new_money_context,
     )
     action = str(context.current_recommendation.get("action_code") or "")
     config = llm_config or load_adviser_llm_config()
     if not config.is_usable:
         return NabiAdviserAnswer(
-            answer=context.canonical_answer,
+            answer=present_user_text(context.canonical_answer),
             intent=context.intent,
             focus_symbol=context.focus_symbol,
             canonical_action=action,
@@ -129,6 +140,7 @@ def answer_nabi_adviser(
             limitations=context.limitations,
             grounded=False,
             canonical_answer=context.canonical_answer,
+            followup_state=followup_state,
         )
 
     client = llm_client or WealthAdviserLlmClient.from_config(config)
@@ -144,7 +156,7 @@ def answer_nabi_adviser(
         or _violates_halal_firewall(context, explained)
     ):
         return NabiAdviserAnswer(
-            answer=context.canonical_answer,
+            answer=present_user_text(context.canonical_answer),
             intent=context.intent,
             focus_symbol=context.focus_symbol,
             canonical_action=action,
@@ -155,9 +167,10 @@ def answer_nabi_adviser(
             ),
             grounded=False,
             canonical_answer=context.canonical_answer,
+            followup_state=followup_state,
         )
     return NabiAdviserAnswer(
-        answer=explained,
+        answer=present_user_text(explained),
         intent=context.intent,
         focus_symbol=context.focus_symbol,
         canonical_action=action,
@@ -166,6 +179,7 @@ def answer_nabi_adviser(
         limitations=context.limitations,
         grounded=True,
         canonical_answer=context.canonical_answer,
+        followup_state=followup_state,
     )
 
 
@@ -174,5 +188,5 @@ def present_adviser_summary(context: NabiAdviserContext) -> tuple[str, str, str]
     return (
         str(rec.get("primary_action") or ""),
         str(rec.get("why_now") or ""),
-        str(rec.get("opportunity_line") or ""),
+        present_user_text(str(rec.get("final_action") or "")),
     )

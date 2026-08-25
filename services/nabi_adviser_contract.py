@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from decimal import Decimal, InvalidOperation
+from typing import Any, Mapping, Optional, Tuple
 
 INTENT_TODAY_RECOMMENDATION = "TODAY_RECOMMENDATION"
 INTENT_WHY_RECOMMENDATION = "WHY_RECOMMENDATION"
 INTENT_SYMBOL_EXPLAIN = "SYMBOL_EXPLAIN"
 INTENT_OPPORTUNITY_COMPARE = "OPPORTUNITY_COMPARE"
+INTENT_OPPORTUNITY_STATUS = "OPPORTUNITY_STATUS"
 INTENT_PORTFOLIO_FIT = "PORTFOLIO_FIT"
 INTENT_NEW_MONEY_SCENARIO = "NEW_MONEY_SCENARIO"
 INTENT_GOAL_EXPLAIN = "GOAL_EXPLAIN"
@@ -21,6 +23,7 @@ ADVISER_INTENTS = (
     INTENT_WHY_RECOMMENDATION,
     INTENT_SYMBOL_EXPLAIN,
     INTENT_OPPORTUNITY_COMPARE,
+    INTENT_OPPORTUNITY_STATUS,
     INTENT_PORTFOLIO_FIT,
     INTENT_NEW_MONEY_SCENARIO,
     INTENT_GOAL_EXPLAIN,
@@ -31,7 +34,15 @@ ADVISER_INTENTS = (
 
 UNKNOWN = "UNKNOWN"
 INSUFFICIENT_DATA = "veri yetersiz"
+AMOUNT_REQUIRED = "AMOUNT_REQUIRED"
 LLM_DISABLED_COPY = "Serbest sohbet açıklamaları için AI sohbeti etkin değil."
+USER_SOURCE_COPY = (
+    "NABI kararları doğrulanmış portföy ve analiz verilerine dayanır. "
+    "AI yalnızca bu kararları açıklamak için kullanılır."
+)
+AMOUNT_CLARIFICATION = "Ne kadar yeni para dağıtmak istiyorsun?"
+NO_ACTIONABLE_OPPORTUNITY = "Şu anda yatırım için onaylanmış bir fırsat yok."
+NOT_A_TRADE = "Bu bir al/sat önerisi değildir."
 QUICK_QUESTIONS = (
     "Bugün ne yapmalıyım?",
     "Neden?",
@@ -39,6 +50,76 @@ QUICK_QUESTIONS = (
     "Yeni paramı nasıl dağıtmalıyım?",
     "2031 hedefim nasıl gidiyor?",
 )
+
+# Presentation-only. Canonical enum values stay unchanged.
+ACTION_LABELS_TR = {
+    "RESEARCH_FIRST": "Önce araştırmayı tamamla",
+    "WATCH": "İzle",
+    "WAIT": "Bekle",
+    "CONSIDER_NEW_POSITION": "Yeni pozisyon değerlendirilebilir",
+    "CONSIDER_TOP_UP": "Pozisyon artırımı değerlendirilebilir",
+    "NO_ACTION": "Şimdilik işlem yok",
+    "BLOCKED_PARTICIPATION": "Katılım uygun olmadığı için yatırım önerilmez",
+    "REVIEW_GOAL_PLAN": "Katkı planını gözden geçir",
+    "REVIEW_NEW_MONEY": "Yeni para dağılımını incele",
+    "RESEARCH_OPPORTUNITY": "Öne çıkan fırsatı araştır",
+    "HOLD_CURRENT_PORTFOLIO": "Mevcut portföyü koru",
+}
+MISSING_EVIDENCE_LABELS_TR = {
+    "thesis_evidence": "yatırım tezi",
+    "canonical_valuation_classification": "değerleme sınıflandırması",
+    "catalyst_evidence": "katalizör kanıtı",
+    "research_completeness": "araştırma tamamlığı",
+    "nabi_evaluation": "NABI değerlendirmesi",
+}
+COMPLETENESS_LABELS_TR = {
+    "HIGH": "yüksek",
+    "MEDIUM": "orta",
+    "LOW": "yetersiz",
+}
+
+_ACTION_REPLACE_ORDER = tuple(
+    sorted(ACTION_LABELS_TR.keys(), key=len, reverse=True)
+)
+
+
+def present_action_label(code: Optional[str]) -> str:
+    text = str(code or "").strip()
+    if not text:
+        return ""
+    return ACTION_LABELS_TR.get(text, text)
+
+
+def present_missing_evidence(code: str) -> str:
+    text = str(code or "").strip()
+    return MISSING_EVIDENCE_LABELS_TR.get(text, text.replace("_", " "))
+
+
+def present_user_text(text: str) -> str:
+    rendered = str(text or "")
+    for code in _ACTION_REPLACE_ORDER:
+        rendered = rendered.replace(code, ACTION_LABELS_TR[code])
+    return rendered
+
+
+def format_try_display(value: Any, currency: Optional[str] = "TRY") -> str:
+    if value in (None, "", UNKNOWN):
+        return ""
+    raw = str(value).strip().replace(" ", "")
+    code = str(currency or "TRY").strip().upper()
+    try:
+        amount = Decimal(raw.replace(",", ""))
+    except (InvalidOperation, ValueError, TypeError):
+        if code in {"TRY", "TL"}:
+            return f"{value} TL" if "TL" not in str(value) else str(value)
+        return f"{value} {code}".strip()
+    whole = int(amount.quantize(Decimal("1")))
+    grouped = f"{whole:,}".replace(",", ".")
+    if code in {"TRY", "TL"}:
+        return f"{grouped} TL"
+    if code == "USD":
+        return f"${grouped}"
+    return f"{grouped} {code}"
 
 
 @dataclass(frozen=True)
@@ -49,6 +130,7 @@ class ParsedAdviserQuestion:
     compare_symbols: Tuple[str, ...]
     scenario_amount: Optional[str]
     scenario_currency: Optional[str]
+    inherited_symbols: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -69,6 +151,7 @@ class NabiAdviserContext:
     evidence_refs: Tuple[Any, ...]
     limitations: Tuple[str, ...]
     canonical_answer: str
+    prior_context: Optional[Mapping[str, Any]] = None
 
     def to_llm_payload(self) -> dict[str, Any]:
         return {
@@ -91,6 +174,7 @@ class NabiAdviserContext:
             ],
             "limitations": list(self.limitations),
             "canonical_answer": self.canonical_answer,
+            "prior_context": dict(self.prior_context or {}),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,3 +192,4 @@ class NabiAdviserAnswer:
     limitations: Tuple[str, ...]
     grounded: bool
     canonical_answer: str
+    followup_state: dict[str, Any]

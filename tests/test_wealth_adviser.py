@@ -664,12 +664,16 @@ class WealthAdviserUiTests(unittest.TestCase):
 
     def test_deterministic_only_caption_visible(self) -> None:
         ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
-        self.assertIn("deterministik wealth verileri kaynak gerçektir", ui.lower())
+        contract = Path("services/nabi_adviser_contract.py").read_text(encoding="utf-8")
+        self.assertIn("USER_SOURCE_COPY", ui)
+        self.assertIn("NABI kararları doğrulanmış portföy ve analiz verilerine dayanır", contract)
 
     def test_no_ai_active_claim(self) -> None:
-        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8").lower()
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
+        contract = Path("services/nabi_adviser_contract.py").read_text(encoding="utf-8").lower()
+        self.assertIn("LLM_DISABLED_COPY", ui)
         self.assertTrue(
-            "ai sohbeti etkin değil" in ui or "yorum katmanıdır" in ui
+            "ai sohbeti etkin değil" in contract or "ai yalnızca bu kararları açıklamak" in contract
         )
 
     def test_no_buy_sell_wording(self) -> None:
@@ -678,9 +682,12 @@ class WealthAdviserUiTests(unittest.TestCase):
             self.assertNotIn(phrase, block)
 
     def test_technical_context_collapsed(self) -> None:
+        ui = Path("components/nabi_adviser_ui.py").read_text(encoding="utf-8")
         block = self._adviser_block()
-        self.assertIn("Teknik bağlam", block)
-        self.assertIn("to_dict()", block)
+        self.assertIn('st.expander("Teknik bağlam")', ui)
+        self.assertNotIn('st.expander("Teknik bağlam")', block)
+        self.assertIn("to_dict()", ui)
+        self.assertIn('st.expander("Detaylar"', block)
 
     def test_analiz_block_unchanged_marker(self) -> None:
         source = Path("pages/10_Wealth.py").read_text(encoding="utf-8")
