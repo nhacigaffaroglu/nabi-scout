@@ -204,7 +204,7 @@ class MissingSecTests(unittest.TestCase):
         self.assertEqual(result.participation_assessment.confidence, CONFIDENCE_LOW)
         self.assertTrue(result.errors)
 
-    def test_non_usd_safe_result(self) -> None:
+    def test_non_usd_same_currency_maps_monetary_fields(self) -> None:
         result = assess_equity_participation(
             "TSM",
             sec_client=MockSECClient(
@@ -212,7 +212,7 @@ class MissingSecTests(unittest.TestCase):
             ),
             cik=1046179,
         )
-        self.assertIsNone(result.financial_inputs.total_debt)
+        self.assertEqual(result.financial_inputs.total_debt, 30_000_000.0)
         self.assertEqual(result.participation_assessment.source, PARTICIPATION_SOURCE_METHODOLOGY)
 
 

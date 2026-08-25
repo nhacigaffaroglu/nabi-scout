@@ -12,15 +12,18 @@ class SECFinancialError(RuntimeError):
 
 # Identifier for the canonical Company Facts extractor. Used in replay/apply
 # provenance; not a religious ruling and not a per-issuer override.
-SEC_FINANCIAL_EXTRACTOR_VERSION = "us-gaap-period-aligned-exclusive-debt-v1"
+SEC_FINANCIAL_EXTRACTOR_VERSION = "us-gaap-period-aligned-exclusive-debt-v2"
 
 _ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "40-F"}
 
 _US_GAAP_TAGS = {
     "revenue": [
         "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
         "Revenues",
         "SalesRevenueNet",
+        "SalesRevenueServicesNet",
+        "RegulatedAndUnregulatedOperatingRevenue",
     ],
     "net_income": ["NetIncomeLoss", "ProfitLoss"],
     "operating_income": ["OperatingIncomeLoss"],
@@ -115,8 +118,9 @@ _IFRS_TAGS = {
     "current_assets": ["CurrentAssets"],
     "current_liabilities": ["CurrentLiabilities"],
     "accounts_receivable": [
-        "TradeAndOtherCurrentReceivables",
+        "CurrentTradeReceivables",
         "TradeReceivables",
+        "TradeAndOtherCurrentReceivables",
     ],
 }
 
@@ -434,21 +438,22 @@ class SECFinancialClient:
             monetary_units,
         )
 
-        latest = lambda series: self._value(series, 0)
-        balance_sheet_end = assets[0]["end"] if assets else None
+        canonical_period = self._canonical_annual_period(revenue, assets)
+        at_period = lambda series: self._aligned_instant_value(series, canonical_period)
+        balance_sheet_end = canonical_period
 
-        revenue_latest = latest(revenue)
-        net_income_latest = latest(net_income)
-        operating_income_latest = latest(operating_income)
-        gross_profit_latest = latest(gross_profit)
-        operating_cash_latest = latest(operating_cash)
-        capex_latest = latest(capex)
-        eps_latest = latest(eps)
-        shares_latest = latest(shares)
-        interest_latest = latest(interest_expense)
-        pretax_latest = latest(pretax_income)
-        tax_latest = latest(tax_expense)
-        dividends_latest = latest(dividends)
+        revenue_latest = at_period(revenue)
+        net_income_latest = at_period(net_income)
+        operating_income_latest = at_period(operating_income)
+        gross_profit_latest = at_period(gross_profit)
+        operating_cash_latest = at_period(operating_cash)
+        capex_latest = at_period(capex)
+        eps_latest = at_period(eps)
+        shares_latest = at_period(shares)
+        interest_latest = at_period(interest_expense)
+        pretax_latest = at_period(pretax_income)
+        tax_latest = at_period(tax_expense)
+        dividends_latest = at_period(dividends)
 
         assets_latest = self._aligned_instant_value(assets, balance_sheet_end)
         equity_latest, _ = self._period_aligned_instant(
@@ -582,7 +587,7 @@ class SECFinancialClient:
 
         share_change_3y = self._change(shares, 3)
 
-        prior_period_end = revenue[1]["end"] if len(revenue) > 1 else None
+        prior_period_end = self._prior_period_end(revenue, canonical_period)
         prior_payload: dict[str, Any] = {}
         if prior_period_end:
             prior_payload = {
@@ -672,10 +677,8 @@ class SECFinancialClient:
             "shares_outstanding_sec": shares_latest,
             "share_change_3y": share_change_3y,
             "payout_ratio": payout_ratio,
-            "financial_period_end": (
-                revenue[0]["end"] if revenue else None
-            ),
-            "annual_periods_found": len(revenue),
+            "financial_period_end": canonical_period,
+            "annual_periods_found": len(revenue) if revenue else len(assets),
             "financial_currency": currency,
             "financial_taxonomy": taxonomy,
             **prior_payload,
@@ -727,6 +730,19 @@ class SECFinancialClient:
                 if self._has_annual_entries(unit_map[unit]):
                     return unit.split("/")[0]
 
+        for tag in tag_map["assets"]:
+            unit_map = facts.get(tag, {}).get("units", {})
+            if not unit_map:
+                continue
+            if taxonomy == "us-gaap" and "USD" in unit_map:
+                if self._has_annual_instant_entries(unit_map["USD"]):
+                    return "USD"
+            for unit in sorted(unit_map):
+                if unit in {"shares", "pure"} or "/shares" in unit:
+                    continue
+                if self._has_annual_instant_entries(unit_map[unit]):
+                    return unit.split("/")[0]
+
         return None
 
     @staticmethod
@@ -748,6 +764,51 @@ class SECFinancialClient:
             if 300 <= days <= 430:
                 return True
         return False
+
+    @staticmethod
+    def _has_annual_instant_entries(entries: Sequence[Dict[str, Any]]) -> bool:
+        for item in entries:
+            if item.get("form") not in _ANNUAL_FORMS:
+                continue
+            if item.get("start"):
+                continue
+            if item.get("end"):
+                return True
+        return False
+
+    @staticmethod
+    def _canonical_annual_period(
+        revenue: Sequence[Dict[str, Any]],
+        assets: Sequence[Dict[str, Any]],
+    ) -> Optional[str]:
+        revenue_ends = [str(row.get("end") or "") for row in revenue if row.get("end")]
+        asset_ends = [str(row.get("end") or "") for row in assets if row.get("end")]
+        common = [end for end in asset_ends if end in set(revenue_ends)]
+        if common:
+            return common[0]
+        if asset_ends and revenue_ends:
+            # Do not mix a newer balance sheet with a stale income period.
+            return asset_ends[0]
+        if asset_ends:
+            return asset_ends[0]
+        if revenue_ends:
+            return revenue_ends[0]
+        return None
+
+    @staticmethod
+    def _prior_period_end(
+        series: Sequence[Dict[str, Any]],
+        period_end: Optional[str],
+    ) -> Optional[str]:
+        if not period_end:
+            return series[1]["end"] if len(series) > 1 else None
+        ends = [str(row.get("end") or "") for row in series if row.get("end")]
+        if period_end not in ends:
+            return None
+        index = ends.index(period_end)
+        if index + 1 < len(ends):
+            return ends[index + 1]
+        return None
 
     @staticmethod
     def _empty_financials(taxonomy: str) -> Dict[str, Optional[float]]:

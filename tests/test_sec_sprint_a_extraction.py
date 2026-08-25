@@ -395,6 +395,30 @@ class InterestBearingSecuritiesTests(unittest.TestCase):
             "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
         )
 
+    def test_idxx_equity_securities_are_not_interest_bearing(self) -> None:
+        extracted = _extract(
+            {
+                "Revenues": _duration(
+                    4_303_702_000,
+                    "2025-01-01",
+                    "2025-12-31",
+                    filed="2026-02-20",
+                ),
+                "Assets": _instant(3_350_759_000, "2025-12-31", filed="2026-02-20"),
+                "CashAndCashEquivalentsAtCarryingValue": _instant(
+                    180_070_000,
+                    "2025-12-31",
+                    filed="2026-02-20",
+                ),
+                "EquitySecuritiesFvNiCurrentAndNoncurrent": _instant(
+                    31_760_000,
+                    "2025-12-31",
+                    filed="2026-02-20",
+                ),
+            }
+        )
+        self.assertIsNone(extracted["interest_bearing_securities"])
+
     def test_missing_ib_stays_none_not_zero(self) -> None:
         extracted = _extract(
             {

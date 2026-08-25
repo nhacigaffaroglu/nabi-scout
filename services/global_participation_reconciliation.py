@@ -34,7 +34,10 @@ from services.participation_screening_context import (
     DEFAULT_EQUITY_SCREENING_CONTEXT,
     normalize_screening_context,
 )
-from services.participation_sec_input_resolver import build_participation_inputs_from_sec
+from services.participation_sec_input_resolver import (
+    build_participation_inputs_from_sec,
+    market_values_share_reporting_currency,
+)
 from services.research_eligibility_service import (
     evaluate_research_eligibility_from_assessment,
 )
@@ -295,17 +298,20 @@ def assess_from_cached_evidence(
         market_capitalization=old_fin.get("market_capitalization"),
     )
     npr = old_fin.get("non_permissible_revenue")
+    market_values_ok = market_values_share_reporting_currency(
+        extracted.get("financial_currency")
+    )
     inputs = replace(
         resolution.inputs,
         non_permissible_revenue=npr
         if npr is not None
         else resolution.inputs.non_permissible_revenue,
-        market_capitalization=old_fin.get("market_capitalization")
-        if old_fin.get("market_capitalization") is not None
-        else resolution.inputs.market_capitalization,
-        average_market_cap_24m=old_fin.get("average_market_cap_24m"),
-        average_market_value_of_equity_36m=old_fin.get(
-            "average_market_value_of_equity_36m"
+        market_capitalization=resolution.inputs.market_capitalization,
+        average_market_cap_24m=(
+            old_fin.get("average_market_cap_24m") if market_values_ok else None
+        ),
+        average_market_value_of_equity_36m=(
+            old_fin.get("average_market_value_of_equity_36m") if market_values_ok else None
         ),
     )
     financial = evaluate_financial_rules(

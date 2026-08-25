@@ -130,14 +130,25 @@ class ForeignAndMissingDataTests(unittest.TestCase):
         self.assertIsNone(result.inputs.total_assets)
         self.assertTrue(result.warnings)
 
-    def test_non_usd_currency_leaves_monetary_fields_unset(self) -> None:
+    def test_same_currency_non_usd_maps_monetary_fields(self) -> None:
         result = build_participation_inputs_from_sec(
             "TSM",
             sample_sec_financials(financial_currency="TWD"),
         )
-        self.assertIsNone(result.inputs.total_debt)
-        self.assertIsNone(result.inputs.total_assets)
-        self.assertTrue(any("currency" in warning for warning in result.warnings))
+        self.assertEqual(result.inputs.total_debt, 30_000_000.0)
+        self.assertEqual(result.inputs.total_assets, 100_000_000.0)
+        self.assertFalse(any("not a usable reporting currency" in warning for warning in result.warnings))
+
+    def test_mixed_currency_market_cap_remains_unset(self) -> None:
+        result = build_participation_inputs_from_sec(
+            "ASML",
+            sample_sec_financials(financial_currency="EUR"),
+            market_capitalization=400_000_000_000.0,
+        )
+        self.assertEqual(result.inputs.total_debt, 30_000_000.0)
+        self.assertEqual(result.inputs.total_assets, 100_000_000.0)
+        self.assertIsNone(result.inputs.market_capitalization)
+        self.assertTrue(any("mixed-currency" in warning for warning in result.warnings))
 
 
 class FinancialEngineIntegrationTests(unittest.TestCase):

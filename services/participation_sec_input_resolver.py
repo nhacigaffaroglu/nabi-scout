@@ -85,8 +85,26 @@ def _optional_float(value: Any) -> Optional[float]:
         return None
 
 
+def _normalize_reporting_currency(value: Any) -> Optional[str]:
+    text = str(value or "").strip().upper()
+    if len(text) == 3 and text.isalpha():
+        return text
+    return None
+
+
+def _sec_reporting_currency(sec_financials: Mapping[str, Any]) -> Optional[str]:
+    return _normalize_reporting_currency(sec_financials.get("financial_currency"))
+
+
 def _sec_currency_usable(sec_financials: Mapping[str, Any]) -> bool:
-    currency = sec_financials.get("financial_currency")
+    return _sec_reporting_currency(sec_financials) is not None
+
+
+def market_values_share_reporting_currency(
+    reporting_currency: Optional[str],
+) -> bool:
+    """Snapshot/FMP market values are USD. Mix them only with USD SEC facts."""
+    currency = _normalize_reporting_currency(reporting_currency)
     return currency in (None, "USD")
 
 
@@ -269,10 +287,10 @@ def build_participation_inputs_from_sec(
         warnings.append("SEC annual financial periods were not found.")
 
     monetary_values_allowed = _sec_currency_usable(sec_financials)
-    if not monetary_values_allowed:
-        currency = sec_financials.get("financial_currency")
+    reporting_currency = _sec_reporting_currency(sec_financials)
+    if sec_financials and reporting_currency is None and sec_financials.get("financial_currency"):
         warnings.append(
-            f"SEC financial currency '{currency}' is not mapped in 6B.2b; "
+            f"SEC financial currency '{sec_financials.get('financial_currency')}' is not a usable reporting currency; "
             "monetary fields remain unset."
         )
 
@@ -307,6 +325,12 @@ def build_participation_inputs_from_sec(
         else None
     )
     market_cap = _optional_float(market_capitalization)
+    if market_cap is not None and not market_values_share_reporting_currency(reporting_currency):
+        warnings.append(
+            "Market capitalization currency does not match SEC reporting currency; "
+            "mixed-currency market-value inputs remain unset."
+        )
+        market_cap = None
 
     cash_and_interest_bearing = None
     cash_plus_interest_bearing = None
