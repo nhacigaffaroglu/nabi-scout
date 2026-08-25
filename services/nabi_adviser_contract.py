@@ -41,6 +41,7 @@ USER_SOURCE_COPY = (
     "AI yalnızca bu kararları açıklamak için kullanılır."
 )
 AMOUNT_CLARIFICATION = "Ne kadar yeni para dağıtmak istiyorsun?"
+PENDING_NEW_MONEY_AMOUNT = "pending_new_money_amount"
 NO_ACTIONABLE_OPPORTUNITY = "Şu anda yatırım için onaylanmış bir fırsat yok."
 NOT_A_TRADE = "Bu bir al/sat önerisi değildir."
 QUICK_QUESTIONS = (
@@ -99,7 +100,7 @@ def present_user_text(text: str) -> str:
     rendered = str(text or "")
     for code in _ACTION_REPLACE_ORDER:
         rendered = rendered.replace(code, ACTION_LABELS_TR[code])
-    return rendered
+    return rendered.replace("UNKNOWN", "belirsiz")
 
 
 def format_try_display(value: Any, currency: Optional[str] = "TRY") -> str:

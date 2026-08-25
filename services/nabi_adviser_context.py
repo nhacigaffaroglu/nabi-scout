@@ -11,6 +11,7 @@ from services.nabi_adviser_contract import (
     AMOUNT_CLARIFICATION,
     AMOUNT_REQUIRED,
     INSUFFICIENT_DATA,
+    INTENT_GENERAL_NABI,
     INTENT_GOAL_EXPLAIN,
     INTENT_NEW_MONEY_SCENARIO,
     INTENT_OPPORTUNITY_COMPARE,
@@ -23,6 +24,7 @@ from services.nabi_adviser_contract import (
     INTENT_WHY_RECOMMENDATION,
     NO_ACTIONABLE_OPPORTUNITY,
     NOT_A_TRADE,
+    PENDING_NEW_MONEY_AMOUNT,
     UNKNOWN,
     NabiAdviserContext,
     format_try_display,
@@ -202,6 +204,13 @@ def _evaluate_symbol(
         portfolio_view=portfolio_view,
     )
     return row, decision, research, fit, authority
+
+
+def _present_class(value: Any) -> str:
+    text = _text(value)
+    if not text or text == UNKNOWN:
+        return "belirsiz"
+    return text
 
 
 def _score_label(score: Any) -> str:
@@ -397,7 +406,7 @@ def _compose_comparison(
         ranked = sorted(eligible_rows, key=company_rank_key)
         leader_symbol = _text(ranked[0].get("symbol")).upper()
         leader = next(item for item in evaluated if item["symbol"] == leader_symbol)
-        class_label = leader.get("classification") or UNKNOWN
+        class_label = _present_class(leader.get("classification"))
         score = _score_label(leader.get("nabi_score"))
         score_bit = f", NABI Score {score}" if score else ""
         quality_bits.insert(
@@ -412,7 +421,7 @@ def _compose_comparison(
             other_score = _score_label(other.get("nabi_score"))
             other_bit = f", NABI Score {other_score}" if other_score else ""
             quality_bits.append(
-                f"{other['symbol']}: {other.get('classification') or UNKNOWN}{other_bit}."
+                f"{other['symbol']}: {_present_class(other.get('classification'))}{other_bit}."
             )
     elif len(eligible_rows) == 1:
         only = _text(eligible_rows[0].get("symbol")).upper()
@@ -572,6 +581,7 @@ def build_followup_state(
     rec: Mapping[str, Any] | NABIRecommendation,
     canonical_answer: str,
     new_money: Mapping[str, Any],
+    prior: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     symbols = parsed.compare_symbols or parsed.inherited_symbols
     if not symbols and parsed.focus_symbol:
@@ -584,6 +594,23 @@ def build_followup_state(
     action_code = rec.action_code if hasattr(rec, "action_code") else rec.get("action_code")
     primary_action = rec.primary_action if hasattr(rec, "primary_action") else rec.get("primary_action")
     why_now = rec.why_now if hasattr(rec, "why_now") else rec.get("why_now")
+    previous = dict(prior or {})
+    consumed = (
+        parsed.intent == INTENT_NEW_MONEY_SCENARIO
+        and bool(amount)
+        and new_money.get("status") != AMOUNT_REQUIRED
+    )
+    explicit_override = parsed.intent not in {
+        INTENT_GENERAL_NABI,
+        INTENT_WHY_RECOMMENDATION,
+        INTENT_NEW_MONEY_SCENARIO,
+    }
+    if new_money.get("status") == AMOUNT_REQUIRED:
+        pending = True
+    elif consumed or explicit_override:
+        pending = False
+    else:
+        pending = bool(previous.get(PENDING_NEW_MONEY_AMOUNT))
     return {
         "intent": parsed.intent,
         "action_code": action_code,
@@ -593,6 +620,7 @@ def build_followup_state(
         "amount": amount,
         "currency": currency,
         "canonical_answer": canonical_answer,
+        PENDING_NEW_MONEY_AMOUNT: pending,
     }
 
 

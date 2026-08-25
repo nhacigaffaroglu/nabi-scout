@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from services.nabi_adviser_answer import answer_nabi_adviser
 from services.nabi_adviser_contract import (
     AMOUNT_CLARIFICATION,
+    INTENT_GENERAL_NABI,
     INTENT_NEW_MONEY_SCENARIO,
     INTENT_OPPORTUNITY_COMPARE,
     INTENT_OPPORTUNITY_STATUS,
@@ -17,8 +18,10 @@ from services.nabi_adviser_contract import (
     INTENT_WHY_RECOMMENDATION,
     LLM_DISABLED_COPY,
     NO_ACTIONABLE_OPPORTUNITY,
+    PENDING_NEW_MONEY_AMOUNT,
+    present_user_text,
 )
-from services.nabi_adviser_intent import parse_adviser_question
+from services.nabi_adviser_intent import extract_scenario_amount, parse_adviser_question
 from services.nabi_decision_contract import (
     ACTION_CONSIDER_NEW_POSITION,
     ACTION_RESEARCH_FIRST,
@@ -187,6 +190,7 @@ class AdversarialAdviserTests(unittest.TestCase):
         self.assertIn("Portföy uyumu açısından", result.answer)
         self.assertIn("Sonuç:", result.answer)
         self.assertNotRegex(result.answer, r"\bBUY\b|\bSELL\b")
+        self.assertNotIn("UNKNOWN", result.answer)
         self.assertNotIn("MU mu CRM", CONTEXT.read_text(encoding="utf-8"))
 
     def test_e_llm_disabled_is_still_useful(self) -> None:
@@ -366,7 +370,11 @@ class LiveUatFixPackTests(unittest.TestCase):
         chat_key = "adviser_chat_user_port"
         followup_key = conversation_followup_key(chat_key)
         session[chat_key] = [{"role": "user", "content": "Bugün ne yapmalıyım?"}]
-        session[followup_key] = {"intent": INTENT_TODAY_RECOMMENDATION, "symbols": ["CRM"]}
+        session[followup_key] = {
+            "intent": INTENT_TODAY_RECOMMENDATION,
+            "symbols": ["CRM"],
+            PENDING_NEW_MONEY_AMOUNT: True,
+        }
         clear_conversation_history(session, chat_key)
         self.assertNotIn(chat_key, session)
         self.assertNotIn(followup_key, session)
@@ -403,6 +411,102 @@ class AdviserUiAndSafetyTests(unittest.TestCase):
         self.assertNotIn("Kanonik yatırım aksiyonu", ui)
         self.assertNotIn("Deterministik Wealth verileri", ui)
         self.assertNotIn("Kanonik New Money", ui)
+
+
+def _new_money_kwargs() -> dict:
+    return dict(
+        candidates=[_candidate("CRM")],
+        portfolio_view=_view([]),
+        policy=_policy(equity=70, etf=30),
+        llm_config=_cfg(usable=False),
+    )
+
+
+class NewMoneyFollowUpTests(unittest.TestCase):
+    def test_pending_100000_follow_up_allocates(self) -> None:
+        asked = answer_nabi_adviser("Yeni paramı nasıl dağıtmalıyım?", **_new_money_kwargs())
+        self.assertEqual(asked.answer, AMOUNT_CLARIFICATION)
+        self.assertTrue(asked.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+        follow = answer_nabi_adviser(
+            "100.000",
+            conversation_state=asked.followup_state,
+            **_new_money_kwargs(),
+        )
+        self.assertEqual(follow.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertEqual(follow.followup_state.get("amount"), "100000")
+        self.assertIn("100.000 TL", follow.answer)
+        self.assertIn("nakitte kalabilir", follow.answer)
+        self.assertFalse(follow.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+
+    def test_pending_100_bin_follow_up_allocates(self) -> None:
+        asked = answer_nabi_adviser("Yeni paramı nasıl dağıtmalıyım?", **_new_money_kwargs())
+        follow = answer_nabi_adviser(
+            "100 bin",
+            conversation_state=asked.followup_state,
+            **_new_money_kwargs(),
+        )
+        self.assertEqual(follow.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertEqual(follow.followup_state.get("amount"), "100000")
+        self.assertIn("100.000 TL", follow.answer)
+        self.assertFalse(follow.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+
+    def test_amount_formats(self) -> None:
+        pending = {PENDING_NEW_MONEY_AMOUNT: True}
+        cases = {
+            "100.000": "100000",
+            "100000": "100000",
+            "100.000 TL": "100000",
+            "100 bin": "100000",
+            "100 bin TL": "100000",
+            "250000": "250000",
+            "50 bin lira": "50000",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                parsed = parse_adviser_question(raw, pending)
+                self.assertEqual(parsed.intent, INTENT_NEW_MONEY_SCENARIO)
+                self.assertEqual(parsed.scenario_amount, expected)
+                self.assertEqual(parsed.scenario_currency, "TRY")
+
+    def test_standalone_amount_is_not_new_money(self) -> None:
+        parsed = parse_adviser_question("100.000")
+        self.assertEqual(parsed.intent, INTENT_GENERAL_NABI)
+        self.assertIsNone(parsed.scenario_amount)
+        result = answer_nabi_adviser("100.000", **_today_kwargs())
+        self.assertNotEqual(result.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertNotIn("nakitte kalabilir", result.answer)
+
+    def test_clear_conversation_clears_pending_amount(self) -> None:
+        session = {}
+        chat_key = "adviser_chat_user_port"
+        followup_key = conversation_followup_key(chat_key)
+        session[followup_key] = {PENDING_NEW_MONEY_AMOUNT: True, "intent": INTENT_NEW_MONEY_SCENARIO}
+        clear_conversation_history(session, chat_key)
+        self.assertNotIn(followup_key, session)
+        asked = answer_nabi_adviser("Yeni paramı nasıl dağıtmalıyım?", **_new_money_kwargs())
+        cleared = parse_adviser_question("100.000", {})
+        self.assertTrue(asked.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+        self.assertNotEqual(cleared.intent, INTENT_NEW_MONEY_SCENARIO)
+
+    def test_explicit_full_query_unchanged(self) -> None:
+        result = answer_nabi_adviser(
+            "100.000 TL ekstra param olsa ne yapmalıyım?",
+            **_new_money_kwargs(),
+        )
+        self.assertEqual(result.intent, INTENT_NEW_MONEY_SCENARIO)
+        self.assertEqual(extract_scenario_amount("100.000 TL ekstra param olsa ne yapmalıyım?")[0], "100000")
+        self.assertIn("100.000 TL", result.answer)
+        self.assertIn("nakitte kalabilir", result.answer)
+        self.assertFalse(result.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
+
+    def test_comparison_does_not_show_raw_unknown(self) -> None:
+        self.assertEqual(present_user_text("UNKNOWN"), "belirsiz")
+        result = answer_nabi_adviser(
+            "MU mu CRM mi?",
+            candidates=[_candidate("MU", score=92), _candidate("CRM", score=88)],
+            llm_config=_cfg(usable=False),
+        )
+        self.assertNotIn("UNKNOWN", result.answer)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,7 @@ def answer_nabi_adviser(
         context.current_recommendation,
         context.canonical_answer,
         context.new_money_context,
+        conversation_state,
     )
     action = str(context.current_recommendation.get("action_code") or "")
     config = llm_config or load_adviser_llm_config()
