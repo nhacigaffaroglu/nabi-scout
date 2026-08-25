@@ -75,12 +75,18 @@ def _load_sec_lookup(contact_email: str) -> dict:
 
 
 def _print_coverage(repo: UniverseExpansionRepository) -> None:
-    counts = repo.count_by_status()
-    total_static = len(dedupe_expansion_symbols())
-    print("Coverage status")
-    print(f"  Static universe size: {total_static}")
-    for status, count in sorted(counts.items()):
-        print(f"  {status}: {count}")
+    from services.universe_discovery_metrics import collect_universe_discovery_metrics
+
+    metrics = collect_universe_discovery_metrics(repo)
+    print("Discovery metrics")
+    print(f"  known_universe_size: {metrics.known_universe_size}")
+    print(f"  pending_participation: {metrics.pending_participation}")
+    print(f"  retryable: {metrics.retryable}")
+    print(f"  completed: {metrics.completed}")
+    print(f"  Uygun: {metrics.uygun}")
+    print(f"  Uygun Değil: {metrics.uygun_degil}")
+    print(f"  Kontrol Et: {metrics.kontrol_et}")
+    print(f"  static_seed_size: {len(dedupe_expansion_symbols())}")
 
 
 def _print_report(report: DailyExpansionRunReport, *, trigger: str) -> None:

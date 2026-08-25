@@ -13,6 +13,7 @@ from services.universe_expansion_contract import (
     EXPANSION_STATUS_PENDING,
     EXPANSION_STATUS_RETRYABLE,
 )
+from services.universe_listing_identity import listing_identity
 
 
 def _utcnow() -> datetime:
@@ -20,7 +21,7 @@ def _utcnow() -> datetime:
 
 
 def _normalize_symbol(symbol: str) -> str:
-    return str(symbol or "").strip().upper()
+    return listing_identity(symbol)
 
 
 def _queue_sort_key(row: Mapping[str, Any]) -> tuple[int, str]:
