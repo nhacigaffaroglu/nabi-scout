@@ -95,10 +95,12 @@ class DecisionAuditRecord:
     reason_codes: Tuple[str, ...]
     evidence_references: Tuple[Any, ...]
     persisted: bool = False
+    logical_event_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "recommendation_id": self.recommendation_id,
+            "logical_event_id": self.logical_event_id,
             "generated_at": self.generated_at,
             "symbol": self.symbol,
             "final_action": self.final_action,

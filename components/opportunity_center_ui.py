@@ -38,6 +38,7 @@ from services.opportunity_center_presentation import (
 from services.research_workflow_service import normalize_research_status
 from services.ui_formatters import format_research_status
 from services.ui_table_headers import apply_display_headers
+from services.nabi_recommendation_history_presentation import HISTORY_EMPTY, HISTORY_SECTION
 
 
 def _open_company_report(symbol: str, candidate: Optional[Mapping[str, Any]] = None) -> None:
@@ -75,6 +76,14 @@ def _render_hero(view: OpportunityCenterView) -> None:
         st.caption(f"Portfolio fit: {view.decision_brief.portfolio_fit}")
         if view.decision_brief.why:
             st.caption(f"Why / reason: {view.decision_brief.why}")
+    if view.tracking_status:
+        st.caption(view.tracking_status)
+    with st.expander(HISTORY_SECTION, expanded=False):
+        if view.history_lines:
+            for line in view.history_lines:
+                st.caption(line)
+        else:
+            st.caption(HISTORY_EMPTY)
 
 
 def _render_comparison_card(card: OpportunityComparisonCard, index: int) -> None:

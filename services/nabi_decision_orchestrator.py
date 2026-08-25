@@ -46,6 +46,7 @@ from services.nabi_decision_contract import (
     TIMING_UNKNOWN,
     TIMING_WAIT,
 )
+from services.nabi_recommendation_history_contract import logical_event_identity
 from services.nabi_opportunity_comparison import best_deploy_comparison
 from services.nabi_portfolio_fit import (
     FIT_POOR,
@@ -397,6 +398,18 @@ def build_nabi_decision_v3(
     if wealth_action in WEALTH_PRIORITY_ACTIONS:
         reason_codes = tuple(dict.fromkeys((*reason_codes, REASON_WEALTH_PRIORITY)))
 
+    logical_id = logical_event_identity(
+        symbol=symbol,
+        final_action=final_action,
+        participation_status=participation,
+        research_completeness=completeness,
+        decision_class=decision_class,
+        nabi_score=score,
+        timing_state=timing,
+        portfolio_fit=fit,
+        wealth_action=wealth_action,
+        reason_codes=reason_codes,
+    )
     audit = DecisionAuditRecord(
         recommendation_id=_audit_id(
             "|".join(
@@ -422,6 +435,7 @@ def build_nabi_decision_v3(
         reason_codes=reason_codes,
         evidence_references=refs,
         persisted=False,
+        logical_event_id=logical_id,
     )
     return NabiDecisionV3(
         decision_precedence=DECISION_PRECEDENCE,

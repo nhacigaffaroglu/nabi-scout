@@ -52,6 +52,7 @@ from services.nabi_recommendation import (
 )
 from services.nabi_decision_orchestrator import build_nabi_decision_v3
 from services.nabi_decision_contract import NabiDecisionV3
+from services.nabi_recommendation_history_presentation import present_tracking_status
 from services.wealth_goal_center_presentation import GoalCenterDashboard
 from services.wealth_performance_center_presentation import PerformanceCenterView
 
@@ -166,6 +167,7 @@ class NabiTodayExecutive:
     details: Tuple[str, ...]
     recommendation: NABIRecommendation
     decision_v3: Optional[NabiDecisionV3] = None
+    tracking_status: str = ""
 
 
 def count_qualified_opportunities(candidates: Sequence[Mapping[str, Any]]) -> int:
@@ -493,4 +495,5 @@ def build_nabi_today_executive(
         details=details,
         recommendation=recommendation,
         decision_v3=decision_v3,
+        tracking_status=present_tracking_status(None),
     )

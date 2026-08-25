@@ -37,6 +37,7 @@ from services.research_workflow_service import (
 from services.nabi_portfolio_fit import fit_label_tr
 from services.research_intelligence_contract import ResearchIntelligenceBrief
 from services.nabi_decision_contract import DecisionV3Brief
+from services.nabi_recommendation_history_presentation import TRACKING_READY
 from services.research_intelligence_service import (
     build_research_intelligence,
     present_research_intelligence_brief,
@@ -257,6 +258,8 @@ class OpportunityCenterView:
     comparison_note: Optional[str] = None
     other_opportunities: tuple[TodayOpportunityCard, ...] = ()
     decision_brief: Optional[DecisionV3Brief] = None
+    tracking_status: Optional[str] = None
+    history_lines: tuple[str, ...] = ()
 
 
 def _why(candidate: Mapping[str, Any]) -> Optional[str]:
@@ -614,6 +617,8 @@ def build_opportunity_center(
     comparisons: Sequence[Any] = (),
     comparison_note: Optional[str] = None,
     decision_brief: Optional[DecisionV3Brief] = None,
+    tracking_status: Optional[str] = None,
+    history_lines: tuple[str, ...] = (),
 ) -> OpportunityCenterView:
     candidates = overlay_candidate_rows(candidates, snapshots)
     today = present_today_opportunity_cards(candidates, snapshots=snapshots)
@@ -647,4 +652,6 @@ def build_opportunity_center(
         comparison_note=comparison_note,
         other_opportunities=other,
         decision_brief=decision_brief,
+        tracking_status=tracking_status if tracking_status is not None else TRACKING_READY,
+        history_lines=history_lines,
     )

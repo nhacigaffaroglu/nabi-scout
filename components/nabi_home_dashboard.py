@@ -98,6 +98,8 @@ def render_nabi_today(today: NabiTodayExecutive) -> None:
             )
             if today.decision_v3.why:
                 st.caption(f"Why / reason: {today.decision_v3.why}")
+        if today.tracking_status:
+            st.caption(today.tracking_status)
         cta_cols = st.columns(2)
         if cta_cols[0].button(card.wealth_cta, key="today_rec_wealth"):
             st.switch_page(WEALTH_PAGE)
