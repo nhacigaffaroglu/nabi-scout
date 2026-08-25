@@ -315,17 +315,34 @@ def _discover_axes(document: ParsedInlineXbrlDocument) -> Tuple[str, ...]:
     return tuple(ordered)
 
 
+def _preferred_evaluation(
+    evaluations: Sequence[AxisPartitionEvaluation],
+) -> Optional[AxisPartitionEvaluation]:
+    if not evaluations:
+        return None
+    for preferred in _AXIS_PRIORITY:
+        for item in evaluations:
+            if item.axis == preferred:
+                return item
+    return evaluations[0]
+
+
 def _select_axis_partition(
     evaluations: Sequence[AxisPartitionEvaluation],
 ) -> Optional[AxisPartitionEvaluation]:
     complete = [item for item in evaluations if item.status == PARTITION_COMPLETE]
-    if not complete:
-        return None
-    for preferred in _AXIS_PRIORITY:
-        for item in complete:
-            if item.axis == preferred:
-                return item
-    return complete[0]
+    if complete:
+        return _preferred_evaluation(complete)
+    # Keep extracted members visible when mapping is ambiguous. This does not
+    # promote an ambiguous partition to COMPLETE / SUCCESS.
+    ambiguous = [
+        item
+        for item in evaluations
+        if item.status == PARTITION_AMBIGUOUS and item.members
+    ]
+    if ambiguous:
+        return _preferred_evaluation(ambiguous)
+    return None
 
 
 def _compute_prohibited_revenue(items: Sequence[RevenueAttributionItem]) -> float:
@@ -355,29 +372,35 @@ def build_revenue_attribution_from_document(
         document,
         target_end=target_end,
     )
+    from services.participation_revenue_evidence_presentation import (
+        annotate_revenue_evidence,
+    )
+
     if denominator is None:
         logger.info("%s symbol=%s cik=%s", LOG_NO_REVENUE_FACTS, symbol, filing_ref.cik)
-        return RevenueAttributionView(
-            symbol=symbol,
-            cik=filing_ref.cik,
-            methodology=methodology_id,
-            methodology_version=methodology_version,
-            screening_period=target_end or "",
-            filing_accession=filing_ref.accession_number,
-            filing_form=filing_ref.form,
-            filing_date=filing_ref.filing_date,
-            filing_url=filing_ref.filing_url,
-            primary_document=filing_ref.primary_document,
-            denominator_name=denominator_concept,
-            denominator_value=None,
-            currency="USD",
-            selected_axis="",
-            partition_status=PARTITION_UNUSABLE,
-            partition_sum=None,
-            partition_coverage=None,
-            status=ATTRIBUTION_INSUFFICIENT_DATA,
-            limitations=("Missing consolidated revenue denominator.",),
-            log_reason=LOG_NO_REVENUE_FACTS,
+        return annotate_revenue_evidence(
+            RevenueAttributionView(
+                symbol=symbol,
+                cik=filing_ref.cik,
+                methodology=methodology_id,
+                methodology_version=methodology_version,
+                screening_period=target_end or "",
+                filing_accession=filing_ref.accession_number,
+                filing_form=filing_ref.form,
+                filing_date=filing_ref.filing_date,
+                filing_url=filing_ref.filing_url,
+                primary_document=filing_ref.primary_document,
+                denominator_name=denominator_concept,
+                denominator_value=None,
+                currency="USD",
+                selected_axis="",
+                partition_status=PARTITION_UNUSABLE,
+                partition_sum=None,
+                partition_coverage=None,
+                status=ATTRIBUTION_INSUFFICIENT_DATA,
+                limitations=("Missing consolidated revenue denominator.",),
+                log_reason=LOG_NO_REVENUE_FACTS,
+            )
         )
 
     axes = _discover_axes(document)
@@ -396,7 +419,9 @@ def build_revenue_attribution_from_document(
     selected = _select_axis_partition(evaluations)
 
     if selected is None:
-        best = evaluations[0] if evaluations else None
+        best = _preferred_evaluation(
+            [item for item in evaluations if item.members]
+        ) or (evaluations[0] if evaluations else None)
         status = PARTITION_UNUSABLE
         limitations = ("SEC 10-K revenue partition incomplete.",)
         log_reason = LOG_PARTITION_INCOMPLETE
@@ -414,33 +439,36 @@ def build_revenue_attribution_from_document(
                 status = best.status
                 limitations = best.limitations
         logger.info("%s symbol=%s reason=%s", LOG_ATTRIBUTION_FAIL_CLOSED, symbol, log_reason)
-        return RevenueAttributionView(
-            symbol=symbol,
-            cik=filing_ref.cik,
-            methodology=methodology_id,
-            methodology_version=methodology_version,
-            screening_period=target_end or "",
-            filing_accession=filing_ref.accession_number,
-            filing_form=filing_ref.form,
-            filing_date=filing_ref.filing_date,
-            filing_url=filing_ref.filing_url,
-            primary_document=filing_ref.primary_document,
-            denominator_name=denominator_concept,
-            denominator_value=denominator,
-            currency="USD",
-            selected_axis=best.axis if best else "",
-            partition_status=status,
-            partition_sum=best.partition_sum if best else None,
-            partition_coverage=best.coverage if best else None,
-            status=ATTRIBUTION_FAIL_CLOSED,
-            limitations=limitations,
-            log_reason=log_reason,
-            provenance=(
-                ("denominator_concept", denominator_concept),
-                ("denominator_context", denominator_context or ""),
-                ("filing_accession", filing_ref.accession_number),
-                ("filing_url", filing_ref.filing_url),
-            ),
+        return annotate_revenue_evidence(
+            RevenueAttributionView(
+                symbol=symbol,
+                cik=filing_ref.cik,
+                methodology=methodology_id,
+                methodology_version=methodology_version,
+                screening_period=target_end or "",
+                filing_accession=filing_ref.accession_number,
+                filing_form=filing_ref.form,
+                filing_date=filing_ref.filing_date,
+                filing_url=filing_ref.filing_url,
+                primary_document=filing_ref.primary_document,
+                denominator_name=denominator_concept,
+                denominator_value=denominator,
+                currency="USD",
+                selected_axis=best.axis if best else "",
+                partition_status=status,
+                partition_sum=best.partition_sum if best else None,
+                partition_coverage=best.coverage if best else None,
+                items=best.members if best else (),
+                status=ATTRIBUTION_FAIL_CLOSED,
+                limitations=limitations,
+                log_reason=log_reason,
+                provenance=(
+                    ("denominator_concept", denominator_concept),
+                    ("denominator_context", denominator_context or ""),
+                    ("filing_accession", filing_ref.accession_number),
+                    ("filing_url", filing_ref.filing_url),
+                ),
+            )
         )
 
     prohibited_revenue = _compute_prohibited_revenue(selected.members)
@@ -449,7 +477,7 @@ def build_revenue_attribution_from_document(
     )
     if any(item.mapping_status == MAPPING_AMBIGUOUS for item in selected.members):
         logger.info("%s symbol=%s", LOG_MAPPING_AMBIGUOUS, symbol)
-        return RevenueAttributionView(
+        return annotate_revenue_evidence(RevenueAttributionView(
             symbol=symbol,
             cik=filing_ref.cik,
             methodology=methodology_id,
@@ -473,7 +501,7 @@ def build_revenue_attribution_from_document(
             status=ATTRIBUTION_FAIL_CLOSED,
             limitations=("One or more revenue categories are ambiguous under MSCI taxonomy.",),
             log_reason=LOG_MAPPING_AMBIGUOUS,
-        )
+        ))
 
     from services.participation_revenue_granularity import finalize_attribution_view
 
@@ -516,7 +544,7 @@ def build_revenue_attribution_from_document(
             ("filing_url", filing_ref.filing_url),
         ),
     )
-    return finalize_attribution_view(draft)
+    return annotate_revenue_evidence(finalize_attribution_view(draft))
 
 
 def fetch_primary_filing_html(

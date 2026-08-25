@@ -45,14 +45,16 @@ _POLICY_PATH = (
 
 _PARTITION_TOLERANCE = 0.02
 
-_LIMITATION_BROAD_PARTITION_TR = (
+LIMITATION_BROAD_PARTITION = (
     "Gelir kırılımı toplam geliri kapsıyor ancak faaliyetleri katılım kriterleri "
     "açısından yeterli ayrıntıda ayırmıyor."
 )
-_LIMITATION_MATERIAL_OTHER_TR = (
+LIMITATION_MATERIAL_OTHER = (
     "Gelir kırılımında önemli 'Diğer' kalemi bulunduğu için otomatik sıfır "
     "yasaklı gelir sonucu üretilemedi."
 )
+_LIMITATION_BROAD_PARTITION_TR = LIMITATION_BROAD_PARTITION
+_LIMITATION_MATERIAL_OTHER_TR = LIMITATION_MATERIAL_OTHER
 
 
 @dataclass(frozen=True)

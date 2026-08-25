@@ -37,6 +37,12 @@ class RevenueAttributionItem:
     context_id: str = ""
     unit: str = ""
     currency: str = "USD"
+    period: str = ""
+    accession: str = ""
+    granularity: str = ""
+    included_in_npr_calculation: bool = False
+    included_in_safe_zero_partition: bool = False
+    ambiguity_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

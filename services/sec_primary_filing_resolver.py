@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 
-_ANNUAL_FORMS = frozenset({"10-K", "10-K/A"})
+_ANNUAL_FORMS = frozenset({"10-K", "10-K/A", "20-F", "40-F"})
 _REJECT_FORMS = frozenset({"10-Q", "10-Q/A", "8-K"})
 
 
@@ -109,6 +109,64 @@ def resolve_latest_annual_filing(
         cik=cik_text,
         form=form,
         fiscal_year=_parse_fiscal_year(report_date, filing_date),
+        filing_date=filing_date,
+        accession_number=accession,
+        primary_document=primary_document,
+        filing_url=build_filing_url(
+            cik=cik_text,
+            accession=accession,
+            primary_document=primary_document,
+        ),
+        retrieved_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    )
+
+
+def resolve_annual_filing_for_period(
+    submissions: Mapping[str, Any],
+    *,
+    cik: int | str,
+    preferred_period_end: Optional[str] = None,
+    preferred_accession: Optional[str] = None,
+) -> Optional[SECPrimaryFilingRef]:
+    """Prefer the annual filing whose report date or accession matches the
+    canonical financial period. Does not invent a filing when none exist.
+    """
+    latest = resolve_latest_annual_filing(submissions, cik=cik)
+    if latest is None:
+        return None
+    preferred_end = str(preferred_period_end or "").strip()[:10]
+    preferred_accn = str(preferred_accession or "").strip()
+    if not preferred_end and not preferred_accn:
+        return latest
+
+    allowed_forms = _ANNUAL_FORMS
+    matches: list[Dict[str, Any]] = []
+    for row in _iter_recent_filings(submissions):
+        form = str(row.get("form") or "").strip()
+        if form not in allowed_forms:
+            continue
+        accession = str(row.get("accessionNumber") or "").strip()
+        report_date = str(row.get("reportDate") or "").strip()[:10]
+        if preferred_accn and accession == preferred_accn:
+            matches.append(row)
+            continue
+        if preferred_end and report_date == preferred_end:
+            matches.append(row)
+    if not matches:
+        return latest
+    matches.sort(key=lambda row: str(row.get("filingDate") or ""), reverse=True)
+    selected = matches[0]
+    cik_text = _normalize_cik(cik)
+    accession = str(selected.get("accessionNumber") or "")
+    primary_document = str(selected.get("primaryDocument") or "")
+    filing_date = str(selected.get("filingDate") or "")
+    return SECPrimaryFilingRef(
+        cik=cik_text,
+        form=str(selected.get("form") or "10-K"),
+        fiscal_year=_parse_fiscal_year(
+            str(selected.get("reportDate") or "") or None,
+            filing_date,
+        ),
         filing_date=filing_date,
         accession_number=accession,
         primary_document=primary_document,
