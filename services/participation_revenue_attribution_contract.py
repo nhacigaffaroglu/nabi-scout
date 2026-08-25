@@ -43,6 +43,9 @@ class RevenueAttributionItem:
     included_in_npr_calculation: bool = False
     included_in_safe_zero_partition: bool = False
     ambiguity_reason: str = ""
+    semantic_type: str = ""
+    semantic_reason: str = ""
+    in_selected_partition: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -68,6 +71,7 @@ class RevenueAttributionView:
     partition_sum: Optional[float]
     partition_coverage: Optional[float]
     items: Tuple[RevenueAttributionItem, ...] = field(default_factory=tuple)
+    supporting_items: Tuple[RevenueAttributionItem, ...] = field(default_factory=tuple)
     prohibited_revenue: Optional[float] = None
     prohibited_ratio: Optional[float] = None
     status: str = ATTRIBUTION_INSUFFICIENT_DATA

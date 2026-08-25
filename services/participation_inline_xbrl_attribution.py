@@ -26,6 +26,15 @@ from services.participation_revenue_attribution_contract import (
     RevenueAttributionItem,
     RevenueAttributionView,
 )
+from services.participation_revenue_semantic_type import (
+    SEMANTIC_BROAD_OPERATING_SEGMENT,
+    SEMANTIC_CUSTOMER_INDUSTRY_REVENUE,
+    SEMANTIC_FINANCE_INTEREST_INCOME,
+    SEMANTIC_GEOGRAPHIC_REVENUE,
+    SEMANTIC_MERCHANDISE_CATEGORY,
+    classify_revenue_semantic_type,
+    concept_is_finance_interest_income,
+)
 from services.sec_filing_cache import (
     AttributionCacheKey,
     FilingCacheKey,
@@ -354,6 +363,91 @@ def _compute_prohibited_revenue(items: Sequence[RevenueAttributionItem]) -> floa
     return total
 
 
+_SUPPORTING_SEMANTIC_TYPES = frozenset(
+    {
+        SEMANTIC_BROAD_OPERATING_SEGMENT,
+        SEMANTIC_CUSTOMER_INDUSTRY_REVENUE,
+        SEMANTIC_GEOGRAPHIC_REVENUE,
+        SEMANTIC_MERCHANDISE_CATEGORY,
+        SEMANTIC_FINANCE_INTEREST_INCOME,
+    }
+)
+
+
+def _extract_finance_interest_items(
+    document: ParsedInlineXbrlDocument,
+    *,
+    target_end: Optional[str],
+    filing_ref: SECPrimaryFilingRef,
+) -> Tuple[RevenueAttributionItem, ...]:
+    selected: list[RevenueAttributionItem] = []
+    seen: set[tuple] = set()
+    for fact in document.facts:
+        if not concept_is_finance_interest_income(fact.concept):
+            continue
+        context = document.contexts.get(fact.context_id)
+        if context is None or not _context_matches_period(context, target_end):
+            continue
+        if context.has_segment_dimension or context.instant:
+            continue
+        if fact.normalized_value is None:
+            continue
+        key = (fact.concept_local.lower(), fact.normalized_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        mapping = map_revenue_member_to_msci(fact.concept_local)
+        selected.append(
+            RevenueAttributionItem(
+                reported_label=fact.concept_local,
+                normalized_label=fact.concept_local.lower(),
+                concept=fact.concept,
+                axis="",
+                member="",
+                amount=float(fact.normalized_value),
+                mapping_status=mapping.mapping_status,
+                msci_category=mapping.msci_category,
+                mapping_rule_id=mapping.rule_id,
+                rationale=mapping.rationale,
+                source=filing_ref.filing_url,
+                context_id=fact.context_id,
+                unit=fact.unit_ref,
+                currency=_currency_from_unit(fact.unit_ref, document.units),
+                in_selected_partition=False,
+            )
+        )
+    return tuple(selected)
+
+
+def _collect_supporting_items(
+    evaluations: Sequence[AxisPartitionEvaluation],
+    *,
+    selected_axis: str,
+    document: ParsedInlineXbrlDocument,
+    target_end: Optional[str],
+    filing_ref: SECPrimaryFilingRef,
+) -> Tuple[RevenueAttributionItem, ...]:
+    supporting: list[RevenueAttributionItem] = []
+    for evaluation in evaluations:
+        if evaluation.axis == selected_axis:
+            continue
+        for item in evaluation.members:
+            semantic = classify_revenue_semantic_type(item)
+            if (
+                semantic.semantic_type in _SUPPORTING_SEMANTIC_TYPES
+                or evaluation.axis == "ProductOrServiceAxis"
+            ):
+                supporting.append(item)
+    supporting.extend(
+        _extract_finance_interest_items(
+            document,
+            target_end=target_end,
+            filing_ref=filing_ref,
+        )
+    )
+    return tuple(supporting)
+
+
 def build_revenue_attribution_from_document(
     document: ParsedInlineXbrlDocument,
     *,
@@ -438,6 +532,13 @@ def build_revenue_attribution_from_document(
             elif best is not None:
                 status = best.status
                 limitations = best.limitations
+        supporting = _collect_supporting_items(
+            evaluations,
+            selected_axis=best.axis if best else "",
+            document=document,
+            target_end=target_end,
+            filing_ref=filing_ref,
+        )
         logger.info("%s symbol=%s reason=%s", LOG_ATTRIBUTION_FAIL_CLOSED, symbol, log_reason)
         return annotate_revenue_evidence(
             RevenueAttributionView(
@@ -459,6 +560,7 @@ def build_revenue_attribution_from_document(
                 partition_sum=best.partition_sum if best else None,
                 partition_coverage=best.coverage if best else None,
                 items=best.members if best else (),
+                supporting_items=supporting,
                 status=ATTRIBUTION_FAIL_CLOSED,
                 limitations=limitations,
                 log_reason=log_reason,
@@ -471,6 +573,13 @@ def build_revenue_attribution_from_document(
             )
         )
 
+    supporting = _collect_supporting_items(
+        evaluations,
+        selected_axis=selected.axis,
+        document=document,
+        target_end=target_end,
+        filing_ref=filing_ref,
+    )
     prohibited_revenue = _compute_prohibited_revenue(selected.members)
     prohibited_ratio = (
         prohibited_revenue / denominator if denominator > 0 else None
@@ -496,6 +605,7 @@ def build_revenue_attribution_from_document(
             partition_sum=selected.partition_sum,
             partition_coverage=selected.coverage,
             items=selected.members,
+            supporting_items=supporting,
             prohibited_revenue=prohibited_revenue,
             prohibited_ratio=prohibited_ratio,
             status=ATTRIBUTION_FAIL_CLOSED,
@@ -531,6 +641,7 @@ def build_revenue_attribution_from_document(
         partition_sum=selected.partition_sum,
         partition_coverage=selected.coverage,
         items=selected.members,
+        supporting_items=supporting,
         prohibited_revenue=prohibited_revenue,
         prohibited_ratio=prohibited_ratio,
         status=ATTRIBUTION_SUCCESS,

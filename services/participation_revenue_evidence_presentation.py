@@ -16,6 +16,11 @@ from services.participation_revenue_attribution_contract import (
     RevenueAttributionItem,
     RevenueAttributionView,
 )
+from services.participation_revenue_semantic_type import (
+    classify_revenue_semantic_type,
+    semantic_type_blocks_safe_zero,
+)
+
 from services.participation_revenue_granularity import (
     GRANULARITY_BROAD_OPERATING_SEGMENT,
     GRANULARITY_GEOGRAPHIC,
@@ -141,50 +146,84 @@ def build_revenue_evidence_coverage(
     )
 
 
+def _annotate_item(
+    item: RevenueAttributionItem,
+    *,
+    view: RevenueAttributionView,
+    safe_zero_allowed: bool,
+    in_selected_partition: bool,
+) -> RevenueAttributionItem:
+    granularity = item.granularity or classify_member_granularity(
+        item.reported_label,
+        axis=item.axis or view.selected_axis,
+    ).granularity
+    prohibited = item.mapping_status in PROHIBITED_MAPPING_STATUSES
+    ambiguous = item.mapping_status == MAPPING_AMBIGUOUS
+    semantic = classify_revenue_semantic_type(item)
+    selected_safe_zero = bool(
+        in_selected_partition
+        and safe_zero_allowed
+        and not prohibited
+        and not ambiguous
+        and not semantic_type_blocks_safe_zero(semantic.semantic_type)
+    )
+    return replace(
+        item,
+        granularity=granularity,
+        included_in_npr_calculation=bool(in_selected_partition and prohibited),
+        included_in_safe_zero_partition=selected_safe_zero,
+        ambiguity_reason=(
+            classify_ambiguity_reason(item, granularity=granularity)
+            if ambiguous
+            else ""
+        ),
+        period=item.period or view.screening_period,
+        accession=item.accession or view.filing_accession,
+        semantic_type=semantic.semantic_type,
+        semantic_reason=semantic.semantic_reason,
+        in_selected_partition=in_selected_partition,
+    )
+
+
 def annotate_revenue_evidence(view: RevenueAttributionView) -> RevenueAttributionView:
-    """Attach audit flags. Does not change mapping or conclusion fields."""
+    """Attach audit flags and semantic types. Does not change mapping or NPR math."""
     safe_zero_allowed = can_conclude_zero_prohibited_revenue(view).allowed
-    annotated: list[RevenueAttributionItem] = []
-    for item in view.items:
-        granularity = item.granularity or classify_member_granularity(
-            item.reported_label,
-            axis=item.axis or view.selected_axis,
-        ).granularity
-        prohibited = item.mapping_status in PROHIBITED_MAPPING_STATUSES
-        ambiguous = item.mapping_status == MAPPING_AMBIGUOUS
-        annotated.append(
-            replace(
-                item,
-                granularity=granularity,
-                included_in_npr_calculation=prohibited,
-                included_in_safe_zero_partition=bool(
-                    safe_zero_allowed and not prohibited and not ambiguous
-                ),
-                ambiguity_reason=(
-                    classify_ambiguity_reason(item, granularity=granularity)
-                    if ambiguous
-                    else ""
-                ),
-                period=item.period or view.screening_period,
-                accession=item.accession or view.filing_accession,
-            )
+    annotated = tuple(
+        _annotate_item(
+            item,
+            view=view,
+            safe_zero_allowed=safe_zero_allowed,
+            in_selected_partition=True,
         )
+        for item in view.items
+    )
+    supporting = tuple(
+        _annotate_item(
+            item,
+            view=view,
+            safe_zero_allowed=False,
+            in_selected_partition=False,
+        )
+        for item in view.supporting_items
+    )
     partition_granularity = view.partition_granularity or partition_granularity_from_items(
         annotated,
         selected_axis=view.selected_axis,
     )
     return replace(
         view,
-        items=tuple(annotated),
+        items=annotated,
+        supporting_items=supporting,
         partition_granularity=partition_granularity,
     )
 
 
 def retained_item_records(
     items: Sequence[RevenueAttributionItem],
+    supporting_items: Sequence[RevenueAttributionItem] = (),
 ) -> Tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
-    for item in items:
+    for item in (*items, *supporting_items):
         rows.append(
             {
                 "label": item.reported_label,
@@ -203,6 +242,9 @@ def retained_item_records(
                 "included_in_npr_calculation": item.included_in_npr_calculation,
                 "included_in_safe_zero_partition": item.included_in_safe_zero_partition,
                 "ambiguity_reason": item.ambiguity_reason,
+                "semantic_type": item.semantic_type,
+                "semantic_reason": item.semantic_reason,
+                "in_selected_partition": item.in_selected_partition,
             }
         )
     return tuple(rows)

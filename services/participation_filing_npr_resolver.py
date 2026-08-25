@@ -289,7 +289,12 @@ def resolve_npr_from_cached_filing(
             attribution,
             canonical_revenue=canonical_revenue,
         ),
-        retained_items=retained_item_records(attribution.items) if attribution else (),
+        retained_items=retained_item_records(
+            attribution.items,
+            attribution.supporting_items,
+        )
+        if attribution
+        else (),
     )
 
 

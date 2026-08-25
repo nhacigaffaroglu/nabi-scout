@@ -16,6 +16,10 @@ from services.participation_revenue_attribution_contract import (
     RevenueAttributionItem,
     RevenueAttributionView,
 )
+from services.participation_revenue_semantic_type import (
+    classify_revenue_semantic_type,
+    semantic_type_blocks_safe_zero,
+)
 
 GRANULARITY_ACTIVITY_SPECIFIC = "ACTIVITY_SPECIFIC"
 GRANULARITY_PRODUCT_SERVICE_SPECIFIC = "PRODUCT_SERVICE_SPECIFIC"
@@ -264,6 +268,22 @@ def can_conclude_zero_prohibited_revenue(
 
     if any(item.mapping_status == MAPPING_AMBIGUOUS for item in view.items):
         limitations.append("One or more revenue categories are ambiguous under MSCI taxonomy.")
+        return SafeZeroEvaluation(
+            allowed=False,
+            partition_granularity=partition_granularity,
+            attribution_quality=ATTRIBUTION_QUALITY_INSUFFICIENT,
+            limitations=tuple(limitations),
+        )
+
+    blocked_semantic = [
+        classify_revenue_semantic_type(item).semantic_type
+        for item in view.items
+        if semantic_type_blocks_safe_zero(classify_revenue_semantic_type(item).semantic_type)
+    ]
+    if blocked_semantic:
+        limitations.append(
+            "Revenue evidence semantic type is not eligible for a zero prohibited-revenue conclusion."
+        )
         return SafeZeroEvaluation(
             allowed=False,
             partition_granularity=partition_granularity,
