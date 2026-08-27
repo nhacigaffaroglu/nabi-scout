@@ -108,7 +108,7 @@ def _canonical_static_fact(identifier: str, identifier_type: str) -> Optional[Se
     return None
 
 
-def _listing_fact(row: Mapping[str, Any]) -> Optional[SecurityFact]:
+def listing_row_to_fact(row: Mapping[str, Any]) -> Optional[SecurityFact]:
     identity = listing_index_key(row)
     instrument = listing_instrument_type(row)
     if not identity or not instrument:
@@ -168,15 +168,15 @@ class SecurityMasterService:
         return self.repo.upsert_fact(normalized)
 
     def ingest_listing_facts(self, rows: Sequence[Mapping[str, Any]]) -> int:
-        inserted = 0
+        facts = []
         for row in rows:
-            fact = _listing_fact(row)
+            fact = listing_row_to_fact(row)
             if fact is None:
                 continue
-            self.upsert_security_fact(fact)
-            inserted += 1
+            facts.append(fact)
+        self.repo.persist_facts(facts)
         self.register_listing_index(rows)
-        return inserted
+        return len(facts)
 
     def ingest_provider_explicit_fact(
         self,
@@ -233,7 +233,7 @@ class SecurityMasterService:
         candidates = list(self.get_security_facts(ident, identifier_type=itype))
         sources = {row.source for row in candidates}
         listing_row = self.listing_index.get(ident) if itype == IDENTIFIER_TYPE_TICKER else None
-        listing_fact = _listing_fact(listing_row) if listing_row else None
+        listing_fact = listing_row_to_fact(listing_row) if listing_row else None
         if listing_fact is not None and SOURCE_US_LISTING not in sources:
             candidates.append(listing_fact)
         if self.include_canonical_static and SOURCE_CANONICAL_STATIC not in sources:
