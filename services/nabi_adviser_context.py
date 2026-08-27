@@ -314,6 +314,9 @@ _LAYER_LABELS_TR = {
     "etf": "ETF",
     "sukuk": "sukuk",
     "cash": "nakit",
+    "fixed_income": "sabit getirili",
+    "real_estate": "gayrimenkul",
+    "commodity": "emtia",
 }
 
 
@@ -353,6 +356,12 @@ def _compose_new_money(new_money: Mapping[str, Any]) -> str:
     if fx_blocked:
         return (
             "Dağılım hesaplanamadı çünkü gerekli kur dönüşümü mevcut değil. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if "EXPOSURE_CLASSIFICATION_INCOMPLETE" in limitations:
+        return (
+            "Ekonomik maruziyet sınıflandırması tamamlanmadığı için yeni para "
+            "güvenle dağıtılamadı. "
             f"{residual or amount} nakitte tutulabilir."
         )
     unfilled = [
@@ -703,6 +712,7 @@ def build_nabi_adviser_context(
     positions: Sequence[Any] = (),
     theses: Optional[Mapping[str, Any]] = None,
     conversation_state: Optional[Mapping[str, Any]] = None,
+    fund_snapshots: Optional[Mapping[str, Any]] = None,
 ) -> NabiAdviserContext:
     prior = dict(conversation_state or {})
     parsed = parse_adviser_question(question, prior)
@@ -809,6 +819,7 @@ def build_nabi_adviser_context(
                 conversion=conversion,
                 assets=assets,
                 positions=positions,
+                fund_snapshots=fund_snapshots,
             )
             new_money = _allocation_dict(scenario_plan)
     else:

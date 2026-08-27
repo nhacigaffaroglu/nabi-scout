@@ -21,6 +21,8 @@ from services.participation_filter_service import (
 )
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.portfolio_allocation_intelligence import (
+    AllocationBucket,
+    AllocationCompleteness,
     AllocationDimension,
     AllocationIntelligenceView,
     AllocationPolicy,
@@ -30,6 +32,13 @@ from services.portfolio_allocation_intelligence import (
     _classify,
     _map_asset_class,
     _map_market,
+)
+from services.portfolio_economic_exposure import (
+    EconomicExposureBucket,
+    InstrumentExposureView,
+    PortfolioEconomicExposureView,
+    build_economic_exposure,
+    classify_instrument_exposure,
 )
 from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
@@ -253,6 +262,101 @@ def _layer_of(
     return None
 
 
+def economic_exposure_layers(instrument: InstrumentExposureView) -> Tuple[str, ...]:
+    """Sleeves supported by canonical exposure slices. Unknown is never guessed."""
+    layers: list[str] = []
+    for row in instrument.economic_exposures:
+        bucket = str(row.exposure_bucket or "").strip().lower()
+        if not bucket or bucket == EconomicExposureBucket.UNKNOWN.value:
+            continue
+        if float(row.weight_pct or 0) <= 0:
+            continue
+        if bucket not in layers:
+            layers.append(bucket)
+    return tuple(layers)
+
+
+def _allocation_buckets_from_exposure(
+    view: PortfolioEconomicExposureView,
+) -> Tuple[AllocationBucket, ...]:
+    rows: list[AllocationBucket] = []
+    for bucket in view.buckets:
+        if not bucket.contributing_symbols and not bucket.unpriced_symbols:
+            continue
+        rows.append(
+            AllocationBucket(
+                bucket_id=bucket.bucket_id,
+                dimension=AllocationDimension.ECONOMIC_EXPOSURE,
+                label=bucket.bucket_id,
+                observable_market_value=bucket.observable_market_value,
+                observable_weight_pct=bucket.observable_weight_pct,
+                weight_scope=AllocationCompleteness.OBSERVABLE_ALLOCATION,
+                position_count=len(bucket.contributing_symbols) + len(bucket.unpriced_symbols),
+                symbols=bucket.contributing_symbols,
+                unpriced_symbols=bucket.unpriced_symbols,
+                valuation_complete=not bucket.unpriced_symbols,
+                limitations=bucket.limitations,
+            )
+        )
+    return tuple(rows)
+
+
+def _synthetic_instrument_row(
+    symbol: str,
+    *,
+    asset_class: str,
+    currency: str,
+) -> PositionValuationRow:
+    return PositionValuationRow(
+        position_id=f"nm-{symbol}",
+        account_id="",
+        asset_id="",
+        symbol=symbol,
+        asset_class=asset_class,
+        account_name="",
+        quantity=0,
+        average_cost=0,
+        valuation_currency=currency,
+        price=None,
+        price_available=False,
+        market_value=None,
+        cost_basis=0,
+        unrealized_pl=None,
+        weight_pct=None,
+        is_cash=str(asset_class or "").strip().lower() == "cash",
+        included_in_base_totals=False,
+    )
+
+
+def _resolve_layers(
+    *,
+    dimension: AllocationDimension,
+    symbol: str,
+    asset_class: str,
+    market: str,
+    position: Any = None,
+    instrument: Optional[InstrumentExposureView] = None,
+    fund_snapshots: Optional[Mapping[str, Any]] = None,
+    canonical_mappings: Optional[Mapping[str, Any]] = None,
+    exposure_overrides: Optional[Mapping[str, Any]] = None,
+) -> Tuple[str, ...]:
+    if dimension != AllocationDimension.ECONOMIC_EXPOSURE:
+        layer = _layer_of(dimension=dimension, asset_class=asset_class, market=market)
+        return (layer,) if layer else ()
+    view = instrument
+    if view is None:
+        row = position or _synthetic_instrument_row(
+            symbol, asset_class=asset_class, currency="USD"
+        )
+        view = classify_instrument_exposure(
+            row,
+            user_overrides=exposure_overrides,
+            canonical_mappings=canonical_mappings,
+            fund_snapshots=fund_snapshots,
+        )
+    return economic_exposure_layers(view)
+
+
 def _existing_positions(view: PortfolioIntelligenceView) -> Tuple[PositionValuationRow, ...]:
     seen: set[str] = set()
     rows: list[PositionValuationRow] = []
@@ -290,6 +394,9 @@ def allocate_new_money(
     minimum_trade_amount: Decimal | float | int | str = 0,
     commission: Decimal | float | int | str = 0,
     allocation: Optional[AllocationIntelligenceView] = None,
+    fund_snapshots: Optional[Mapping[str, Any]] = None,
+    canonical_mappings: Optional[Mapping[str, Any]] = None,
+    exposure_overrides: Optional[Mapping[str, Any]] = None,
 ) -> AllocationPlan:
     """Return a proposed plan only. Never writes or fetches."""
     amount = Decimal(str(available_amount))
@@ -310,15 +417,32 @@ def allocate_new_money(
             limitations=("NON_POSITIVE_AMOUNT",),
         )
 
-    intelligence = allocation or build_allocation_intelligence(
-        portfolio_view,
-        policy=policy,
-        contribution_amount=amount,
-        contribution_currency=currency,
-        conversion=conversion,
-        assets=assets,
-        positions=positions,
-    )
+    exposure_view: Optional[PortfolioEconomicExposureView] = None
+    if allocation is not None:
+        intelligence = allocation
+    else:
+        exposure_buckets = None
+        preview = _primary_dimension(policy) if policy_is_configured(policy) else None
+        if preview == AllocationDimension.ECONOMIC_EXPOSURE:
+            exposure_view = build_economic_exposure(
+                portfolio_view,
+                fund_snapshots=fund_snapshots,
+                user_overrides=exposure_overrides,
+                canonical_mappings=canonical_mappings,
+                assets=assets,
+                positions=positions,
+            )
+            exposure_buckets = _allocation_buckets_from_exposure(exposure_view)
+        intelligence = build_allocation_intelligence(
+            portfolio_view,
+            policy=policy,
+            contribution_amount=amount,
+            contribution_currency=currency,
+            conversion=conversion,
+            assets=assets,
+            positions=positions,
+            exposure_buckets=exposure_buckets,
+        )
     limitations.extend(intelligence.limitations)
     if not policy_is_configured(policy):
         return AllocationPlan(
@@ -348,11 +472,24 @@ def allocate_new_money(
         for row in intelligence.drift
         if row.dimension == dimension
     }
-    bucket_value = {
-        row.bucket_id: Decimal(str(row.observable_market_value or 0))
-        for row in intelligence.asset_class_buckets + intelligence.market_buckets
-        if row.dimension == dimension
-    }
+    if dimension == AllocationDimension.ECONOMIC_EXPOSURE and exposure_view is not None:
+        bucket_value = {
+            row.bucket_id: Decimal(str(row.observable_market_value or 0))
+            for row in exposure_view.buckets
+        }
+    elif dimension == AllocationDimension.ECONOMIC_EXPOSURE:
+        total_obs = Decimal(str(intelligence.observable_total_market_value or 0))
+        bucket_value = {
+            row.bucket_id: (total_obs * Decimal(str(row.observable_weight_pct)) / Decimal("100"))
+            for row in intelligence.drift
+            if row.dimension == dimension and row.observable_weight_pct is not None
+        }
+    else:
+        bucket_value = {
+            row.bucket_id: Decimal(str(row.observable_market_value or 0))
+            for row in intelligence.asset_class_buckets + intelligence.market_buckets
+            if row.dimension == dimension
+        }
     target_by_bucket = {
         row.bucket_id: Decimal(str(row.target_weight_pct))
         for row in policy.targets
@@ -384,6 +521,11 @@ def allocate_new_money(
         for raw in candidates
         if str(raw.get("symbol") or "").strip()
     }
+    instruments_by_symbol = {
+        str(row.symbol or "").strip().upper(): row
+        for row in (exposure_view.instruments if exposure_view is not None else ())
+        if str(row.symbol or "").strip()
+    }
     existing_mv: Dict[str, Decimal] = {}
     existing_secs: list[_Security] = []
     for row in _existing_positions(portfolio_view):
@@ -408,19 +550,20 @@ def allocate_new_money(
         asset_class, market = _classify(
             row, asset_by_id=asset_by_id, asset_by_symbol=asset_by_symbol
         )
-        layer = _layer_of(dimension=dimension, asset_class=asset_class, market=market)
-        if layer is None:
+        layers = _resolve_layers(
+            dimension=dimension,
+            symbol=symbol,
+            asset_class=asset_class,
+            market=market,
+            position=row,
+            instrument=instruments_by_symbol.get(symbol),
+            fund_snapshots=fund_snapshots,
+            canonical_mappings=canonical_mappings,
+            exposure_overrides=exposure_overrides,
+        )
+        if not layers:
             skipped.append(
                 AllocationSkip(symbol, REASON_DATA_INCOMPLETE, "Katman sınıflandırılamadı.")
-            )
-            continue
-        if layer in overweight:
-            skipped.append(
-                AllocationSkip(
-                    symbol,
-                    REASON_OVERWEIGHT_LAYER,
-                    f"{layer} katmanı hedefte veya üzerinde; yeni para varsayılan olarak eklenmez.",
-                )
             )
             continue
         price = _valid_price(row.price) if row.price_available else None
@@ -441,18 +584,32 @@ def allocate_new_money(
             )
             continue
         existing_mv[symbol] = existing_mv.get(symbol, Decimal("0")) + (mv or Decimal("0"))
-        existing_secs.append(
-            _Security(
-                symbol=symbol,
-                existing=True,
-                layer=layer,
-                decision=None,
-                price=price,
-                price_currency=normalize_currency(row.valuation_currency),
-                asset_class=asset_class,
-                whole_share=_whole_share_required(asset_class),
+        mapped = False
+        for layer in layers:
+            if layer in overweight:
+                skipped.append(
+                    AllocationSkip(
+                        symbol,
+                        REASON_OVERWEIGHT_LAYER,
+                        f"{layer} katmanı hedefte veya üzerinde; yeni para varsayılan olarak eklenmez.",
+                    )
+                )
+                continue
+            existing_secs.append(
+                _Security(
+                    symbol=symbol,
+                    existing=True,
+                    layer=layer,
+                    decision=None,
+                    price=price,
+                    price_currency=normalize_currency(row.valuation_currency),
+                    asset_class=asset_class,
+                    whole_share=_whole_share_required(asset_class),
+                )
             )
-        )
+            mapped = True
+        if not mapped:
+            continue
 
     new_secs: list[_Security] = []
     for raw in candidates:
@@ -486,33 +643,47 @@ def allocate_new_money(
             continue
         asset_class = _candidate_asset_class(raw.get("asset_type") or raw.get("asset_class"))
         market = _map_market(raw.get("market"))
-        layer = _layer_of(dimension=dimension, asset_class=asset_class, market=market)
-        if layer is None:
+        layers = _resolve_layers(
+            dimension=dimension,
+            symbol=symbol,
+            asset_class=asset_class,
+            market=market,
+            instrument=instruments_by_symbol.get(symbol),
+            fund_snapshots=fund_snapshots,
+            canonical_mappings=canonical_mappings,
+            exposure_overrides=exposure_overrides,
+        )
+        if not layers:
             skipped.append(
                 AllocationSkip(symbol, REASON_DATA_INCOMPLETE, "Yeni fırsat katmanı belirsiz.")
             )
             continue
-        if layer in overweight:
-            skipped.append(
-                AllocationSkip(
-                    symbol,
-                    REASON_OVERWEIGHT_LAYER,
-                    f"{layer} katmanı hedefte veya üzerinde.",
+        mapped = False
+        for layer in layers:
+            if layer in overweight:
+                skipped.append(
+                    AllocationSkip(
+                        symbol,
+                        REASON_OVERWEIGHT_LAYER,
+                        f"{layer} katmanı hedefte veya üzerinde.",
+                    )
+                )
+                continue
+            new_secs.append(
+                _Security(
+                    symbol=symbol,
+                    existing=False,
+                    layer=layer,
+                    decision=_norm_decision(raw.get("decision")),
+                    price=price,
+                    price_currency=normalize_currency(raw.get("currency") or currency),
+                    asset_class=asset_class,
+                    whole_share=_whole_share_required(asset_class),
                 )
             )
+            mapped = True
+        if not mapped:
             continue
-        new_secs.append(
-            _Security(
-                symbol=symbol,
-                existing=False,
-                layer=layer,
-                decision=_norm_decision(raw.get("decision")),
-                price=price,
-                price_currency=normalize_currency(raw.get("currency") or currency),
-                asset_class=asset_class,
-                whole_share=_whole_share_required(asset_class),
-            )
-        )
 
     by_layer: Dict[str, list[_Security]] = {}
     for sec in existing_secs + new_secs:
@@ -657,17 +828,11 @@ def allocate_new_money(
             )
             return False
         spent = qty * unit + fee
-        if spent > remaining or spent > need or spent > headroom:
-            if sec.whole_share:
-                if qty * unit + fee > headroom:
-                    skipped.append(
-                        AllocationSkip(
-                            sec.symbol,
-                            REASON_CONCENTRATION_LIMIT,
-                            "Tek pozisyon yoğunluk eşiği aşılacağı için eklenmez.",
-                        )
-                    )
-                else:
+        cap = min(remaining, need, headroom)
+        if spent > cap:
+            affordable = cap - fee
+            if affordable <= 0:
+                if sec.whole_share:
                     skipped.append(
                         AllocationSkip(
                             sec.symbol,
@@ -675,7 +840,33 @@ def allocate_new_money(
                             "Tam pay için nakit yetmiyor.",
                         )
                     )
-            return False
+                return False
+            qty = affordable / unit
+            if sec.whole_share:
+                qty = Decimal(qty.to_integral_value(rounding=ROUND_DOWN))
+            if qty <= 0:
+                if sec.whole_share:
+                    if qty * unit + fee > headroom:
+                        skipped.append(
+                            AllocationSkip(
+                                sec.symbol,
+                                REASON_CONCENTRATION_LIMIT,
+                                "Tek pozisyon yoğunluk eşiği aşılacağı için eklenmez.",
+                            )
+                        )
+                    else:
+                        skipped.append(
+                            AllocationSkip(
+                                sec.symbol,
+                                REASON_INSUFFICIENT_CASH,
+                                "Tam pay için nakit yetmiyor.",
+                            )
+                        )
+                return False
+            spent = qty * unit + fee
+            if spent > cap:
+                spent = cap
+                qty = (spent - fee) / unit
         if min_trade > 0 and spent < min_trade:
             skipped.append(
                 AllocationSkip(

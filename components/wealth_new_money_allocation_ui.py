@@ -221,6 +221,18 @@ def render_new_money_allocation(
         conv = conversion
         if conv is None:
             conv = _planning_conversion(plan, fx_schedule, as_of_date)
+        from components.portfolio_economic_exposure_ui import load_persisted_fund_snapshots
+
+        fund_symbols = [
+            str(row.symbol or "").strip().upper()
+            for row in (
+                list(portfolio_view.priced_positions)
+                + list(getattr(portfolio_view, "unpriced_positions", ()) or [])
+                + list(getattr(portfolio_view, "foreign_currency_positions", ()) or [])
+            )
+            if str(getattr(row, "asset_class", "") or "").strip().lower() in {"etf", "fund"}
+            and str(getattr(row, "symbol", "") or "").strip()
+        ]
         state[RESULT_STATE_KEY] = runner(
             available_amount=amount,
             amount_currency=plan.currency,
@@ -231,6 +243,7 @@ def render_new_money_allocation(
             assets=assets if assets is not None else wealth.list_assets(),
             positions=positions if positions is not None else wealth.list_positions(),
             minimum_trade_amount=min_trade,
+            fund_snapshots=load_persisted_fund_snapshots(wealth, fund_symbols),
         )
 
     result = state.get(RESULT_STATE_KEY)

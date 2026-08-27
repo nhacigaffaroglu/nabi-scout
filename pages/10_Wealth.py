@@ -889,6 +889,19 @@ with tab_adviser:
         )
     except Exception:
         adviser_policy = None
+    from components.portfolio_economic_exposure_ui import load_persisted_fund_snapshots
+
+    fund_symbols = [
+        str(row.symbol or "").strip().upper()
+        for row in (
+            list(portfolio_view.priced_positions)
+            + list(portfolio_view.unpriced_positions)
+            + list(portfolio_view.foreign_currency_positions)
+        )
+        if str(row.asset_class or "").strip().lower() in {"etf", "fund"}
+        and str(row.symbol or "").strip()
+    ]
+    adviser_fund_snapshots = load_persisted_fund_snapshots(wealth, fund_symbols)
     render_nabi_adviser(
         candidates=adviser_candidates,
         snapshots=adviser_snapshots,
@@ -904,6 +917,7 @@ with tab_adviser:
         policy=adviser_policy,
         assets=assets,
         positions=positions,
+        fund_snapshots=adviser_fund_snapshots,
     )
 
     with st.expander("Detaylar", expanded=False):

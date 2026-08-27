@@ -198,6 +198,18 @@ def compose_wealth_operating_views(
         )
         rate = fx_schedule.usdtry_for_year(as_of_date.year)
         conversion = planning_conversion(rate, contribution_currency=plan.currency)
+        from components.portfolio_economic_exposure_ui import load_persisted_fund_snapshots
+
+        fund_symbols = [
+            str(row.symbol or "").strip().upper()
+            for row in (
+                list(portfolio_view.priced_positions)
+                + list(getattr(portfolio_view, "unpriced_positions", ()) or [])
+                + list(getattr(portfolio_view, "foreign_currency_positions", ()) or [])
+            )
+            if str(getattr(row, "asset_class", "") or "").strip().lower() in {"etf", "fund"}
+            and str(getattr(row, "symbol", "") or "").strip()
+        ]
         allocation_plan = allocate_new_money(
             available_amount=plan.starting_monthly,
             amount_currency=plan.currency,
@@ -207,6 +219,7 @@ def compose_wealth_operating_views(
             conversion=conversion,
             assets=assets,
             positions=positions,
+            fund_snapshots=load_persisted_fund_snapshots(wealth, fund_symbols),
         )
     snaps = snapshots if snapshots is not None else _load_snapshots(wealth, portfolio_id)
     performance = build_performance_center(

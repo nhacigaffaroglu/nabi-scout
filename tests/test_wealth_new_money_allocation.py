@@ -22,6 +22,7 @@ from services.wealth_new_money_allocation import (
     ACTIONABLE_NEW_DECISIONS,
     REASON_BELOW_MIN_TRADE,
     REASON_CONCENTRATION_LIMIT,
+    REASON_DATA_INCOMPLETE,
     REASON_EXISTING_HOLDING_TOPUP,
     REASON_FX_REQUIRED,
     REASON_INSUFFICIENT_CASH,
@@ -152,7 +153,7 @@ def _candidate(symbol: str, decision, price=100, **extra) -> dict:
     return row
 
 
-def _plan(*, view=None, policy=None, candidates=(), amount="60000", min_trade="0", conversion=...):
+def _plan(*, view=None, policy=None, candidates=(), amount="60000", min_trade="0", conversion=..., **kwargs):
     return allocate_new_money(
         available_amount=Decimal(amount),
         amount_currency="TRY",
@@ -161,6 +162,7 @@ def _plan(*, view=None, policy=None, candidates=(), amount="60000", min_trade="0
         candidates=candidates,
         conversion=_fx() if conversion is ... else conversion,
         minimum_trade_amount=Decimal(min_trade),
+        **kwargs,
     )
 
 
@@ -507,6 +509,208 @@ class NewMoneyEngineV2Tests(unittest.TestCase):
         self.assertEqual(plan.residual_cash, Decimal("100000"))
         self.assertIn("UNFILLED_UNDERWEIGHT:equity", plan.limitations)
         self.assertIn("RESIDUAL_CASH", plan.limitations)
+
+
+def _exposure_policy(**weights) -> AllocationPolicy:
+    return AllocationPolicy(
+        targets=tuple(
+            AllocationTarget(bucket, AllocationDimension.ECONOMIC_EXPOSURE, pct)
+            for bucket, pct in weights.items()
+        ),
+        provenance=AllocationProvenance.USER_DEFINED,
+    )
+
+
+def _exposure_slice(bucket: str, weight: float):
+    from services.portfolio_economic_exposure import (
+        EconomicExposure,
+        ExposureConfidence,
+        ExposureEvidenceSource,
+    )
+
+    return EconomicExposure(
+        exposure_bucket=bucket,
+        weight_pct=weight,
+        evidence_source=ExposureEvidenceSource.CANONICAL_STATIC_MAPPING,
+        confidence=ExposureConfidence.HIGH,
+    )
+
+
+class EconomicExposureMappingTests(unittest.TestCase):
+    def test_a_ordinary_equity_maps_to_equity_sleeve(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("CRM", market_value=1000, weight_pct=10),
+                    _row("SUKUK1", market_value=9000, weight_pct=90, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=80, sukuk=20),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertFalse(any(row.symbol == "CRM" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped))
+        rec = next(row for row in plan.recommendations if row.symbol == "CRM")
+        self.assertEqual(rec.layer, "equity")
+        self.assertEqual(rec.existing_or_new, "existing")
+
+    def test_b_lookthrough_equity_etf_maps(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("SPUS", market_value=1000, weight_pct=10, asset_class="etf"),
+                    _row("SUKUK1", market_value=9000, weight_pct=90, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=80, sukuk=20),
+            candidates=[],
+            amount="100000",
+            canonical_mappings={"SPUS": (_exposure_slice("equity", 100.0),)},
+        )
+        rec = next(row for row in plan.recommendations if row.symbol == "SPUS")
+        self.assertEqual(rec.layer, "equity")
+        self.assertFalse(any(row.symbol == "SPUS" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped))
+
+    def test_c_sukuk_maps_to_sukuk_sleeve(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("AAPL", market_value=9000, weight_pct=90),
+                    _row("SUKUK1", market_value=1000, weight_pct=10, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=70, sukuk=30),
+            candidates=[],
+            amount="100000",
+        )
+        rec = next(row for row in plan.recommendations if row.symbol == "SUKUK1")
+        self.assertEqual(rec.layer, "sukuk")
+
+    def test_d_etf_without_evidence_is_not_guessed(self) -> None:
+        plan = _plan(
+            view=_view([_row("SPUS", market_value=10000, weight_pct=100, asset_class="etf")]),
+            policy=_exposure_policy(equity=80, cash=20),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertTrue(
+            any(row.symbol == "SPUS" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped)
+        )
+        self.assertNotIn("SPUS", [row.symbol for row in plan.recommendations])
+
+    def test_e_multi_exposure_is_not_collapsed(self) -> None:
+        from services.portfolio_economic_exposure import classify_instrument_exposure
+        from services.wealth_new_money_allocation import economic_exposure_layers
+
+        instrument = classify_instrument_exposure(
+            _row("SPUS", market_value=1000, weight_pct=10, asset_class="etf"),
+            canonical_mappings={
+                "SPUS": (_exposure_slice("equity", 70.0), _exposure_slice("cash", 30.0)),
+            },
+        )
+        self.assertEqual(set(economic_exposure_layers(instrument)), {"equity", "cash"})
+        plan = _plan(
+            view=_view(
+                [
+                    _row("SPUS", market_value=1000, weight_pct=10, asset_class="etf"),
+                    _row("SUKUK1", market_value=9000, weight_pct=90, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=80, sukuk=20),
+            candidates=[],
+            amount="100000",
+            canonical_mappings={
+                "SPUS": (_exposure_slice("equity", 70.0), _exposure_slice("cash", 30.0)),
+            },
+        )
+        rec = next(row for row in plan.recommendations if row.symbol == "SPUS")
+        self.assertEqual(rec.layer, "equity")
+
+    def test_f_uygun_degil_still_blocked_after_mapping(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("CRM", market_value=1000, weight_pct=10, participation="Uygun Değil"),
+                    _row("SUKUK1", market_value=9000, weight_pct=90, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=80, sukuk=20),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertNotIn("CRM", [row.symbol for row in plan.recommendations])
+        self.assertTrue(
+            any(row.symbol == "CRM" and row.reason_code == REASON_PARTICIPATION_BLOCKED for row in plan.skipped)
+        )
+
+    def test_g_kontrol_et_still_blocked_after_mapping(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("CRM", market_value=1000, weight_pct=10, participation="Kontrol Et"),
+                    _row("SUKUK1", market_value=9000, weight_pct=90, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=80, sukuk=20),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertNotIn("CRM", [row.symbol for row in plan.recommendations])
+        self.assertTrue(
+            any(row.symbol == "CRM" and row.reason_code == REASON_PARTICIPATION_BLOCKED for row in plan.skipped)
+        )
+
+    def test_h_concentration_still_enforced(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("CRM", market_value=2800, weight_pct=28),
+                    _row("SUKUK1", market_value=7200, weight_pct=72, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=40, sukuk=60),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertNotIn("CRM", [row.symbol for row in plan.recommendations])
+        self.assertTrue(
+            any(row.symbol == "CRM" and row.reason_code == REASON_CONCENTRATION_LIMIT for row in plan.skipped)
+        )
+
+    def test_i_on_target_mix_works_with_economic_exposure(self) -> None:
+        plan = _plan(
+            view=_view(
+                [
+                    _row("AAPL", market_value=1400, weight_pct=14),
+                    _row("MSFT", market_value=1400, weight_pct=14),
+                    _row("NVDA", market_value=1400, weight_pct=14),
+                    _row("GOOG", market_value=1400, weight_pct=14),
+                    _row("AMZN", market_value=1400, weight_pct=14),
+                    _row("SUKUK1", market_value=1500, weight_pct=15, asset_class="sukuk"),
+                    _row("SUKUK2", market_value=1500, weight_pct=15, asset_class="sukuk"),
+                ]
+            ),
+            policy=_exposure_policy(equity=70, sukuk=30),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertTrue(plan.recommendations)
+        layers = {row.layer for row in plan.recommendations}
+        self.assertIn("equity", layers)
+        self.assertIn("sukuk", layers)
+        self.assertTrue(all(row.reason_code == REASON_MIX_MAINTENANCE for row in plan.recommendations))
+
+    def test_j_underweight_sleeve_can_receive_mapped_new_name(self) -> None:
+        plan = _plan(
+            view=_view([_row("SUKUK1", market_value=10000, weight_pct=100, asset_class="sukuk")]),
+            policy=_exposure_policy(equity=70, sukuk=30),
+            candidates=[_candidate("CRM", "GÜÇLÜ ADAY")],
+            amount="100000",
+        )
+        rec = next(row for row in plan.recommendations if row.symbol == "CRM")
+        self.assertEqual(rec.existing_or_new, "new")
+        self.assertEqual(rec.layer, "equity")
+        self.assertEqual(rec.reason_code, REASON_STRONG_CANDIDATE)
 
 
 class SafetyTests(unittest.TestCase):

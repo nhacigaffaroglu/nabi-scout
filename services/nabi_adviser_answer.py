@@ -103,6 +103,7 @@ def answer_nabi_adviser(
     llm_config: Optional[AdviserLlmConfig] = None,
     llm_client: Optional[WealthAdviserLlmClient] = None,
     conversation_state: Optional[Mapping[str, Any]] = None,
+    fund_snapshots: Optional[Mapping[str, Any]] = None,
 ) -> NabiAdviserAnswer:
     context = build_nabi_adviser_context(
         question,
@@ -119,6 +120,7 @@ def answer_nabi_adviser(
         positions=positions,
         theses=theses,
         conversation_state=conversation_state,
+        fund_snapshots=fund_snapshots,
     )
     parsed = parse_adviser_question(question, conversation_state)
     followup_state = build_followup_state(
