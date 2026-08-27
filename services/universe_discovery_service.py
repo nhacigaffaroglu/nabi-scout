@@ -36,6 +36,7 @@ class DiscoveryIngestReport:
     skipped_duplicate_input: int
     skipped_capacity: int
     skipped_missing_cik: int = 0
+    skipped_ingest_limit: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return {
@@ -47,6 +48,7 @@ class DiscoveryIngestReport:
             "skipped_duplicate_input": self.skipped_duplicate_input,
             "skipped_capacity": self.skipped_capacity,
             "skipped_missing_cik": self.skipped_missing_cik,
+            "skipped_ingest_limit": self.skipped_ingest_limit,
         }
 
 
@@ -64,21 +66,30 @@ def _existing_identity(
     return repo.get_by_symbol(identity)
 
 
+def _resolve_non_negative(value: Optional[int], default: int) -> int:
+    if value is None:
+        return max(0, int(default))
+    return max(0, int(value))
+
+
 def enqueue_discovery_candidates(
     repo: UniverseExpansionRepository,
     candidates: Sequence[DiscoveryCandidate],
     *,
     discovery_capacity: Optional[int] = None,
+    max_new_symbols_per_ingest: Optional[int] = None,
 ) -> DiscoveryIngestReport:
     """Insert PENDING rows for new identities only. Existing rows are untouched."""
-    capacity = (
-        discovery_capacity
-        if discovery_capacity is not None
-        else UniverseExpansionBudgetConfig().discovery_capacity
+    defaults = UniverseExpansionBudgetConfig()
+    capacity = _resolve_non_negative(discovery_capacity, defaults.discovery_capacity)
+    ingest_limit = _resolve_non_negative(
+        max_new_symbols_per_ingest,
+        defaults.max_new_symbols_per_ingest,
     )
     inserted = 0
     skipped_existing = 0
     skipped_capacity = 0
+    skipped_ingest_limit = 0
     seen: set[str] = set()
     skipped_duplicate_input = 0
     known = _known_size(repo)
@@ -97,6 +108,9 @@ def enqueue_discovery_candidates(
         if known + inserted >= capacity:
             skipped_capacity += 1
             continue
+        if inserted >= ingest_limit:
+            skipped_ingest_limit += 1
+            continue
         repo.upsert_pending(
             identity,
             source_universe=candidate.source_universe,
@@ -112,6 +126,7 @@ def enqueue_discovery_candidates(
         skipped_excluded=0,
         skipped_duplicate_input=skipped_duplicate_input,
         skipped_capacity=skipped_capacity,
+        skipped_ingest_limit=skipped_ingest_limit,
     )
 
 
@@ -120,6 +135,7 @@ def ingest_us_equity_listings(
     listings: Iterable[Mapping[str, Any]],
     *,
     discovery_capacity: Optional[int] = None,
+    max_new_symbols_per_ingest: Optional[int] = None,
     source_universe: str = US_EQUITY_DISCOVERY_SOURCE,
 ) -> DiscoveryIngestReport:
     """Scale the known universe from injected listings. Zero provider calls."""
@@ -139,6 +155,7 @@ def ingest_us_equity_listings(
         reason = excluded_instrument_reason(
             symbol=identity,
             company_name=row.get("company_name") or row.get("name") or "",
+            exchange_security_name=row.get("exchange_security_name") or "",
             is_etf=row.get("is_etf"),
         )
         if reason or not identity:
@@ -155,6 +172,7 @@ def ingest_us_equity_listings(
         repo,
         candidates,
         discovery_capacity=discovery_capacity,
+        max_new_symbols_per_ingest=max_new_symbols_per_ingest,
     )
     return DiscoveryIngestReport(
         considered=considered,
@@ -165,6 +183,7 @@ def ingest_us_equity_listings(
         skipped_duplicate_input=skipped_duplicate_input + report.skipped_duplicate_input,
         skipped_capacity=report.skipped_capacity,
         skipped_missing_cik=skipped_missing_cik,
+        skipped_ingest_limit=report.skipped_ingest_limit,
     )
 
 
@@ -175,12 +194,14 @@ def ingest_merged_exchange_listings(
     other_rows: Sequence[Mapping[str, Any]] | None = None,
     sec_rows: Sequence[Mapping[str, Any]] | None = None,
     discovery_capacity: Optional[int] = None,
+    max_new_symbols_per_ingest: Optional[int] = None,
 ) -> DiscoveryIngestReport:
     merged = merge_exchange_and_sec_listings(nasdaq_rows, other_rows, sec_rows)
     return ingest_us_equity_listings(
         repo,
         merged,
         discovery_capacity=discovery_capacity,
+        max_new_symbols_per_ingest=max_new_symbols_per_ingest,
     )
 
 
@@ -189,6 +210,7 @@ def propose_external_discovery_symbols(
     *,
     repo: UniverseExpansionRepository,
     discovery_capacity: Optional[int] = None,
+    max_new_symbols_per_ingest: Optional[int] = None,
     source: str = EXTERNAL_SIGNAL_SOURCE,
     names: Optional[Mapping[str, str]] = None,
 ) -> DiscoveryIngestReport:
@@ -231,6 +253,7 @@ def propose_external_discovery_symbols(
         repo,
         candidates,
         discovery_capacity=discovery_capacity,
+        max_new_symbols_per_ingest=max_new_symbols_per_ingest,
     )
     return DiscoveryIngestReport(
         considered=considered,
@@ -240,4 +263,5 @@ def propose_external_discovery_symbols(
         skipped_excluded=skipped_excluded,
         skipped_duplicate_input=skipped_duplicate_input,
         skipped_capacity=report.skipped_capacity,
+        skipped_ingest_limit=report.skipped_ingest_limit,
     )

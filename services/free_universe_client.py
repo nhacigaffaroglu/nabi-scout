@@ -6,6 +6,8 @@ from typing import Any, Dict, List
 
 import requests
 
+from services.universe_listing_identity import excluded_security_name
+
 
 class UniverseSourceError(RuntimeError):
     pass
@@ -22,28 +24,6 @@ class FreeUniverseClient:
     OTHER_LISTED_URL = (
         "https://www.nasdaqtrader.com/dynamic/"
         "symdir/otherlisted.txt"
-    )
-
-    EXCLUDED_NAME_TERMS = (
-        "warrant",
-        "warrants",
-        "unit",
-        "units",
-        "right",
-        "rights",
-        "preferred",
-        "depositary share",
-        "depositary shares",
-        "note due",
-        "notes due",
-        "bond",
-        "debenture",
-        "acquisition corp",
-        "acquisition corporation",
-        "acquisition company",
-        "blank check",
-        "special purpose acquisition",
-        "spac",
     )
 
     def __init__(
@@ -127,7 +107,7 @@ class FreeUniverseClient:
 
             if not symbol or row.get("Test Issue") == "Y":
                 continue
-            if symbol.startswith("File Creation Time"):
+            if self.is_file_creation_time_symbol(symbol):
                 continue
             if self._excluded_security_name(name):
                 continue
@@ -167,7 +147,7 @@ class FreeUniverseClient:
 
             if not symbol or row.get("Test Issue") == "Y":
                 continue
-            if symbol.startswith("File Creation Time"):
+            if self.is_file_creation_time_symbol(symbol):
                 continue
             if self._excluded_security_name(name):
                 continue
@@ -206,9 +186,9 @@ class FreeUniverseClient:
             delimiter="|",
         ))
 
+    @staticmethod
+    def is_file_creation_time_symbol(symbol: str) -> bool:
+        return str(symbol or "").strip().lower().startswith("file creation time")
+
     def _excluded_security_name(self, name: str) -> bool:
-        lowered = name.lower()
-        return any(
-            term in lowered
-            for term in self.EXCLUDED_NAME_TERMS
-        )
+        return excluded_security_name(name)

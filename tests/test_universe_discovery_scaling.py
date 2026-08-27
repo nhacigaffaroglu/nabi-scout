@@ -133,7 +133,12 @@ class LargeDiscoveryIngestTests(unittest.TestCase):
         listings.append(_listing("brk.b", name="Berkshire Hathaway", exchange="NYSE", cik="1067983"))
         listings.append(_listing("BRK-B", name="Berkshire Hathaway", exchange="NYSE", cik="1067983"))
         repo = UniverseExpansionRepository()
-        report = ingest_us_equity_listings(repo, listings, discovery_capacity=8000)
+        report = ingest_us_equity_listings(
+            repo,
+            listings,
+            discovery_capacity=8000,
+            max_new_symbols_per_ingest=8000,
+        )
         symbols = [row["symbol"] for row in repo.list_all()]
         self.assertEqual(len(symbols), len(set(symbols)))
         self.assertEqual(symbols.count("BRK-B"), 1)
@@ -320,7 +325,12 @@ class QueueContractTests(unittest.TestCase):
     def test_large_queue_does_not_change_per_run_safety_cap(self) -> None:
         repo = UniverseExpansionRepository()
         listings = [_listing(f"Q{index:03d}") for index in range(80)]
-        ingest_us_equity_listings(repo, listings, discovery_capacity=8000)
+        ingest_us_equity_listings(
+            repo,
+            listings,
+            discovery_capacity=8000,
+            max_new_symbols_per_ingest=8000,
+        )
         self.assertEqual(len(repo.list_all()), 80)
         config = UniverseExpansionBudgetConfig()
         self.assertEqual(config.max_symbols_per_run, 30)

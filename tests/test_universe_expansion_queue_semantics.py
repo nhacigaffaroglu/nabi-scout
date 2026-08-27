@@ -318,7 +318,9 @@ class QueueSemanticsFairnessAndCapTests(unittest.TestCase):
         self.assertNotIn("JPM", symbols)
 
     def test_max_symbols_per_run_remains_30(self) -> None:
-        self.assertEqual(UniverseExpansionBudgetConfig().max_symbols_per_run, 30)
+        config = UniverseExpansionBudgetConfig()
+        self.assertEqual(config.max_symbols_per_run, 30)
+        self.assertEqual(config.max_new_symbols_per_ingest, 30)
 
     def test_completed_row_is_not_eligible_again(self) -> None:
         repo = UniverseExpansionRepository()

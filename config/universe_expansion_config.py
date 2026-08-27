@@ -38,6 +38,8 @@ class UniverseExpansionBudgetConfig:
     max_symbols_per_run: int = 30
     # How many identities may be known/queued. Independent of per-run processing.
     discovery_capacity: int = 8000
+    # How many NEW identities a single discovery ingest may insert.
+    max_new_symbols_per_ingest: int = 30
 
     @classmethod
     def from_env(cls) -> "UniverseExpansionBudgetConfig":
@@ -54,4 +56,8 @@ class UniverseExpansionBudgetConfig:
             max_errors_before_stop=_env_int("UNIVERSE_EXPANSION_MAX_ERRORS", 5),
             max_symbols_per_run=max_symbols,
             discovery_capacity=_env_int("UNIVERSE_DISCOVERY_CAPACITY", 8000),
+            max_new_symbols_per_ingest=_env_int(
+                "UNIVERSE_DISCOVERY_MAX_NEW_SYMBOLS_PER_INGEST",
+                30,
+            ),
         )

@@ -16,15 +16,35 @@ _EXCLUDED_SYMBOL_CHARS = re.compile(r"[/^+$]")
 _EXCLUDED_SUFFIX = re.compile(
     r"-(W|WS|WTS|WT|U|UN|R|RT|RTS|P|PR|PRA|PRB|PRC|PRD|PRE)$"
 )
+_ETF_NAME = re.compile(r"\betfs?\b", re.IGNORECASE)
+_ETN_NAME = re.compile(
+    r"\b(?:etns?|exchange[\s-]+traded\s+notes?)\b",
+    re.IGNORECASE,
+)
+_CLOSED_END_FUND_NAME = re.compile(
+    r"\bclosed[\s-]+end(?:\s+fund|\s+investment\s+company)\b",
+    re.IGNORECASE,
+)
+_PREFERRED_NAME = re.compile(
+    r"\bpreference\s+shares?\b|\bpreferred(?:\s+(?:stock|shares?))?\b",
+    re.IGNORECASE,
+)
+_LISTED_NOTE_NAME = re.compile(
+    r"""
+    \bnotes?\s+due\b
+    | \b(?:perpetual\s+)?(?:junior\s+|senior\s+)?subordinated\s+notes?\b
+    | \bsenior\s+notes?\b
+    | \bjunior\s+notes?\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 _EXCLUDED_NAME = re.compile(
     r"""
     \b(
         warrants? |
         units? |
         rights? |
-        preferred |
         depositary\ shares? |
-        notes?\ due |
         bonds? |
         debentures? |
         acquisition\ corp(?:oration)? |
@@ -47,7 +67,6 @@ EXCHANGE_PRIORITY = {
     "NASDAQ": 90,
     "AMEX": 100,
 }
-
 DEFAULT_LISTING_PRIORITY = 110
 EXTERNAL_SIGNAL_PRIORITY = 120
 US_EQUITY_DISCOVERY_SOURCE = "us_exchange_listed"
@@ -88,10 +107,40 @@ def listing_priority(exchange: Any) -> int:
     return EXCHANGE_PRIORITY.get(normalize_us_exchange(exchange), DEFAULT_LISTING_PRIORITY)
 
 
+def instrument_name_exclusion_reason(name: Any) -> Optional[str]:
+    """Word-boundary instrument terms in a listing or issuer name.
+
+    Substring matches inside ordinary words (United, Aerospace, Bright,
+    Wright) are not exclusions. Fetch and final eligibility share this helper.
+    """
+    text = str(name or "").strip()
+    if not text:
+        return None
+    if _ETF_NAME.search(text):
+        return "etf"
+    if _ETN_NAME.search(text):
+        return "etn"
+    if _CLOSED_END_FUND_NAME.search(text):
+        return "closed_end_fund"
+    if _PREFERRED_NAME.search(text):
+        return "preferred"
+    if _LISTED_NOTE_NAME.search(text):
+        return "listed_note"
+    if _EXCLUDED_NAME.search(text):
+        return "excluded_name"
+    return None
+
+
+def excluded_security_name(name: Any) -> bool:
+    """True when a name is a non-ordinary instrument on word-boundary rules."""
+    return instrument_name_exclusion_reason(name) is not None
+
+
 def excluded_instrument_reason(
     *,
     symbol: Any,
     company_name: Any = "",
+    exchange_security_name: Any = "",
     is_etf: Any = False,
 ) -> Optional[str]:
     identity = listing_identity(symbol)
@@ -99,14 +148,22 @@ def excluded_instrument_reason(
         return "empty_symbol"
     if identity in ETF_SYMBOLS:
         return "catalog_etf"
-    if is_etf or _name_says_etf(company_name):
+    names = _names_for_instrument_filter(
+        company_name=company_name,
+        exchange_security_name=exchange_security_name,
+    )
+    if is_etf or any(
+        instrument_name_exclusion_reason(item) == "etf" for item in names
+    ):
         return "etf"
     if _EXCLUDED_SYMBOL_CHARS.search(identity):
         return "non_common_symbol"
     if _EXCLUDED_SUFFIX.search(identity):
         return "non_common_suffix"
-    if _EXCLUDED_NAME.search(str(company_name or "")):
-        return "excluded_name"
+    for item in names:
+        reason = instrument_name_exclusion_reason(item)
+        if reason:
+            return reason
     return None
 
 
@@ -114,12 +171,19 @@ def is_ordinary_equity_listing(row: Mapping[str, Any]) -> bool:
     return excluded_instrument_reason(
         symbol=row.get("symbol"),
         company_name=row.get("company_name") or row.get("name") or "",
+        exchange_security_name=row.get("exchange_security_name") or "",
         is_etf=row.get("is_etf"),
     ) is None
 
 
-def _name_says_etf(name: Any) -> bool:
-    lowered = str(name or "").strip().lower()
-    if not lowered:
-        return False
-    return bool(re.search(r"\betf\b", lowered))
+def _names_for_instrument_filter(
+    *,
+    company_name: Any,
+    exchange_security_name: Any,
+) -> tuple[str, ...]:
+    names: list[str] = []
+    for value in (exchange_security_name, company_name):
+        text = str(value or "").strip()
+        if text and text not in names:
+            names.append(text)
+    return tuple(names)

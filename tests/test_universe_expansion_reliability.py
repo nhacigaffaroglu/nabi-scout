@@ -522,6 +522,7 @@ class ProviderAndSourceContractTests(unittest.TestCase):
         self.assertEqual(config.sec_expansion_reserve_pct, 0.60)
         self.assertEqual(config.max_symbols_per_run, 30)
         self.assertEqual(config.discovery_capacity, 8000)
+        self.assertEqual(config.max_new_symbols_per_ingest, 30)
 
 
 if __name__ == "__main__":

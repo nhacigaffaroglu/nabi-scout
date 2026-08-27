@@ -27,6 +27,7 @@ class DiscoveryCandidate:
     exchange: str
     company_name: str
     cik: Optional[str] = None
+    exchange_security_name: str = ""
 
 
 def merge_exchange_and_sec_listings(
@@ -49,14 +50,18 @@ def merge_exchange_and_sec_listings(
         sec = sec_map.get(identity)
         exchange = normalize_us_exchange(row.get("exchange"))
         is_etf = bool(row.get("is_etf"))
+        exchange_security_name = str(
+            row.get("exchange_security_name") or row.get("company_name") or ""
+        ).strip()
         company_name = str(
             (sec.get("company_name") if sec else None)
-            or row.get("company_name")
+            or exchange_security_name
             or identity
         ).strip()
         merged[identity] = {
             "symbol": identity,
             "company_name": company_name,
+            "exchange_security_name": exchange_security_name,
             "exchange": exchange,
             "is_etf": is_etf,
             "cik": (sec.get("cik") if sec else row.get("cik")),
@@ -79,9 +84,14 @@ def select_us_equity_discovery_candidates(
     unique: dict[str, DiscoveryCandidate] = {}
     for row in listings:
         identity = listing_identity(row.get("symbol") or row.get("ticker"))
+        exchange_security_name = str(
+            row.get("exchange_security_name") or ""
+        ).strip()
+        company_name = str(row.get("company_name") or row.get("name") or "").strip()
         reason = excluded_instrument_reason(
             symbol=identity,
-            company_name=row.get("company_name") or row.get("name") or "",
+            company_name=company_name,
+            exchange_security_name=exchange_security_name,
             is_etf=row.get("is_etf"),
         )
         if reason or not identity:
@@ -97,7 +107,8 @@ def select_us_equity_discovery_candidates(
             source_universe=source_universe,
             priority=listing_priority(exchange),
             exchange=exchange,
-            company_name=str(row.get("company_name") or row.get("name") or identity),
+            company_name=company_name or identity,
             cik=cik,
+            exchange_security_name=exchange_security_name,
         )
     return sorted(unique.values(), key=lambda item: (item.priority, item.symbol))
