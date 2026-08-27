@@ -12,7 +12,7 @@ class SECFinancialError(RuntimeError):
 
 # Identifier for the canonical Company Facts extractor. Used in replay/apply
 # provenance; not a religious ruling and not a per-issuer override.
-SEC_FINANCIAL_EXTRACTOR_VERSION = "us-gaap-period-aligned-exclusive-debt-v2"
+SEC_FINANCIAL_EXTRACTOR_VERSION = "us-gaap-period-aligned-exclusive-debt-v3"
 
 _ANNUAL_FORMS = {"10-K", "10-K/A", "20-F", "40-F"}
 
@@ -136,6 +136,7 @@ _US_GAAP_DEBT_CURRENT_PRECEDENCE: Sequence[str] = (
     "LongTermDebtAndFinanceLeaseObligationsCurrent",
     "LongTermDebtCurrent",
     "DebtCurrent",
+    "NotesPayableCurrent",
 )
 
 # Exclusive noncurrent-debt group. First tag present at the assets period wins.
@@ -144,6 +145,9 @@ _US_GAAP_DEBT_NONCURRENT_PRECEDENCE: Sequence[str] = (
     "LongTermDebtAndCapitalLeaseObligations",
     "LongTermDebtNoncurrent",
     "LongTermDebt",
+    "SeniorNotes",
+    "ConvertibleLongTermNotesPayable",
+    "LongTermNotesPayable",
 )
 
 _US_GAAP_SHORT_TERM_BORROWINGS_TAG = "ShortTermBorrowings"
@@ -165,10 +169,19 @@ _US_GAAP_INTEREST_BEARING_SECURITIES_TAG_TIERS: Sequence[Sequence[str]] = (
         "AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
     ),
     (
+        "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+        "DebtSecuritiesAvailableForSaleExcludingAccruedInterestNoncurrent",
+    ),
+    (
         "AvailableForSaleSecuritiesDebtSecurities",
         "ShortTermInvestments",
         "DebtSecuritiesAvailableForSaleAmortizedCost",
         "AvailableForSaleSecurities",
+    ),
+    ("DebtSecuritiesAvailableForSaleExcludingAccruedInterest",),
+    (
+        "HeldToMaturitySecurities",
+        "TradingSecuritiesDebt",
     ),
 )
 

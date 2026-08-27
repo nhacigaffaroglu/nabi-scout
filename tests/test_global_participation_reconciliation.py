@@ -419,7 +419,7 @@ class GlobalReconcileTests(unittest.TestCase):
             "anthropic",
         ):
             self.assertNotIn(token, source)
-        self.assertEqual(SEC_FINANCIAL_EXTRACTOR_VERSION, "us-gaap-period-aligned-exclusive-debt-v2")
+        self.assertEqual(SEC_FINANCIAL_EXTRACTOR_VERSION, "us-gaap-period-aligned-exclusive-debt-v3")
 
 
 if __name__ == "__main__":
