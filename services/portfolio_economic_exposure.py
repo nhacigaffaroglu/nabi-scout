@@ -10,10 +10,9 @@ from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
     PositionValuationRow,
 )
+from services.security_master_service import SecurityMasterService
 from services.wealth_asset_classification import (
     CASH_SYMBOL,
-    KNOWN_EQUITY_TR,
-    KNOWN_EQUITY_US,
     resolve_asset_metadata,
 )
 from services.wealth_contract import (
@@ -29,6 +28,11 @@ from services.wealth_price_service import normalize_currency
 
 WEIGHT_QUANT = 4
 EXPOSURE_DIMENSION_KEY = "ECONOMIC_EXPOSURE"
+# Issuer-reported holding weights often round to slightly over 100%.
+# Scale aggregated lookthrough buckets only inside this band; raw holding
+# weights are never mutated. Larger overflow is still scaled so validation
+# cannot crash, but completeness stays incomplete.
+ISSUER_WEIGHT_ROUNDING_BAND_PCT = 0.50
 
 # Empty by design: no ticker/name inference. Tests/product may inject mappings.
 CANONICAL_STATIC_MAPPINGS: Dict[str, Tuple["EconomicExposure", ...]] = {}
@@ -340,24 +344,54 @@ def _from_mapping(raw: Sequence[EconomicExposure]) -> Tuple[EconomicExposure, ..
     return rows
 
 
-def _lookthrough_exposures(snapshot: FundHoldingsSnapshotView) -> Tuple[Tuple[EconomicExposure, ...], bool]:
+def _scale_issuer_reported_weights(
+    weights: Dict[str, float],
+) -> Tuple[Dict[str, float], str]:
+    total = sum(weights.values())
+    if total <= 100.0 + TARGET_SUM_EPSILON_PCT:
+        return weights, ""
+    scale = 100.0 / total
+    scaled = {bucket: weight * scale for bucket, weight in weights.items()}
+    if total <= 100.0 + ISSUER_WEIGHT_ROUNDING_BAND_PCT:
+        return scaled, "ISSUER_WEIGHT_ROUNDING_NORMALIZED"
+    return scaled, "MATERIAL_ISSUER_WEIGHT_OVERFLOW"
+
+
+def _holding_policy_bucket(
+    holding,
+    *,
+    security_master: SecurityMasterService,
+) -> str:
+    asset_type = str(holding.asset_type or "").strip().lower()
+    bucket = _HOLDING_ASSET_TYPE_MAP.get(asset_type)
+    if bucket is not None:
+        return bucket
+    resolution = security_master.resolve_security(holding.underlying_symbol)
+    policy = resolution.policy_asset_type
+    if policy:
+        mapped = _HOLDING_ASSET_TYPE_MAP.get(policy)
+        if mapped is not None:
+            return mapped
+    return EconomicExposureBucket.UNKNOWN.value
+
+
+def _lookthrough_exposures(
+    snapshot: FundHoldingsSnapshotView,
+    *,
+    security_master: Optional[SecurityMasterService] = None,
+) -> Tuple[Tuple[EconomicExposure, ...], bool]:
+    master = security_master or SecurityMasterService()
     weights: Dict[str, float] = {}
     mapped = 0.0
     for holding in snapshot.holdings:
         slice_pct = float(holding.weight_pct or 0.0)
         if slice_pct <= 0:
             continue
-        asset_type = str(holding.asset_type or "").strip().lower()
-        bucket = _HOLDING_ASSET_TYPE_MAP.get(asset_type)
-        if bucket is None:
-            underlying = str(holding.underlying_symbol or "").strip().upper()
-            if underlying in KNOWN_EQUITY_US or underlying in KNOWN_EQUITY_TR:
-                bucket = EconomicExposureBucket.EQUITY.value
-            else:
-                bucket = EconomicExposureBucket.UNKNOWN.value
+        bucket = _holding_policy_bucket(holding, security_master=master)
         weights[bucket] = weights.get(bucket, 0.0) + slice_pct
         if bucket != EconomicExposureBucket.UNKNOWN.value:
             mapped += slice_pct
+    weights, scale_limitation = _scale_issuer_reported_weights(weights)
     coverage = float(snapshot.coverage_pct) if snapshot.coverage_pct is not None else mapped
     remainder = max(0.0, 100.0 - sum(weights.values()))
     if remainder > TARGET_SUM_EPSILON_PCT:
@@ -370,6 +404,7 @@ def _lookthrough_exposures(snapshot: FundHoldingsSnapshotView) -> Tuple[Tuple[Ec
         abs(sum(weights.values()) - 100.0) <= TARGET_SUM_EPSILON_PCT
         and EconomicExposureBucket.UNKNOWN.value not in weights
         and (snapshot.coverage_pct is None or abs(float(snapshot.coverage_pct) - 100.0) <= 0.5)
+        and scale_limitation != "MATERIAL_ISSUER_WEIGHT_OVERFLOW"
     )
     confidence = ExposureConfidence.HIGH if complete else ExposureConfidence.MEDIUM
     rows = tuple(
@@ -378,7 +413,14 @@ def _lookthrough_exposures(snapshot: FundHoldingsSnapshotView) -> Tuple[Tuple[Ec
             weight_pct=_round(weight) or 0.0,
             evidence_source=ExposureEvidenceSource.PERSISTED_HOLDINGS_LOOKTHROUGH,
             confidence=confidence,
-            limitations=() if bucket != EconomicExposureBucket.UNKNOWN.value else ("LOOKTHROUGH_UNMAPPED",),
+            limitations=tuple(
+                item
+                for item in (
+                    "LOOKTHROUGH_UNMAPPED" if bucket == EconomicExposureBucket.UNKNOWN.value else "",
+                    scale_limitation,
+                )
+                if item
+            ),
         )
         for bucket, weight in sorted(weights.items(), key=lambda item: EXPOSURE_BUCKET_ORDER.index(item[0]))
     )
@@ -392,6 +434,7 @@ def classify_instrument_exposure(
     user_overrides: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     canonical_mappings: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     fund_snapshots: Optional[Mapping[str, FundHoldingsSnapshotView]] = None,
+    security_master: Optional[SecurityMasterService] = None,
 ) -> InstrumentExposureView:
     symbol = str(row.symbol or "").strip().upper()
     instrument_class = _instrument_class(row)
@@ -420,7 +463,10 @@ def classify_instrument_exposure(
     elif instrument_class in {ASSET_CLASS_ETF, ASSET_CLASS_FUND} and symbol in snapshots:
         snapshot = snapshots[symbol]
         if snapshot.holdings:
-            exposures, complete = _lookthrough_exposures(snapshot)
+            exposures, complete = _lookthrough_exposures(
+                snapshot,
+                security_master=security_master,
+            )
         else:
             exposures = _unknown(limitation="HOLDINGS_LOOKTHROUGH_EMPTY")
             complete = False
@@ -479,6 +525,7 @@ def build_economic_exposure(
     canonical_mappings: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     assets: Optional[Sequence[dict]] = None,
     positions: Optional[Sequence[dict]] = None,
+    security_master: Optional[SecurityMasterService] = None,
 ) -> PortfolioEconomicExposureView:
     """Observable economic exposure. No providers, no writes, no ticker-name inference."""
     existing = _all_rows(portfolio_view)
@@ -490,6 +537,7 @@ def build_economic_exposure(
             user_overrides=user_overrides,
             canonical_mappings=canonical_mappings,
             fund_snapshots=fund_snapshots,
+            security_master=security_master,
         )
         for row in rows
         if str(row.symbol or "").strip()
@@ -593,5 +641,6 @@ def build_economic_exposure(
             "portfolio_intelligence_view",
             "resolve_asset_metadata",
             "persisted_fund_holdings_optional",
+            "security_master_optional",
         ),
     )
