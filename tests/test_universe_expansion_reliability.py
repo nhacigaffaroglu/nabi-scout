@@ -484,6 +484,7 @@ class ProviderAndSourceContractTests(unittest.TestCase):
             "services/daily_universe_expansion_service.py",
             "services/universe_expansion_onboarding_service.py",
             "services/scheduled_universe_expansion_service.py",
+            "services/universe_expansion_orchestrator.py",
             "scripts/run_daily_universe_expansion.py",
             "services/candidate_identity.py",
         ]

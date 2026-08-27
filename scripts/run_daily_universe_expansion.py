@@ -27,17 +27,16 @@ from repositories.universe_expansion_run_repository import (
     TRIGGER_WORKFLOW_DISPATCH,
     UniverseExpansionRunRepository,
 )
-from services.daily_universe_expansion_service import (
-    DailyExpansionRunReport,
-    DailyUniverseExpansionService,
-)
+from services.daily_universe_expansion_service import DailyExpansionRunReport
 from services.fmp_client import FMPClient, FMPError
 from services.free_universe_client import FreeUniverseClient
 from services.scheduled_universe_expansion_service import (
     evaluate_scheduled_expansion_run,
     expansion_run_date,
 )
+from services.universe_discovery_service import fetch_us_equity_listing_feeds
 from services.universe_expansion_contract import STOP_REASON_ALREADY_RAN_TODAY
+from services.universe_expansion_orchestrator import UniverseExpansionOrchestrator
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_admin_client import (
     SupabaseAdminClientError,
@@ -217,6 +216,7 @@ def main() -> int:
         dry_run=args.dry_run,
         allow_second_run_today=args.allow_second_run_today,
         trigger_type=trigger,
+        skip_if_already_completed=False,
     )
     if not should_run:
         report = _skipped_report(
@@ -233,14 +233,45 @@ def main() -> int:
         write_github_step_summary(report.to_dict(), trigger=trigger)
         return 0
 
+    orchestrator = UniverseExpansionOrchestrator(
+        queue_repo=queue_repo,
+        budget_config=budget_config,
+        run_repo=run_repo,
+    )
+    plan = orchestrator.plan(
+        now=now,
+        dry_run=args.dry_run,
+        trigger_type=trigger,
+        allow_second_run_today=args.allow_second_run_today,
+        run_date=run_date,
+    )
+    run_id = str(uuid4())
+    if plan.idle:
+        report = orchestrator.idle_report(
+            plan,
+            run_id=run_id,
+            dry_run=args.dry_run,
+            trigger_type=trigger,
+        )
+        if args.json:
+            print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        else:
+            _print_report(report, trigger=trigger)
+        write_github_step_summary(
+            report.to_dict(),
+            trigger=trigger,
+            queue_counts=report.queue_counts,
+        )
+        return 0
+
     sec_email = (os.environ.get("SEC_CONTACT_EMAIL") or "").strip()
     fmp_client = None
     sec_client = None
     participation_repo = None
     candidate_repo = None
     sec_lookup = {}
+    listing_fetcher = None
 
-    run_id = str(uuid4())
     if not args.dry_run:
         try:
             fmp_client = FMPClient.from_env()
@@ -248,9 +279,13 @@ def main() -> int:
             print(str(exc), file=sys.stderr)
             return 1
         sec_client = SECFinancialClient(contact_email=sec_email)
-        sec_lookup = _load_sec_lookup(sec_email)
-        participation_repo = ParticipationAssessmentRepository(queue_repo.client)
-        candidate_repo = CandidateRepository(queue_repo.client)
+        listing_client = FreeUniverseClient(contact_email=sec_email)
+        if plan.run_discovery:
+            listing_fetcher = lambda client=listing_client: fetch_us_equity_listing_feeds(client)
+        if plan.run_participation:
+            sec_lookup = _load_sec_lookup(sec_email)
+            participation_repo = ParticipationAssessmentRepository(queue_repo.client)
+            candidate_repo = CandidateRepository(queue_repo.client)
         run_repo.start_run(
             run_id=run_id,
             run_date=run_date,
@@ -260,22 +295,19 @@ def main() -> int:
             started_at=now,
         )
 
-    service = DailyUniverseExpansionService(
-        queue_repo=queue_repo,
-        budget_config=budget_config,
-    )
     max_symbols = _resolve_max_symbols(args.max_symbols, budget_config)
-    report = service.run_once(
+    report = orchestrator.execute(
+        plan,
         run_id=run_id,
         max_symbols=max_symbols,
         dry_run=args.dry_run,
-        now=now,
         trigger_type=trigger,
         fmp_client=fmp_client,
         sec_client=sec_client,
         participation_repo=participation_repo,
         candidate_repo=candidate_repo,
         sec_ticker_lookup=sec_lookup,
+        listing_fetcher=listing_fetcher,
     )
 
     if not args.dry_run:

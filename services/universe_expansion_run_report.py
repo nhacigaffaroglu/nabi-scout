@@ -10,14 +10,17 @@ def format_expansion_run_summary(
     queue_counts: Mapping[str, int] | None = None,
 ) -> str:
     queue_counts = dict(queue_counts or report.get("queue_counts") or {})
-    remaining_pending = int(queue_counts.get("PENDING") or 0)
-    remaining_retryable = int(queue_counts.get("RETRYABLE") or 0)
+    remaining_pending = int(queue_counts.get("PENDING") or queue_counts.get("pending") or 0)
+    remaining_retryable = int(queue_counts.get("RETRYABLE") or queue_counts.get("retryable") or 0)
+    remaining_blocked = int(queue_counts.get("BLOCKED") or queue_counts.get("blocked") or 0)
+    discovery = dict(report.get("discovery") or {})
     lines = [
         "# Daily Universe Expansion",
         "",
         f"- run_id: {report.get('run_id', '')}",
         f"- trigger: {trigger}",
         f"- dry_run: {report.get('dry_run', False)}",
+        f"- orchestration_decision: {report.get('orchestration_decision') or 'none'}",
         f"- stop_reason: {report.get('stop_reason') or 'none'}",
         f"- symbols_considered: {report.get('symbols_considered', 0)}",
         f"- symbols_started: {report.get('symbols_started', 0)}",
@@ -27,6 +30,9 @@ def format_expansion_run_summary(
         f"- symbols_skipped: {report.get('symbols_skipped', 0)}",
         f"- queue_pending: {remaining_pending}",
         f"- queue_retryable: {remaining_retryable}",
+        f"- queue_blocked: {remaining_blocked}",
+        f"- discovery_attempted: {discovery.get('attempted', False)}",
+        f"- discovery_inserted: {discovery.get('inserted', 0)}",
         f"- fmp_remote_calls: {report.get('fmp_calls_used', 0)}",
         f"- sec_remote_calls: {report.get('sec_calls_used', 0)}",
         f"- cache_hits: {report.get('cache_hits') or {}}",

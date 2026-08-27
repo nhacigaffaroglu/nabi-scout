@@ -5,9 +5,10 @@ from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from repositories.universe_expansion_run_repository import (
-    RUN_STATUS_RUNNING,
+    RUN_STATUS_COMPLETED,
     UniverseExpansionRunRepository,
 )
+from services.universe_expansion_contract import DISCOVERY_CYCLE_DECISIONS
 
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 STALE_RUNNING_AFTER = timedelta(hours=2)
@@ -23,6 +24,29 @@ def stale_running_cutoff(now: Optional[datetime] = None) -> datetime:
     return current - STALE_RUNNING_AFTER
 
 
+def discovery_cycle_already_ran_today(
+    run_repo: UniverseExpansionRunRepository,
+    run_date: date,
+) -> Tuple[bool, Optional[dict]]:
+    """True when today's paid cycle already attempted scalable discovery.
+
+    Legacy paid runs without an orchestration decision still count, matching
+    the previous same-day skip. Participation-only runs do not.
+    """
+    for row in run_repo.list_for_date(run_date):
+        if row.get("dry_run"):
+            continue
+        if row.get("status") != RUN_STATUS_COMPLETED:
+            continue
+        report = row.get("report_payload") or {}
+        decision = str(report.get("orchestration_decision") or "").strip()
+        if decision in DISCOVERY_CYCLE_DECISIONS:
+            return True, row
+        if not decision and int(row.get("symbols_started") or 0) > 0:
+            return True, row
+    return False, None
+
+
 def evaluate_scheduled_expansion_run(
     run_repo: UniverseExpansionRunRepository,
     *,
@@ -31,6 +55,7 @@ def evaluate_scheduled_expansion_run(
     dry_run: bool = False,
     allow_second_run_today: bool = False,
     trigger_type: str = "scheduled",
+    skip_if_already_completed: bool = True,
 ) -> Tuple[bool, Optional[str], Optional[dict]]:
     current = now or datetime.now(timezone.utc)
     target_date = run_date or expansion_run_date(current)
@@ -38,7 +63,7 @@ def evaluate_scheduled_expansion_run(
     if dry_run:
         return True, None, None
 
-    if not allow_second_run_today:
+    if skip_if_already_completed and not allow_second_run_today:
         completed = run_repo.get_latest_completed_paid_run(target_date)
         if completed is not None and trigger_type in {"scheduled", "workflow_dispatch"}:
             return (

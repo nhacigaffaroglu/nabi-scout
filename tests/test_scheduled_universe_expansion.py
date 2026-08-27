@@ -74,6 +74,33 @@ class ScheduledExpansionGuardTests(unittest.TestCase):
         self.assertTrue(should_run)
         self.assertIsNone(reason)
 
+    def test_skip_if_already_completed_can_be_disabled(self) -> None:
+        repo = UniverseExpansionRunRepository()
+        run_date = date(2026, 8, 16)
+        repo.start_run(
+            run_id="run-1",
+            run_date=run_date,
+            trigger_type=TRIGGER_SCHEDULED,
+            dry_run=False,
+            allow_second_run_today=False,
+            started_at=datetime(2026, 8, 16, 5, 0, tzinfo=timezone.utc),
+        )
+        repo.finalize_run(
+            "run-1",
+            status=RUN_STATUS_COMPLETED,
+            stop_reason="SAFETY_CAP",
+            report={"symbols_started": 3, "symbols_completed": 3},
+            finished_at=datetime(2026, 8, 16, 5, 10, tzinfo=timezone.utc),
+        )
+        should_run, reason, _ = evaluate_scheduled_expansion_run(
+            repo,
+            run_date=run_date,
+            trigger_type=TRIGGER_SCHEDULED,
+            skip_if_already_completed=False,
+        )
+        self.assertTrue(should_run)
+        self.assertIsNone(reason)
+
     def test_dry_run_bypasses_duplicate_guard(self) -> None:
         repo = UniverseExpansionRunRepository()
         run_date = date(2026, 8, 16)

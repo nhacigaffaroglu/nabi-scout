@@ -205,6 +205,14 @@ def ingest_merged_exchange_listings(
     )
 
 
+def fetch_us_equity_listing_feeds(client: Any) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """Canonical scalable discovery feeds. All-or-nothing: callers must not ingest on failure."""
+    nasdaq_rows = list(client.get_nasdaq_listed())
+    other_rows = list(client.get_other_listed())
+    sec_rows = list(client.get_sec_companies())
+    return nasdaq_rows, other_rows, sec_rows
+
+
 def propose_external_discovery_symbols(
     symbols: Sequence[Any],
     *,

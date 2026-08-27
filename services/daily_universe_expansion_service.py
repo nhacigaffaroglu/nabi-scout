@@ -86,8 +86,14 @@ class DailyExpansionRunReport:
     trigger_type: str = ""
     symbol_details: List[SymbolRunDetail] = field(default_factory=list)
     queue_counts: Dict[str, int] = field(default_factory=dict)
+    queue_before: Dict[str, int] = field(default_factory=dict)
+    queue_after: Dict[str, int] = field(default_factory=dict)
+    orchestration_decision: str = ""
+    discovery: Dict[str, object] = field(default_factory=dict)
+    recovered_stale: int = 0
 
     def to_dict(self) -> Dict[str, object]:
+        queue_after = dict(self.queue_after or self.queue_counts)
         return {
             "run_id": self.run_id,
             "started_at": self.started_at,
@@ -106,7 +112,12 @@ class DailyExpansionRunReport:
             "stop_reason": self.stop_reason,
             "trigger_type": self.trigger_type,
             "symbol_details": [item.to_dict() for item in self.symbol_details],
-            "queue_counts": dict(self.queue_counts),
+            "queue_counts": dict(self.queue_counts or queue_after),
+            "queue_before": dict(self.queue_before),
+            "queue_after": queue_after,
+            "orchestration_decision": self.orchestration_decision,
+            "discovery": dict(self.discovery),
+            "recovered_stale": self.recovered_stale,
         }
 
 

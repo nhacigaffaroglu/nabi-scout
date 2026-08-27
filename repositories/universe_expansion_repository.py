@@ -250,3 +250,10 @@ class UniverseExpansionRepository:
             status = str(row.get("status") or "")
             counts[status] = counts.get(status, 0) + 1
         return counts
+
+    def count_due_retryable(self, now: datetime) -> int:
+        return sum(
+            1
+            for row in self.list_all()
+            if row.get("status") == EXPANSION_STATUS_RETRYABLE and _retry_is_due(row, now)
+        )
