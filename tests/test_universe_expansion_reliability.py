@@ -22,7 +22,7 @@ from services.scheduled_universe_expansion_service import (
     evaluate_scheduled_expansion_run,
 )
 from services.universe_expansion_contract import (
-    ERROR_CATEGORY_DATA_INSUFFICIENT,
+    EXPANSION_STATUS_COMPLETED,
     EXPANSION_STATUS_RETRYABLE,
     STOP_REASON_SAFETY_CAP,
 )
@@ -296,7 +296,7 @@ class OnboardingWriterTests(unittest.TestCase):
         status = onboarding_final_status(onboarding, budget_rate_limited=False)
         self.assertEqual(status, EXPANSION_STATUS_RETRYABLE)
 
-    def test_no_canonical_no_price_skips_stub_and_marks_incomplete(self) -> None:
+    def test_no_canonical_no_price_skips_stub_and_completes_queue(self) -> None:
         candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
         candidate_repo.upsert_expansion_candidate.return_value = None
         view = self._participation_view(available=True, status="Kontrol Et")
@@ -312,14 +312,15 @@ class OnboardingWriterTests(unittest.TestCase):
         ):
             onboarding = run_participation_onboarding("XOM", candidate_repo=candidate_repo)
         self.assertFalse(onboarding.candidate_upserted)
-        self.assertFalse(onboarding.success)
-        self.assertEqual(onboarding.error_category, ERROR_CATEGORY_DATA_INSUFFICIENT)
+        self.assertTrue(onboarding.success)
+        self.assertIsNone(onboarding.error_category)
+        self.assertEqual(onboarding.participation_status, "Kontrol Et")
         candidate_repo.upsert_expansion_candidate.assert_called_once()
         payload = candidate_repo.upsert_expansion_candidate.call_args.args[0]
         self.assertNotIn("current_price", payload)
         candidate_repo.upsert_by_symbol.assert_not_called()
         status = onboarding_final_status(onboarding, budget_rate_limited=False)
-        self.assertEqual(status, EXPANSION_STATUS_RETRYABLE)
+        self.assertEqual(status, EXPANSION_STATUS_COMPLETED)
 
     def test_existing_canonical_is_preserved(self) -> None:
         candidate_repo = MagicMock(spec=["upsert_expansion_candidate", "upsert_by_symbol"])
@@ -378,10 +379,10 @@ class OnboardingWriterTests(unittest.TestCase):
         self.assertEqual(row["status"], QUEUE_RETRYABLE)
         candidate_repo.upsert_expansion_candidate.assert_not_called()
 
-    def test_scheduled_path_no_stub_insert_queue_incomplete(self) -> None:
+    def test_scheduled_path_no_stub_insert_queue_completes(self) -> None:
         from repositories.universe_expansion_repository import UniverseExpansionRepository
         from services.daily_universe_expansion_service import DailyUniverseExpansionService
-        from services.universe_expansion_contract import EXPANSION_STATUS_RETRYABLE as QUEUE_RETRYABLE
+        from services.universe_expansion_contract import EXPANSION_STATUS_COMPLETED as QUEUE_COMPLETED
 
         queue_repo = UniverseExpansionRepository()
         queue_repo.upsert_pending("XOM", source_universe="pilot", priority=1)
@@ -418,11 +419,14 @@ class OnboardingWriterTests(unittest.TestCase):
             )
         row = queue_repo.get_by_symbol("XOM")
         candidate_repo.upsert_by_symbol.assert_not_called()
-        self.assertEqual(report.symbols_retryable, 1)
-        self.assertEqual(report.symbols_completed, 0)
-        self.assertEqual(row["status"], QUEUE_RETRYABLE)
-        self.assertEqual(row["last_error_category"], ERROR_CATEGORY_DATA_INSUFFICIENT)
-        self.assertIsNone(row["completed_at"])
+        self.assertEqual(report.symbols_retryable, 0)
+        self.assertEqual(report.symbols_completed, 1)
+        self.assertEqual(row["status"], QUEUE_COMPLETED)
+        self.assertIsNone(row["last_error_category"])
+        self.assertIsNone(row["next_retry_at"])
+        self.assertEqual(row["participation_status"], "Kontrol Et")
+        self.assertFalse(row["research_allowed"])
+        self.assertIsNotNone(row["completed_at"])
 
 
 class MissingRunsTableTests(unittest.TestCase):

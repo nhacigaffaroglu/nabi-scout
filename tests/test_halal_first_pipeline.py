@@ -177,7 +177,7 @@ class ExpansionTerminalTests(unittest.TestCase):
         )
         self.assertEqual(status, EXPANSION_STATUS_COMPLETED)
 
-    def test_kontrol_et_without_upsert_remains_retryable(self) -> None:
+    def test_kontrol_et_without_upsert_is_completed(self) -> None:
         status = onboarding_final_status(
             OnboardingResult(
                 symbol="ORCL",
@@ -189,7 +189,7 @@ class ExpansionTerminalTests(unittest.TestCase):
             ),
             budget_rate_limited=False,
         )
-        self.assertEqual(status, EXPANSION_STATUS_RETRYABLE)
+        self.assertEqual(status, EXPANSION_STATUS_COMPLETED)
 
     def test_rejected_rows_do_not_consume_safety_cap(self) -> None:
         repo = UniverseExpansionRepository()

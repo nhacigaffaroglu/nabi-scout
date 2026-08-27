@@ -52,7 +52,6 @@ from services.sec_participation_evidence_population import (
     resolve_assessed_equity_population,
 )
 from services.universe_expansion_contract import (
-    ERROR_CATEGORY_DATA_INSUFFICIENT,
     EXPANSION_STATUS_COMPLETED,
     EXPANSION_STATUS_PENDING,
     EXPANSION_STATUS_RETRYABLE,
@@ -60,6 +59,7 @@ from services.universe_expansion_contract import (
 from services.universe_expansion_onboarding_service import (
     OnboardingResult,
     compute_next_retry_at,
+    is_canonical_participation_status,
     onboarding_final_status,
 )
 
@@ -246,31 +246,14 @@ def _queue_onboarding_for_status(
     research_allowed: bool,
     snapshot_saved: bool,
 ) -> OnboardingResult:
-    if status == PARTICIPATION_STATUS_UYGUN:
-        return OnboardingResult(
-            symbol=symbol,
-            success=True,
-            participation_status=status,
-            research_allowed=research_allowed,
-            snapshot_saved=snapshot_saved,
-            candidate_upserted=False,
-        )
-    if status == PARTICIPATION_STATUS_UYGUN_DEGIL:
-        return OnboardingResult(
-            symbol=symbol,
-            success=False,
-            participation_status=status,
-            research_allowed=False,
-            error_category=None,
-            snapshot_saved=snapshot_saved,
-            candidate_upserted=False,
-        )
+    participation_status = status or PARTICIPATION_STATUS_KONTROL_ET
+    canonical = is_canonical_participation_status(participation_status)
     return OnboardingResult(
         symbol=symbol,
-        success=False,
-        participation_status=status or PARTICIPATION_STATUS_KONTROL_ET,
-        research_allowed=False,
-        error_category=ERROR_CATEGORY_DATA_INSUFFICIENT,
+        success=canonical,
+        participation_status=participation_status,
+        research_allowed=bool(research_allowed) if participation_status == PARTICIPATION_STATUS_UYGUN else False,
+        error_category=None,
         snapshot_saved=snapshot_saved,
         candidate_upserted=False,
     )

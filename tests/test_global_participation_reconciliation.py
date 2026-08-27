@@ -327,7 +327,7 @@ class GlobalReconcileTests(unittest.TestCase):
             self.assertEqual(updated["participation_status"], PARTICIPATION_STATUS_UYGUN_DEGIL)
             self.assertFalse(updated["research_allowed"])
 
-    def test_kontrol_et_stays_retryable_and_pending_is_untouched(self) -> None:
+    def test_kontrol_et_is_queue_terminal_and_pending_is_untouched(self) -> None:
         with TemporaryDirectory() as tmp:
             cache = SecCompanyFactsCache(root=Path(tmp))
             incomplete = _company_facts(
@@ -349,7 +349,7 @@ class GlobalReconcileTests(unittest.TestCase):
             )
             self.assertEqual([item.symbol for item in plan.items], ["CCC"])
             self.assertEqual(plan.items[0].new_status, PARTICIPATION_STATUS_KONTROL_ET)
-            self.assertEqual(plan.items[0].queue_status, EXPANSION_STATUS_RETRYABLE)
+            self.assertEqual(plan.items[0].queue_status, EXPANSION_STATUS_COMPLETED)
             queue_repo = UniverseExpansionRepository()
             ccc = queue_repo.upsert_pending("CCC", source_universe="test", priority=1)
             queue_repo.finalize(ccc["id"], {"status": EXPANSION_STATUS_RETRYABLE})
@@ -361,7 +361,12 @@ class GlobalReconcileTests(unittest.TestCase):
                 queue_repo=queue_repo,
                 queue_rows=[ccc, pending],
             )
-            self.assertEqual(queue_repo.get_by_symbol("CCC")["status"], EXPANSION_STATUS_RETRYABLE)
+            updated = queue_repo.get_by_symbol("CCC")
+            self.assertEqual(updated["status"], EXPANSION_STATUS_COMPLETED)
+            self.assertEqual(updated["participation_status"], PARTICIPATION_STATUS_KONTROL_ET)
+            self.assertFalse(updated["research_allowed"])
+            self.assertIsNone(updated["last_error_category"])
+            self.assertIsNone(updated["next_retry_at"])
             self.assertEqual(queue_repo.get_by_symbol("PEND")["status"], EXPANSION_STATUS_PENDING)
 
     def test_candidate_sync_writes_participation_status_only(self) -> None:
