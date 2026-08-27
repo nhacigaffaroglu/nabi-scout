@@ -69,7 +69,13 @@ from services.portfolio_intelligence_enrichment_contract import (
 )
 from services.research_intelligence_service import build_research_intelligence
 from services.wealth_goal_planning import planning_conversion
-from services.wealth_new_money_allocation import AllocationPlan, allocate_new_money
+from services.wealth_new_money_allocation import (
+    AllocationPlan,
+    allocate_new_money,
+    REASON_DATA_INCOMPLETE,
+    REASON_FX_REQUIRED,
+    REASON_NO_ELIGIBLE_SECURITY,
+)
 
 
 def _text(value: Any) -> str:
@@ -155,6 +161,7 @@ def _allocation_dict(plan: Optional[AllocationPlan]) -> dict[str, Any]:
         "total_allocated": str(plan.total_allocated),
         "residual_cash": str(plan.residual_cash),
         "limitations": list(plan.limitations),
+        "primary_dimension": plan.primary_dimension,
         "recommendations": [
             {
                 "symbol": item.symbol,
@@ -169,6 +176,7 @@ def _allocation_dict(plan: Optional[AllocationPlan]) -> dict[str, Any]:
             {
                 "symbol": item.symbol,
                 "reason_code": item.reason_code,
+                "reason_text": item.reason_text,
             }
             for item in plan.skipped
         ],
@@ -301,6 +309,19 @@ def _compose_opportunity_status(
     return "\n".join(lines)
 
 
+_LAYER_LABELS_TR = {
+    "equity": "hisse",
+    "etf": "ETF",
+    "sukuk": "sukuk",
+    "cash": "nakit",
+}
+
+
+def _layer_label_tr(bucket_id: str) -> str:
+    key = str(bucket_id or "").strip()
+    return _LAYER_LABELS_TR.get(key.lower(), key)
+
+
 def _compose_new_money(new_money: Mapping[str, Any]) -> str:
     if new_money.get("status") == AMOUNT_REQUIRED:
         return AMOUNT_CLARIFICATION
@@ -309,20 +330,62 @@ def _compose_new_money(new_money: Mapping[str, Any]) -> str:
     currency = new_money.get("currency") or "TRY"
     amount = format_try_display(new_money.get("input_amount"), currency)
     residual = format_try_display(new_money.get("residual_cash"), currency)
+    allocated = format_try_display(new_money.get("total_allocated"), currency)
     recs = new_money.get("recommendations") or []
+    limitations = [str(item) for item in (new_money.get("limitations") or [])]
+    skipped = new_money.get("skipped") or []
+    if "TARGET_NOT_CONFIGURED" in limitations:
+        return "Yeni para dağılımı için portföy hedefleri henüz tanımlı değil."
     if recs:
         lines = [f"{amount} için mevcut verilere göre dağıtım:"]
         for item in recs:
-            allocated = format_try_display(item.get("allocated_amount"), currency)
-            lines.append(
-                f"- {item['symbol']}: {present_action_label(item.get('reason_code')) or item.get('reason_text')} ({allocated})"
-            )
+            allocated_item = format_try_display(item.get("allocated_amount"), currency)
+            reason = str(item.get("reason_text") or "").strip()
+            lines.append(f"- {item['symbol']}: {reason} ({allocated_item})")
         if residual:
-            lines.append(f"Artan nakit: {residual}.")
+            lines.append(
+                f"Dağıtılabilen tutar {allocated}. Kalan {residual} nakitte tutulabilir."
+            )
         return "\n".join(lines)
+    fx_blocked = any(
+        item.get("reason_code") == REASON_FX_REQUIRED for item in skipped
+    ) or any("FX" in item for item in limitations)
+    if fx_blocked:
+        return (
+            "Dağılım hesaplanamadı çünkü gerekli kur dönüşümü mevcut değil. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    unfilled = [
+        _layer_label_tr(item.split(":", 1)[1])
+        for item in limitations
+        if item.startswith("UNFILLED_UNDERWEIGHT:") and ":" in item
+    ]
+    if unfilled:
+        layers = ", ".join(dict.fromkeys(unfilled))
+        return (
+            f"Portföyde {layers} katmanında açık var ancak şu anda bu katmanda "
+            "eklemeye uygun katılım onaylı bir varlık yok. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if any(item.get("reason_code") == REASON_NO_ELIGIBLE_SECURITY for item in skipped):
+        return (
+            "Şu anda güvenli stratejik dağıtım için uygun bir varlık yok. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    layer_unmapped = any(
+        item.get("reason_code") == REASON_DATA_INCOMPLETE
+        and "katman" in str(item.get("reason_text") or "").lower()
+        for item in skipped
+    )
+    if layer_unmapped:
+        return (
+            "Portföy hedefleri tanımlı ancak mevcut uygun varlıklar bu hedeflerin "
+            "katmanlarına bağlanamadı. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
     return (
-        f"{amount} için mevcut verilere göre dağıtılabilecek onaylı bir yatırım bulunmuyor. "
-        f"{residual or amount} nakitte kalabilir."
+        "Şu anda güvenli stratejik dağıtım yapılamıyor. "
+        f"{residual or amount} nakitte tutulabilir."
     )
 
 

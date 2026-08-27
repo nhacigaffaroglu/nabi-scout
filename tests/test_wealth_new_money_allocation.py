@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from services.portfolio_allocation_intelligence import (
     AllocationDimension,
@@ -20,11 +21,14 @@ from services.wealth_goal_models import ConversionAssumption
 from services.wealth_new_money_allocation import (
     ACTIONABLE_NEW_DECISIONS,
     REASON_BELOW_MIN_TRADE,
-    REASON_DATA_INCOMPLETE,
+    REASON_CONCENTRATION_LIMIT,
     REASON_EXISTING_HOLDING_TOPUP,
+    REASON_FX_REQUIRED,
     REASON_INSUFFICIENT_CASH,
+    REASON_MIX_MAINTENANCE,
     REASON_NOT_ACTIONABLE,
     REASON_OVERWEIGHT_LAYER,
+    REASON_PARTICIPATION_BLOCKED,
     REASON_STRONG_CANDIDATE,
     allocate_new_money,
     is_actionable_new_decision,
@@ -62,7 +66,13 @@ def _row(
     price: float = 100.0,
     currency: str = "USD",
     price_available: bool = True,
+    participation: str | None = "Uygun",
 ) -> PositionValuationRow:
+    nabi = (
+        None
+        if participation is None
+        else SimpleNamespace(participation_status=participation, symbol=symbol)
+    )
     return PositionValuationRow(
         position_id=f"p-{symbol}",
         account_id="acc-1",
@@ -81,6 +91,7 @@ def _row(
         weight_pct=weight_pct,
         is_cash=asset_class == "cash",
         included_in_base_totals=price_available and currency == "USD",
+        nabi=nabi,
     )
 
 
@@ -141,14 +152,14 @@ def _candidate(symbol: str, decision, price=100, **extra) -> dict:
     return row
 
 
-def _plan(*, view=None, policy=None, candidates=(), amount="60000", min_trade="0"):
+def _plan(*, view=None, policy=None, candidates=(), amount="60000", min_trade="0", conversion=...):
     return allocate_new_money(
         available_amount=Decimal(amount),
         amount_currency="TRY",
         portfolio_view=view or _view([_row("AAPL", market_value=10000, weight_pct=100, price=100)]),
         policy=policy or _policy(equity=40, etf=60),
         candidates=candidates,
-        conversion=_fx(),
+        conversion=_fx() if conversion is ... else conversion,
         minimum_trade_amount=Decimal(min_trade),
     )
 
@@ -200,11 +211,11 @@ class HoldingAndLayerTests(unittest.TestCase):
     def test_existing_holding_can_top_up_without_aday(self) -> None:
         view = _view(
             [
-                _row("AAPL", market_value=4000, weight_pct=40, price=100),
-                _row("SPUS", market_value=6000, weight_pct=60, price=100, asset_class="etf"),
+                _row("AAPL", market_value=1000, weight_pct=10, price=100),
+                _row("SPUS", market_value=9000, weight_pct=90, price=100, asset_class="etf"),
             ]
         )
-        plan = _plan(view=view, policy=_policy(equity=80, etf=20), candidates=[])
+        plan = _plan(view=view, policy=_policy(equity=40, etf=60), candidates=[])
         symbols = [row.symbol for row in plan.recommendations]
         self.assertIn("AAPL", symbols)
         aapl = next(row for row in plan.recommendations if row.symbol == "AAPL")
@@ -275,7 +286,7 @@ class SizingTests(unittest.TestCase):
             policy=_policy(equity=70, etf=30),
             candidates=[_candidate("MSFT", "GÜÇLÜ ADAY", price=0)],
         )
-        self.assertTrue(any(row.symbol == "MSFT" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped))
+        self.assertTrue(any(row.symbol == "MSFT" and row.reason_code == REASON_NOT_ACTIONABLE for row in plan.skipped))
         self.assertNotIn("MSFT", [row.symbol for row in plan.recommendations])
 
     def test_strong_candidate_ranks_ahead_of_aday(self) -> None:
@@ -316,6 +327,186 @@ class SizingTests(unittest.TestCase):
         first = _plan(**kwargs)
         second = _plan(**kwargs)
         self.assertEqual(first, second)
+
+
+def _on_target_book():
+    return _view(
+        [
+            _row("AAPL", market_value=1400, weight_pct=14, price=100),
+            _row("MSFT", market_value=1400, weight_pct=14, price=100),
+            _row("NVDA", market_value=1400, weight_pct=14, price=100),
+            _row("GOOG", market_value=1400, weight_pct=14, price=100),
+            _row("AMZN", market_value=1400, weight_pct=14, price=100),
+            _row("SPUS", market_value=1500, weight_pct=15, price=100, asset_class="etf"),
+            _row("HLAL", market_value=1500, weight_pct=15, price=100, asset_class="etf"),
+        ]
+    )
+
+
+class NewMoneyEngineV2Tests(unittest.TestCase):
+    def test_a_underweight_existing_uygun_topup(self) -> None:
+        view = _view(
+            [
+                _row("AAPL", market_value=1000, weight_pct=10, price=100),
+                _row("SPUS", market_value=9000, weight_pct=90, price=100, asset_class="etf"),
+            ]
+        )
+        plan = _plan(view=view, policy=_policy(equity=40, etf=60), candidates=[], amount="100000")
+        rec = next(row for row in plan.recommendations if row.symbol == "AAPL")
+        self.assertEqual(rec.existing_or_new, "existing")
+        self.assertEqual(rec.reason_code, REASON_EXISTING_HOLDING_TOPUP)
+        self.assertGreater(rec.allocated_amount, 0)
+        self.assertLess(plan.residual_cash, plan.input_amount)
+
+    def test_b_underweight_new_strong_candidate(self) -> None:
+        view = _view(
+            [_row("SPUS", market_value=10000, weight_pct=100, price=100, asset_class="etf")]
+        )
+        plan = _plan(
+            view=view,
+            policy=_policy(equity=70, etf=30),
+            candidates=[_candidate("CRM", "GÜÇLÜ ADAY")],
+            amount="100000",
+        )
+        rec = next(row for row in plan.recommendations if row.symbol == "CRM")
+        self.assertEqual(rec.existing_or_new, "new")
+        self.assertEqual(rec.reason_code, REASON_STRONG_CANDIDATE)
+        self.assertGreater(rec.allocated_amount, 0)
+
+    def test_c_kontrol_et_candidate_is_blocked(self) -> None:
+        view = _view(
+            [_row("SPUS", market_value=10000, weight_pct=100, price=100, asset_class="etf")]
+        )
+        plan = _plan(
+            view=view,
+            policy=_policy(equity=70, etf=30),
+            candidates=[_candidate("FOO", "GÜÇLÜ ADAY", participation_status="Kontrol Et")],
+            amount="100000",
+        )
+        self.assertEqual(plan.recommendations, ())
+        self.assertEqual(plan.residual_cash, Decimal("100000"))
+        self.assertTrue(
+            any(row.symbol == "FOO" and row.reason_code == REASON_PARTICIPATION_BLOCKED for row in plan.skipped)
+        )
+
+    def test_d_uygun_degil_holding_is_not_topped_up(self) -> None:
+        view = _view(
+            [
+                _row(
+                    "AAPL",
+                    market_value=1000,
+                    weight_pct=10,
+                    price=100,
+                    participation="Uygun Değil",
+                ),
+                _row("SPUS", market_value=9000, weight_pct=90, price=100, asset_class="etf"),
+            ]
+        )
+        plan = _plan(view=view, policy=_policy(equity=40, etf=60), candidates=[], amount="100000")
+        self.assertNotIn("AAPL", [row.symbol for row in plan.recommendations])
+        self.assertTrue(
+            any(row.symbol == "AAPL" and row.reason_code == REASON_PARTICIPATION_BLOCKED for row in plan.skipped)
+        )
+        self.assertEqual(plan.residual_cash, Decimal("100000"))
+
+    def test_e_on_target_mix_is_not_forced_cash(self) -> None:
+        plan = _plan(
+            view=_on_target_book(),
+            policy=_policy(equity=70, etf=30),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertTrue(plan.recommendations)
+        layers = {row.layer for row in plan.recommendations}
+        self.assertIn("equity", layers)
+        self.assertIn("etf", layers)
+        self.assertGreater(plan.total_allocated, 0)
+        self.assertLess(plan.residual_cash, plan.input_amount)
+        self.assertTrue(all(row.reason_code == REASON_MIX_MAINTENANCE for row in plan.recommendations))
+
+    def test_f_on_target_one_eligible_sleeve_keeps_residual(self) -> None:
+        view = _view(
+            [
+                _row("AAPL", market_value=1400, weight_pct=14, price=100, participation="Uygun Değil"),
+                _row("MSFT", market_value=1400, weight_pct=14, price=100, participation="Uygun Değil"),
+                _row("NVDA", market_value=1400, weight_pct=14, price=100, participation="Uygun Değil"),
+                _row("GOOG", market_value=1400, weight_pct=14, price=100, participation="Uygun Değil"),
+                _row("AMZN", market_value=1400, weight_pct=14, price=100, participation="Uygun Değil"),
+                _row("SPUS", market_value=1500, weight_pct=15, price=100, asset_class="etf"),
+                _row("HLAL", market_value=1500, weight_pct=15, price=100, asset_class="etf"),
+            ]
+        )
+        plan = _plan(view=view, policy=_policy(equity=70, etf=30), candidates=[], amount="100000")
+        self.assertTrue(plan.recommendations)
+        self.assertTrue(all(row.layer == "etf" for row in plan.recommendations))
+        self.assertGreater(plan.residual_cash, Decimal("0"))
+        self.assertLess(plan.total_allocated, plan.input_amount)
+        self.assertLessEqual(plan.total_allocated, Decimal("40000"))
+
+    def test_g_empty_book_first_lira_bootstrap(self) -> None:
+        plan = _plan(
+            view=_view([]),
+            policy=_policy(equity=70, etf=30),
+            candidates=[
+                _candidate("CRM", "GÜÇLÜ ADAY"),
+                _candidate("SPUS", "ADAY", asset_type="ETF"),
+            ],
+            amount="100000",
+        )
+        self.assertTrue(plan.recommendations)
+        self.assertGreater(plan.total_allocated, 0)
+        symbols = {row.symbol for row in plan.recommendations}
+        self.assertTrue(symbols & {"CRM", "SPUS"})
+        self.assertEqual(plan.total_allocated + plan.residual_cash, plan.input_amount)
+
+    def test_h_concentration_blocks_or_reduces(self) -> None:
+        view = _view(
+            [
+                _row("AAPL", market_value=2800, weight_pct=28, price=100),
+                _row("SPUS", market_value=7200, weight_pct=72, price=100, asset_class="etf"),
+            ]
+        )
+        plan = _plan(
+            view=view,
+            policy=_policy(equity=40, etf=60),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertNotIn("AAPL", [row.symbol for row in plan.recommendations])
+        self.assertTrue(
+            any(
+                row.symbol == "AAPL" and row.reason_code == REASON_CONCENTRATION_LIMIT
+                for row in plan.skipped
+            )
+        )
+        self.assertEqual(plan.residual_cash, Decimal("100000"))
+
+    def test_i_fx_unavailable_leaves_residual(self) -> None:
+        view = _view(
+            [_row("SPUS", market_value=10000, weight_pct=100, price=100, asset_class="etf")]
+        )
+        plan = _plan(
+            view=view,
+            policy=_policy(equity=70, etf=30),
+            candidates=[_candidate("CRM", "GÜÇLÜ ADAY")],
+            amount="100000",
+            conversion=None,
+        )
+        self.assertEqual(plan.recommendations, ())
+        self.assertEqual(plan.residual_cash, Decimal("100000"))
+        self.assertTrue(any(row.reason_code == REASON_FX_REQUIRED for row in plan.skipped))
+
+    def test_j_no_eligible_securities_is_valid_residual(self) -> None:
+        plan = _plan(
+            view=_view([]),
+            policy=_policy(equity=70, etf=30),
+            candidates=[],
+            amount="100000",
+        )
+        self.assertEqual(plan.recommendations, ())
+        self.assertEqual(plan.residual_cash, Decimal("100000"))
+        self.assertIn("UNFILLED_UNDERWEIGHT:equity", plan.limitations)
+        self.assertIn("RESIDUAL_CASH", plan.limitations)
 
 
 class SafetyTests(unittest.TestCase):

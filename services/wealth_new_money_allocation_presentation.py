@@ -11,12 +11,16 @@ from services.wealth_new_money_allocation import (
     AllocationSkip,
     REASON_BELOW_MIN_TRADE,
     REASON_CANDIDATE,
+    REASON_CONCENTRATION_LIMIT,
     REASON_DATA_INCOMPLETE,
     REASON_EXISTING_HOLDING_TOPUP,
+    REASON_FX_REQUIRED,
     REASON_INSUFFICIENT_CASH,
     REASON_LAYER_DEFICIT,
+    REASON_MIX_MAINTENANCE,
     REASON_NOT_ACTIONABLE,
     REASON_OVERWEIGHT_LAYER,
+    REASON_PARTICIPATION_BLOCKED,
     REASON_STRONG_CANDIDATE,
 )
 
@@ -48,6 +52,7 @@ USER_REASON_LABELS = {
     REASON_EXISTING_HOLDING_TOPUP: "Mevcut pozisyonu hedef ağırlığa yaklaştırıyor.",
     REASON_STRONG_CANDIDATE: "Güçlü aday.",
     REASON_CANDIDATE: "Aday.",
+    REASON_MIX_MAINTENANCE: "Hedef karışımı korumak için dağıtılır.",
 }
 
 SKIP_REASON_LABELS = {
@@ -55,6 +60,9 @@ SKIP_REASON_LABELS = {
     REASON_BELOW_MIN_TRADE: "Minimum işlem tutarının altında.",
     REASON_NOT_ACTIONABLE: "İşlem yapılabilir karar yok.",
     REASON_INSUFFICIENT_CASH: "Tek lot için nakit yetersiz.",
+    REASON_PARTICIPATION_BLOCKED: "Katılım uygun olmadığı için eklenmez.",
+    REASON_CONCENTRATION_LIMIT: "Tek pozisyon yoğunluk eşiği aşılır.",
+    REASON_FX_REQUIRED: "Gerekli kur dönüşümü yok.",
 }
 
 _PRICE_HINTS = ("fiyat", "price")

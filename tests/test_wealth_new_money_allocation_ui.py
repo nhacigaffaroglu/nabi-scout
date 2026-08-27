@@ -321,15 +321,15 @@ class RecommendationRenderTests(unittest.TestCase):
     def test_recommendations_existing_new_quantity_residual_skipped(self) -> None:
         view = _view(
             [
-                _row("AAPL", market_value=4000, weight_pct=40, price=100),
-                _row("SPUS", market_value=6000, weight_pct=60, price=100, asset_class="etf"),
+                _row("AAPL", market_value=1000, weight_pct=10, price=100),
+                _row("SPUS", market_value=9000, weight_pct=90, price=100, asset_class="etf"),
             ]
         )
         result = allocate_new_money(
             available_amount=Decimal("6000"),
             amount_currency="TRY",
             portfolio_view=view,
-            policy=_policy(equity=80, etf=20),
+            policy=_policy(equity=40, etf=60),
             candidates=[_candidate("MSFT", "GÜÇLÜ ADAY", price=100)],
             conversion=_fx(),
         )
@@ -339,7 +339,7 @@ class RecommendationRenderTests(unittest.TestCase):
                 portfolio_view=view,
                 wealth=_wealth(),
                 plan=_canonical_plan(),
-                policy=_policy(equity=80, etf=20),
+                policy=_policy(equity=40, etf=60),
                 candidates=[_candidate("MSFT", "GÜÇLÜ ADAY", price=100)],
                 conversion=_fx(),
                 session_state=dummy.session_state,

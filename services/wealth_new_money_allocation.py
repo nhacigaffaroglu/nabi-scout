@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
+from config.participation_catalog import configured_participation_for_symbol
+from services.candidate_pipeline_presentation import is_actionable_opportunity
+from services.participation_filter_service import (
+    PARTICIPATION_UNKNOWN,
+    normalize_participation_status,
+)
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.portfolio_allocation_intelligence import (
     AllocationDimension,
     AllocationIntelligenceView,
@@ -28,6 +35,9 @@ from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
     PositionValuationRow,
 )
+from services.portfolio_intelligence_enrichment_contract import (
+    CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
+)
 from services.wealth_contract import ASSET_CLASS_EQUITY, ASSET_CLASS_ETF, ASSET_CLASS_FUND
 from services.wealth_goal_models import ConversionAssumption
 from services.wealth_price_service import normalize_currency
@@ -42,6 +52,7 @@ BLOCKED_NEW_DECISIONS = frozenset({
 })
 DECISION_RANK = {"GÜÇLÜ ADAY": 0, "ADAY": 1}
 BLOCKING_PARTICIPATION = "UYGUN DEĞİL"
+CONCENTRATION_CAP = Decimal(str(CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT)) / Decimal("100")
 
 REASON_LAYER_DEFICIT = "LAYER_DEFICIT"
 REASON_EXISTING_HOLDING_TOPUP = "EXISTING_HOLDING_TOPUP"
@@ -54,6 +65,10 @@ REASON_NOT_ACTIONABLE = "NOT_ACTIONABLE_DECISION"
 REASON_OVERWEIGHT_LAYER = "OVERWEIGHT_LAYER"
 REASON_FX_REQUIRED = "FX_CONVERSION_REQUIRED"
 REASON_PARTICIPATION_BLOCKED = "PARTICIPATION_BLOCKED"
+REASON_CONCENTRATION_LIMIT = "CONCENTRATION_LIMIT"
+REASON_MIX_MAINTENANCE = "MIX_MAINTENANCE"
+REASON_RESIDUAL_CASH = "RESIDUAL_CASH"
+REASON_NO_ELIGIBLE_SECURITY = "NO_ELIGIBLE_SECURITY"
 
 CANDIDATE_CLASS_ALIASES = {
     "hisse": "equity",
@@ -144,7 +159,37 @@ def _norm_decision(value: Any) -> Optional[str]:
 
 
 def _participation_blocked(value: Any) -> bool:
-    return str(value or "").strip().upper() == BLOCKING_PARTICIPATION
+    return not _participation_is_uygun(value)
+
+
+def _participation_is_uygun(value: Any) -> bool:
+    return normalize_participation_status(value) == PARTICIPATION_STATUS_UYGUN
+
+
+def _resolve_participation(
+    symbol: str,
+    *,
+    position: Any = None,
+    candidate: Optional[Mapping[str, Any]] = None,
+    asset: Optional[Mapping[str, Any]] = None,
+) -> str:
+    nabi = getattr(position, "nabi", None) if position is not None else None
+    if nabi is not None:
+        status = normalize_participation_status(getattr(nabi, "participation_status", None))
+        if status != PARTICIPATION_UNKNOWN:
+            return status
+    if candidate is not None:
+        status = normalize_participation_status(candidate.get("participation_status"))
+        if status != PARTICIPATION_UNKNOWN:
+            return status
+    if asset is not None:
+        status = normalize_participation_status(asset.get("participation_status"))
+        if status != PARTICIPATION_UNKNOWN:
+            return status
+    catalog = configured_participation_for_symbol(symbol)
+    if catalog is not None:
+        return normalize_participation_status(catalog[0])
+    return PARTICIPATION_UNKNOWN
 
 
 def is_actionable_new_decision(decision: Any) -> bool:
@@ -334,10 +379,31 @@ def allocate_new_money(
         if str(row.get("symbol") or "").strip()
     }
     held = _held_symbols(portfolio_view)
+    candidates_by_symbol = {
+        str(raw.get("symbol") or "").strip().upper(): raw
+        for raw in candidates
+        if str(raw.get("symbol") or "").strip()
+    }
+    existing_mv: Dict[str, Decimal] = {}
     existing_secs: list[_Security] = []
     for row in _existing_positions(portfolio_view):
         symbol = str(row.symbol or "").strip().upper()
-        if not symbol:
+        if not symbol or row.is_cash:
+            continue
+        status = _resolve_participation(
+            symbol,
+            position=row,
+            candidate=candidates_by_symbol.get(symbol),
+            asset=asset_by_symbol.get(symbol) or asset_by_id.get(str(row.asset_id or "")),
+        )
+        if not _participation_is_uygun(status):
+            skipped.append(
+                AllocationSkip(
+                    symbol,
+                    REASON_PARTICIPATION_BLOCKED,
+                    "Katılım durumu mevcut pozisyon artırımını engelliyor.",
+                )
+            )
             continue
         asset_class, market = _classify(
             row, asset_by_id=asset_by_id, asset_by_symbol=asset_by_symbol
@@ -363,6 +429,18 @@ def allocate_new_money(
                 AllocationSkip(symbol, REASON_DATA_INCOMPLETE, "Mevcut fiyat yok veya geçersiz.")
             )
             continue
+        mv = _convert(
+            Decimal(str(row.market_value or 0)),
+            from_currency=normalize_currency(row.valuation_currency),
+            to_currency=currency,
+            conversion=conversion,
+        )
+        if row.market_value and mv is None:
+            skipped.append(
+                AllocationSkip(symbol, REASON_FX_REQUIRED, "Pozisyon değeri çevrilemedi.")
+            )
+            continue
+        existing_mv[symbol] = existing_mv.get(symbol, Decimal("0")) + (mv or Decimal("0"))
         existing_secs.append(
             _Security(
                 symbol=symbol,
@@ -381,22 +459,22 @@ def allocate_new_money(
         symbol = str(raw.get("symbol") or "").strip().upper()
         if not symbol or symbol in held:
             continue
-        decision = _norm_decision(raw.get("decision"))
-        if not is_actionable_new_decision(decision):
-            skipped.append(
-                AllocationSkip(
-                    symbol,
-                    REASON_NOT_ACTIONABLE,
-                    "Yeni fırsat için karar GÜÇLÜ ADAY veya ADAY değil.",
-                )
-            )
-            continue
-        if _participation_blocked(raw.get("participation_status")):
+        status = _resolve_participation(symbol, candidate=raw)
+        if not _participation_is_uygun(status):
             skipped.append(
                 AllocationSkip(
                     symbol,
                     REASON_PARTICIPATION_BLOCKED,
                     "Katılım durumu yeni fırsat tahsisini engelliyor.",
+                )
+            )
+            continue
+        if not is_actionable_opportunity(raw):
+            skipped.append(
+                AllocationSkip(
+                    symbol,
+                    REASON_NOT_ACTIONABLE,
+                    "Yeni fırsat kanonik onaylı fırsat eşiğini karşılamıyor.",
                 )
             )
             continue
@@ -428,7 +506,7 @@ def allocate_new_money(
                 symbol=symbol,
                 existing=False,
                 layer=layer,
-                decision=decision,
+                decision=_norm_decision(raw.get("decision")),
                 price=price,
                 price_currency=normalize_currency(raw.get("currency") or currency),
                 asset_class=asset_class,
@@ -443,29 +521,70 @@ def allocate_new_money(
     remaining = amount
     total_value = Decimal(str(intelligence.observable_total_market_value or 0))
     recs: Dict[str, AllocationRecommendation] = {}
+    fill_mode = "deficit"
+    base_ccy = normalize_currency(getattr(portfolio_view, "base_currency", None) or currency)
+    initial_total_amount = _convert(
+        total_value,
+        from_currency=base_ccy,
+        to_currency=currency,
+        conversion=conversion,
+    )
+    if initial_total_amount is None:
+        initial_total_amount = total_value if base_ccy == currency else Decimal("0")
+    post_contribution_book = initial_total_amount + amount
 
     def _unit_cost(sec: _Security) -> Optional[Decimal]:
-        converted = _convert(
+        return _convert(
             sec.price,
             from_currency=sec.price_currency,
             to_currency=currency,
             conversion=conversion,
         )
-        return converted
+
+    def _concentration_headroom(symbol: str) -> Decimal:
+        cap = CONCENTRATION_CAP * post_contribution_book
+        current = existing_mv.get(symbol, Decimal("0"))
+        return cap - current
 
     def _add(sec: _Security, quantity: Decimal, spent: Decimal) -> None:
         nonlocal remaining, total_value
         remaining -= spent
         total_value += spent
         bucket_value[sec.layer] = bucket_value.get(sec.layer, Decimal("0")) + spent
+        existing_mv[sec.symbol] = existing_mv.get(sec.symbol, Decimal("0")) + spent
         prior = recs.get(sec.symbol)
         if prior is None:
-            if sec.existing:
-                code, text = REASON_EXISTING_HOLDING_TOPUP, "Mevcut pozisyon, açık katmanda tamamlanır."
+            if fill_mode == "mix":
+                if sec.existing:
+                    code, text = (
+                        REASON_MIX_MAINTENANCE,
+                        "Mevcut pozisyon, hedef karışımı korumak için artırılır.",
+                    )
+                elif sec.decision == "GÜÇLÜ ADAY":
+                    code, text = (
+                        REASON_MIX_MAINTENANCE,
+                        "GÜÇLÜ ADAY, hedef karışımı korumak için eklenir.",
+                    )
+                else:
+                    code, text = (
+                        REASON_MIX_MAINTENANCE,
+                        "ADAY, hedef karışımı korumak için eklenir.",
+                    )
+            elif sec.existing:
+                code, text = (
+                    REASON_EXISTING_HOLDING_TOPUP,
+                    "Mevcut pozisyon, açık katmanda tamamlanır.",
+                )
             elif sec.decision == "GÜÇLÜ ADAY":
-                code, text = REASON_STRONG_CANDIDATE, "GÜÇLÜ ADAY, açık katmana yeni fırsat olarak eklenir."
+                code, text = (
+                    REASON_STRONG_CANDIDATE,
+                    "GÜÇLÜ ADAY, açık katmana yeni fırsat olarak eklenir.",
+                )
             else:
-                code, text = REASON_CANDIDATE, "ADAY, açık katmana yeni fırsat olarak eklenir."
+                code, text = (
+                    REASON_CANDIDATE,
+                    "ADAY, açık katmana yeni fırsat olarak eklenir.",
+                )
             recs[sec.symbol] = AllocationRecommendation(
                 symbol=sec.symbol,
                 existing_or_new="existing" if sec.existing else "new",
@@ -476,7 +595,7 @@ def allocate_new_money(
                 quantity=quantity,
                 allocated_amount=spent,
                 reason_code=code,
-                reason_text=f"{text} ({REASON_LAYER_DEFICIT}: {sec.layer})",
+                reason_text=text,
             )
             return
         recs[sec.symbol] = AllocationRecommendation(
@@ -494,7 +613,21 @@ def allocate_new_money(
 
     def _needed(layer: str) -> Decimal:
         target_pct = target_by_bucket.get(layer, Decimal("0")) / Decimal("100")
+        if target_pct <= 0:
+            return Decimal("0")
+        if fill_mode == "mix":
+            sleeve_spent = Decimal("0")
+            for rec in recs.values():
+                if rec.layer == layer:
+                    sleeve_spent += rec.allocated_amount
+            return max(target_pct * amount - sleeve_spent, Decimal("0"))
         current_b = bucket_value.get(layer, Decimal("0"))
+        if initial_total_amount <= 0:
+            sleeve_spent = Decimal("0")
+            for rec in recs.values():
+                if rec.layer == layer:
+                    sleeve_spent += rec.allocated_amount
+            return max(target_pct * amount - sleeve_spent, Decimal("0"))
         if target_pct >= 1:
             return remaining
         fill = (target_pct * total_value - current_b) / (Decimal("1") - target_pct)
@@ -513,16 +646,35 @@ def allocate_new_money(
             )
             return False
         need = _needed(sec.layer)
-        spent = qty * unit + fee
-        if spent > remaining or spent > need:
-            if sec.whole_share:
-                skipped.append(
-                    AllocationSkip(
-                        sec.symbol,
-                        REASON_INSUFFICIENT_CASH,
-                        "Tam pay için nakit yetmiyor.",
-                    )
+        headroom = _concentration_headroom(sec.symbol)
+        if headroom <= 0:
+            skipped.append(
+                AllocationSkip(
+                    sec.symbol,
+                    REASON_CONCENTRATION_LIMIT,
+                    "Tek pozisyon yoğunluk eşiği aşılacağı için eklenmez.",
                 )
+            )
+            return False
+        spent = qty * unit + fee
+        if spent > remaining or spent > need or spent > headroom:
+            if sec.whole_share:
+                if qty * unit + fee > headroom:
+                    skipped.append(
+                        AllocationSkip(
+                            sec.symbol,
+                            REASON_CONCENTRATION_LIMIT,
+                            "Tek pozisyon yoğunluk eşiği aşılacağı için eklenmez.",
+                        )
+                    )
+                else:
+                    skipped.append(
+                        AllocationSkip(
+                            sec.symbol,
+                            REASON_INSUFFICIENT_CASH,
+                            "Tam pay için nakit yetmiyor.",
+                        )
+                    )
             return False
         if min_trade > 0 and spent < min_trade:
             skipped.append(
@@ -540,7 +692,8 @@ def allocate_new_money(
         unit = _unit_cost(sec)
         if unit is None or unit <= 0:
             return Decimal("0")
-        budget = min(remaining, _needed(sec.layer)) - fee
+        headroom = _concentration_headroom(sec.symbol)
+        budget = min(remaining, _needed(sec.layer), max(headroom, Decimal("0"))) - fee
         if budget <= 0:
             return Decimal("0")
         raw = budget / unit
@@ -548,14 +701,16 @@ def allocate_new_money(
             return Decimal(raw.to_integral_value(rounding=ROUND_DOWN))
         return raw
 
-    for drift in underweight:
-        layer = drift.bucket_id
+    def _fill_layer(layer: str) -> bool:
+        if layer == "cash":
+            return False
         securities = by_layer.get(layer, ())
         existing = sorted((row for row in securities if row.existing), key=lambda row: row.symbol)
         newcomers = sorted(
             (row for row in securities if not row.existing),
             key=lambda row: (DECISION_RANK.get(row.decision or "", 99), row.symbol),
         )
+        deployed = False
         progressed = True
         while progressed and remaining > 0 and _needed(layer) > 0:
             progressed = False
@@ -563,22 +718,68 @@ def allocate_new_money(
                 qty = Decimal("1") if sec.whole_share else _max_qty(sec)
                 if qty > 0 and _try_buy(sec, qty=qty):
                     progressed = True
+                    deployed = True
                 if remaining <= 0 or _needed(layer) <= 0:
                     break
         for sec in newcomers:
             qty = _max_qty(sec)
-            if qty > 0:
-                _try_buy(sec, qty=qty)
-            elif sec.whole_share and _unit_cost(sec) is not None:
-                skipped.append(
-                    AllocationSkip(
-                        sec.symbol,
-                        REASON_INSUFFICIENT_CASH,
-                        "Tam pay için nakit yetmiyor.",
+            if qty > 0 and _try_buy(sec, qty=qty):
+                deployed = True
+            elif qty <= 0:
+                unit = _unit_cost(sec)
+                if unit is None:
+                    skipped.append(
+                        AllocationSkip(
+                            sec.symbol,
+                            REASON_FX_REQUIRED,
+                            "Fiyat para birimi çevrilemedi.",
+                        )
                     )
-                )
+                elif _concentration_headroom(sec.symbol) <= 0:
+                    skipped.append(
+                        AllocationSkip(
+                            sec.symbol,
+                            REASON_CONCENTRATION_LIMIT,
+                            "Tek pozisyon yoğunluk eşiği aşılacağı için eklenmez.",
+                        )
+                    )
+                elif sec.whole_share:
+                    skipped.append(
+                        AllocationSkip(
+                            sec.symbol,
+                            REASON_INSUFFICIENT_CASH,
+                            "Tam pay için nakit yetmiyor.",
+                        )
+                    )
             if remaining <= 0:
                 break
+        if not securities:
+            skipped.append(
+                AllocationSkip(
+                    layer,
+                    REASON_NO_ELIGIBLE_SECURITY,
+                    "Bu katmanda eklemeye uygun katılım onaylı bir varlık yok.",
+                )
+            )
+        return deployed
+
+    for drift in underweight:
+        layer = drift.bucket_id
+        _fill_layer(layer)
+        if layer != "cash" and remaining > 0 and _needed(layer) > 0:
+            limitations.append(f"UNFILLED_UNDERWEIGHT:{layer}")
+
+    if remaining > 0 and not underweight:
+        fill_mode = "mix"
+        on_target_layers = sorted(
+            row.bucket_id
+            for row in drift_by_bucket.values()
+            if row.status == DriftStatus.ON_TARGET and row.bucket_id != "cash"
+        )
+        for layer in on_target_layers:
+            if target_by_bucket.get(layer, Decimal("0")) <= 0:
+                continue
+            _fill_layer(layer)
 
     total_allocated = sum((row.allocated_amount for row in recs.values()), Decimal("0"))
     if total_allocated > amount:
@@ -586,6 +787,8 @@ def allocate_new_money(
     residual = amount - total_allocated
     if residual < 0:
         residual = Decimal("0")
+    if residual > 0:
+        limitations.append(REASON_RESIDUAL_CASH)
     unique_skips = []
     seen_skip = set()
     for row in skipped:

@@ -168,7 +168,9 @@ class AdversarialAdviserTests(unittest.TestCase):
         self.assertEqual(parse_adviser_question("100.000 TL nereye koyayım?").scenario_amount, "100000")
         self.assertIn("100.000 TL", result.answer)
         self.assertNotIn("100000 TRY", result.answer)
-        self.assertIn("nakitte kalabilir", result.answer)
+        self.assertIn("nakitte tutulabilir", result.answer)
+        self.assertIn("katmanında açık var", result.answer)
+        self.assertNotIn("dağıtılabilecek onaylı bir yatırım bulunmuyor", result.answer)
         self.assertNotIn("FMPClient", ANSWER.read_text(encoding="utf-8"))
 
     def test_d_mu_vs_crm_preserves_opportunity_and_fit(self) -> None:
@@ -322,7 +324,8 @@ class LiveUatFixPackTests(unittest.TestCase):
         self.assertEqual(parsed.scenario_currency, "TRY")
         self.assertIn("100.000 TL", result.answer)
         self.assertNotIn("100000 TRY", result.answer)
-        self.assertIn("nakitte kalabilir", result.answer)
+        self.assertIn("nakitte tutulabilir", result.answer)
+        self.assertNotIn("dağıtılabilecek onaylı bir yatırım bulunmuyor", result.answer)
         self.assertEqual(result.followup_state.get("amount"), "100000")
 
     def test_uygun_degil_cannot_be_promoted(self) -> None:
@@ -440,7 +443,8 @@ class NewMoneyFollowUpTests(unittest.TestCase):
         self.assertEqual(follow.intent, INTENT_NEW_MONEY_SCENARIO)
         self.assertEqual(follow.followup_state.get("amount"), "100000")
         self.assertIn("100.000 TL", follow.answer)
-        self.assertIn("nakitte kalabilir", follow.answer)
+        self.assertIn("nakitte tutulabilir", follow.answer)
+        self.assertNotIn("dağıtılabilecek onaylı bir yatırım bulunmuyor", follow.answer)
         self.assertFalse(follow.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
 
     def test_pending_100_bin_follow_up_allocates(self) -> None:
@@ -480,6 +484,7 @@ class NewMoneyFollowUpTests(unittest.TestCase):
         result = answer_nabi_adviser("100.000", **_today_kwargs())
         self.assertNotEqual(result.intent, INTENT_NEW_MONEY_SCENARIO)
         self.assertNotIn("nakitte kalabilir", result.answer)
+        self.assertNotIn("nakitte tutulabilir", result.answer)
 
     def test_clear_conversation_clears_pending_amount(self) -> None:
         session = {}
@@ -505,7 +510,8 @@ class NewMoneyFollowUpTests(unittest.TestCase):
         self.assertEqual(result.intent, INTENT_NEW_MONEY_SCENARIO)
         self.assertEqual(extract_scenario_amount("100.000 TL ekstra param olsa ne yapmalıyım?")[0], "100000")
         self.assertIn("100.000 TL", result.answer)
-        self.assertIn("nakitte kalabilir", result.answer)
+        self.assertIn("nakitte tutulabilir", result.answer)
+        self.assertNotIn("dağıtılabilecek onaylı bir yatırım bulunmuyor", result.answer)
         self.assertFalse(result.followup_state.get(PENDING_NEW_MONEY_AMOUNT))
 
     def test_comparison_does_not_show_raw_unknown(self) -> None:
@@ -583,7 +589,8 @@ class StreamlitConversationLifecycleTests(unittest.TestCase):
         self.assertEqual(second.intent, INTENT_NEW_MONEY_SCENARIO)
         self.assertEqual(second.followup_state.get("amount"), "100000")
         self.assertIn("100.000 TL", second.answer)
-        self.assertIn("nakitte kalabilir", second.answer)
+        self.assertIn("nakitte tutulabilir", second.answer)
+        self.assertNotIn("dağıtılabilecek onaylı bir yatırım bulunmuyor", second.answer)
         self.assertFalse(get_adviser_followup_state(session, chat_key).get(PENDING_NEW_MONEY_AMOUNT))
 
     def test_standalone_bare_amount_via_submit_is_not_new_money(self) -> None:
