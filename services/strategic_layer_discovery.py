@@ -11,6 +11,9 @@ from typing import Any, Mapping, Optional, Sequence
 
 from repositories.universe_expansion_repository import UniverseExpansionRepository
 from services.reit_evidence_contract import classify_from_name_or_fund as reit_from_name
+from services.participation_cik_resolver import is_usable_cik, normalize_resolved_cik
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.security_master_contract import INSTRUMENT_EQUITY, SOURCE_US_LISTING
 from services.strategic_layer_discovery_contract import (
     ACTIONABILITY_FAIL,
     ACTIONABILITY_NOT_RUN,
@@ -19,6 +22,10 @@ from services.strategic_layer_discovery_contract import (
     CLASSIFICATION_PASS,
     CLASSIFICATION_UNKNOWN,
     GATE_ELIGIBLE,
+    REASON_ROBUST_UW_REAL_ESTATE,
+    SUPPORT_FULL,
+    SUPPORT_PARTIAL,
+    SUPPORT_UNSUPPORTED,
     StrategicDiscoveryRecord,
     three_gate_eligibility,
 )
@@ -28,6 +35,11 @@ from services.universe_listing_identity import (
     STRATEGIC_LAYER_DISCOVERY_SOURCE,
     excluded_instrument_reason,
     listing_identity,
+)
+
+# 7J.6/7J.7 already audited. Do not rediscover.
+CLOSED_STRATEGIC_REIT_SYMBOLS = frozenset(
+    {"WELL", "PLD", "EQIX", "O", "AMT", "SPG", "DLR", "PSA"}
 )
 
 
@@ -157,3 +169,103 @@ def plan_strategic_enqueue(
 
 def eligible_filler_count(rows: Sequence[StrategicDiscoveryRecord]) -> int:
     return sum(1 for row in rows if evaluate_discovery_record(row) == GATE_ELIGIBLE)
+
+
+def discovery_hint_is_not_classification(hint: Any = None) -> str:
+    """SPRE membership, sector labels, and peer lists never classify."""
+    del hint
+    return CLASSIFICATION_UNKNOWN
+
+
+def tickers_from_sec_sic_lookup(
+    sic_ciks: Sequence[Any],
+    sec_lookup: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, ...]:
+    """Join official SIC CIKs to listed tickers. SIC is a discovery hint only."""
+    wanted = {normalize_resolved_cik(cik) for cik in sic_ciks}
+    wanted.discard(None)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw_ticker, row in sec_lookup.items():
+        identity = listing_identity(raw_ticker)
+        cik = normalize_resolved_cik((row or {}).get("cik"))
+        if not identity or cik not in wanted or identity in seen:
+            continue
+        seen.add(identity)
+        out.append(identity)
+    return tuple(out)
+
+
+def may_run_reit_economic_classification(*, participation_status: str) -> bool:
+    """OpenFIGI REIT persist is Participation-first. Uygun only."""
+    return str(participation_status or "").strip() == PARTICIPATION_STATUS_UYGUN
+
+
+def may_run_actionability(*, participation_status: str, classification_status: str) -> bool:
+    """Scanner/actionability only after Uygun and explicit REIT PASS."""
+    if not may_run_reit_economic_classification(participation_status=participation_status):
+        return False
+    return str(classification_status or "").strip().upper() == CLASSIFICATION_PASS
+
+
+def select_us_listing_discovery_candidates(
+    hint_symbols: Sequence[Any],
+    *,
+    listing_rows: Mapping[str, Mapping[str, Any]],
+    queued_symbols: Sequence[Any] = (),
+    closed_symbols: Sequence[Any] = (),
+    names: Optional[Mapping[str, str]] = None,
+    limit: int = 30,
+) -> tuple[dict[str, Any], ...]:
+    """Keep US-listed commons with a pricing/SEC path. Hint is not evidence."""
+    names = names or {}
+    queued = {listing_identity(item) for item in queued_symbols if listing_identity(item)}
+    closed = {
+        listing_identity(item)
+        for item in (*(closed_symbols or ()), *CLOSED_STRATEGIC_REIT_SYMBOLS)
+        if listing_identity(item)
+    }
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    cap = max(0, int(limit))
+    for raw in hint_symbols:
+        identity = listing_identity(raw)
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        if identity in closed or identity in queued:
+            continue
+        company_name = names.get(identity) or ""
+        if excluded_instrument_reason(symbol=identity, company_name=company_name):
+            continue
+        listing = dict(listing_rows.get(identity) or {})
+        instrument = str(listing.get("instrument_type") or "").strip().upper()
+        source = str(listing.get("source") or "").strip()
+        cik = listing.get("cik")
+        us_equity = instrument == INSTRUMENT_EQUITY and source == SOURCE_US_LISTING
+        has_cik = is_usable_cik(cik)
+        if us_equity and has_cik:
+            support = SUPPORT_FULL
+        elif us_equity:
+            support = SUPPORT_PARTIAL
+        else:
+            support = SUPPORT_UNSUPPORTED
+        if support != SUPPORT_FULL:
+            continue
+        selected.append(
+            {
+                "symbol": identity,
+                "exchange": listing.get("exchange") or "",
+                "cik": str(cik).strip(),
+                "provider_support": support,
+                "classification_status": discovery_hint_is_not_classification(
+                    listing.get("hint")
+                ),
+                "economic_layer": None,
+                "discovery_source": STRATEGIC_LAYER_DISCOVERY_SOURCE,
+                "discovery_reason": REASON_ROBUST_UW_REAL_ESTATE,
+            }
+        )
+        if len(selected) >= cap:
+            break
+    return tuple(selected)

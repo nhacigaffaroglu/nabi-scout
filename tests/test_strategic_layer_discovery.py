@@ -11,10 +11,16 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.strategic_layer_discovery import (
+    CLOSED_STRATEGIC_REIT_SYMBOLS,
     actionability_from_candidate,
     classification_from_evidence,
+    discovery_hint_is_not_classification,
     evaluate_discovery_record,
+    may_run_actionability,
+    may_run_reit_economic_classification,
     plan_strategic_enqueue,
+    select_us_listing_discovery_candidates,
+    tickers_from_sec_sic_lookup,
 )
 from services.strategic_layer_discovery_contract import (
     ACTIONABILITY_FAIL,
@@ -224,3 +230,100 @@ class ContractTests(unittest.TestCase):
     def test_hybrid_remains_off(self) -> None:
         self.assertFalse(resolve_hybrid_allocation_policy().enabled)
         self.assertNotIn("enable_hybrid", SERVICE.read_text(encoding="utf-8"))
+
+    def test_discovery_hint_is_not_classification(self) -> None:
+        self.assertEqual(
+            discovery_hint_is_not_classification("SPRE constituent / Real Estate"),
+            CLASSIFICATION_UNKNOWN,
+        )
+        self.assertEqual(
+            classification_from_evidence(
+                target_layer="real_estate",
+                fund_symbol="SPRE",
+                security_name="EastGroup Properties REIT",
+            ),
+            CLASSIFICATION_UNKNOWN,
+        )
+
+    def test_participation_first_only_uygun_reaches_reit_evidence(self) -> None:
+        self.assertTrue(may_run_reit_economic_classification(participation_status="Uygun"))
+        self.assertFalse(
+            may_run_reit_economic_classification(participation_status=PARTICIPATION_STATUS_KONTROL_ET)
+        )
+        self.assertFalse(
+            may_run_reit_economic_classification(participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL)
+        )
+        self.assertFalse(may_run_reit_economic_classification(participation_status=""))
+
+    def test_uygun_degil_and_kontrol_et_stop_downstream_classification(self) -> None:
+        self.assertFalse(
+            may_run_reit_economic_classification(participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL)
+        )
+        self.assertFalse(
+            may_run_actionability(
+                participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL,
+                classification_status=CLASSIFICATION_PASS,
+            )
+        )
+        self.assertFalse(
+            may_run_actionability(
+                participation_status=PARTICIPATION_STATUS_KONTROL_ET,
+                classification_status=CLASSIFICATION_PASS,
+            )
+        )
+        self.assertFalse(
+            may_run_actionability(
+                participation_status=PARTICIPATION_STATUS_UYGUN,
+                classification_status=CLASSIFICATION_FAIL,
+            )
+        )
+        self.assertTrue(
+            may_run_actionability(
+                participation_status=PARTICIPATION_STATUS_UYGUN,
+                classification_status=CLASSIFICATION_PASS,
+            )
+        )
+
+    def test_select_skips_closed_and_requires_us_listing_cik(self) -> None:
+        listing = {
+            "EGP": {
+                "instrument_type": "EQUITY",
+                "source": "us_listing",
+                "cik": "0049002",
+                "exchange": "NYSE",
+            },
+            "PLD": {
+                "instrument_type": "EQUITY",
+                "source": "us_listing",
+                "cik": "1045609",
+                "exchange": "NYSE",
+            },
+            "GMG": {"instrument_type": "UNKNOWN", "source": "", "cik": ""},
+            "SUI": {
+                "instrument_type": "EQUITY",
+                "source": "us_listing",
+                "cik": "",
+                "exchange": "NYSE",
+            },
+        }
+        selected = select_us_listing_discovery_candidates(
+            ["EGP", "PLD", "GMG", "SUI", "EGP"],
+            listing_rows=listing,
+            queued_symbols=(),
+        )
+        self.assertEqual([row["symbol"] for row in selected], ["EGP"])
+        self.assertIsNone(selected[0]["economic_layer"])
+        self.assertEqual(selected[0]["classification_status"], CLASSIFICATION_UNKNOWN)
+        self.assertIn("PLD", CLOSED_STRATEGIC_REIT_SYMBOLS)
+
+    def test_sec_sic_join_is_discovery_hint_not_classification(self) -> None:
+        tickers = tickers_from_sec_sic_lookup(
+            ["0001045609", 49002],
+            {
+                "PLD": {"cik": "1045609"},
+                "EGP": {"cik": "0049002"},
+                "AAPL": {"cik": "320193"},
+            },
+        )
+        self.assertEqual(set(tickers), {"PLD", "EGP"})
+        self.assertEqual(discovery_hint_is_not_classification("SIC:6798"), CLASSIFICATION_UNKNOWN)
