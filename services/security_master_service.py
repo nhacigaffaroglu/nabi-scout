@@ -273,7 +273,7 @@ class SecurityMasterService:
         )
 
 
-_EXPLICIT_HOLDING_TO_INSTRUMENT = {
+EXPLICIT_HOLDING_TO_INSTRUMENT = {
     "equity": INSTRUMENT_EQUITY,
     "stock": INSTRUMENT_EQUITY,
     "common stock": INSTRUMENT_EQUITY,
@@ -323,7 +323,7 @@ def summarize_holding_coverage(
             weight = float(raw.get("weight_pct") or 0.0)
         count += 1
         weight_total += weight
-        explicit = _EXPLICIT_HOLDING_TO_INSTRUMENT.get(str(asset_type or "").strip().lower())
+        explicit = EXPLICIT_HOLDING_TO_INSTRUMENT.get(str(asset_type or "").strip().lower())
         if explicit is not None:
             instrument = explicit
             sources.add(SOURCE_PROVIDER_EXPLICIT)
@@ -344,6 +344,7 @@ def summarize_holding_coverage(
         "classified_SUKUK": round(buckets[INSTRUMENT_SUKUK], 4),
         "classified_FIXED_INCOME": round(buckets[INSTRUMENT_FIXED_INCOME], 4),
         "classified_CASH": round(buckets[INSTRUMENT_CASH], 4),
+        "classified_ETF": round(buckets[INSTRUMENT_ETF], 4),
         "classified_OTHER": round(
             buckets[INSTRUMENT_ETF] + buckets[INSTRUMENT_OTHER] + buckets[INSTRUMENT_COMMODITY],
             4,
