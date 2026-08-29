@@ -5,6 +5,11 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, Optional, Sequence, Tuple
 
+from services.layer_exposure_determinacy import (
+    ExposureDeterminacyView,
+    assess_economic_exposure_determinacy,
+    empty_exposure_determinacy,
+)
 from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
     PositionValuationRow,
@@ -238,9 +243,10 @@ class AllocationIntelligenceView:
     generated_from: Tuple[str, ...]
     signals: AllocationDecisionSignals
     unknown_exposure_symbols: Tuple[str, ...] = ()
+    exposure_determinacy: Optional[ExposureDeterminacyView] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "completeness": self.completeness.value,
             "observable_total_market_value": self.observable_total_market_value,
             "unpriced_holdings": [row.symbol for row in self.unpriced_holdings],
@@ -249,6 +255,9 @@ class AllocationIntelligenceView:
             "routing_status": [row.status.value for row in self.routing],
             "limitations": list(self.limitations),
         }
+        if self.exposure_determinacy is not None:
+            payload["exposure_determinacy"] = self.exposure_determinacy.to_dict()
+        return payload
 
 
 def _round_weight(value: Optional[float]) -> Optional[float]:
@@ -685,6 +694,47 @@ def allocation_decision_signals(view: AllocationIntelligenceView) -> AllocationD
     )
 
 
+def _shadow_exposure_determinacy(
+    *,
+    policy: Optional[AllocationPolicy],
+    exposure_buckets: Optional[Sequence[AllocationBucket]],
+    valuation_complete: bool,
+    unpriced: bool,
+) -> ExposureDeterminacyView:
+    """Additive shadow assessment. Never mutates drift or completeness."""
+    if policy is None:
+        return empty_exposure_determinacy(reason="TARGET_NOT_CONFIGURED")
+    targets = tuple(
+        (row.bucket_id, row.target_weight_pct)
+        for row in policy.targets
+        if row.dimension == AllocationDimension.ECONOMIC_EXPOSURE
+    )
+    if not targets:
+        return empty_exposure_determinacy(reason="EXPOSURE_NOT_REQUESTED")
+    if not exposure_buckets:
+        return empty_exposure_determinacy(reason="EXPOSURE_BUCKETS_MISSING")
+    known_by_layer: Dict[str, float] = {}
+    unknown_pct = 0.0
+    bucket_unpriced = False
+    for bucket in exposure_buckets:
+        if bucket.unpriced_symbols:
+            bucket_unpriced = True
+        weight = bucket.observable_weight_pct
+        if bucket.bucket_id == "unknown":
+            unknown_pct = float(weight or 0.0)
+            continue
+        known_by_layer[str(bucket.bucket_id)] = float(weight or 0.0)
+    return assess_economic_exposure_determinacy(
+        targets=targets,
+        known_by_layer=known_by_layer,
+        unknown_pct=unknown_pct,
+        tolerance_pct=policy.tolerance_pct,
+        valuation_complete=valuation_complete,
+        unpriced=unpriced or bucket_unpriced,
+        max_unknown_portfolio_pct=None,
+    )
+
+
 def build_allocation_intelligence(
     portfolio_view: PortfolioIntelligenceView,
     *,
@@ -922,6 +972,12 @@ def build_allocation_intelligence(
                 limitations.append("EXPOSURE_CLASSIFICATION_INCOMPLETE")
     notes = tuple(dict.fromkeys(limitations))
     exposure_incomplete = "EXPOSURE_CLASSIFICATION_INCOMPLETE" in notes
+    exposure_determinacy = _shadow_exposure_determinacy(
+        policy=policy if configured else None,
+        exposure_buckets=exposure_buckets,
+        valuation_complete=current.valuation_complete,
+        unpriced=bool(unresolved),
+    )
     signals = AllocationDecisionSignals(
         target_status=status,
         completeness=completeness,
@@ -956,4 +1012,5 @@ def build_allocation_intelligence(
         generated_from=generated_from,
         signals=signals,
         unknown_exposure_symbols=unknown_exposure_symbols,
+        exposure_determinacy=exposure_determinacy,
     )
