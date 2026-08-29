@@ -25,7 +25,8 @@ Participation:
   canonical snapshot / queue only (not built here)
 
 Momentum:
-  persisted candidate returns only
+  local wealth_portfolio_snapshots marks (if sufficient distinct observations)
+  → persisted candidate returns
   → unavailable (FMP historical-price-eod/light is plan-restricted)
 
 No live FMP calls. No SEC network unless a caller already extracted
@@ -499,6 +500,42 @@ def _ingest_company_intelligence(slots: _FactSlots, view: Any) -> None:
             )
 
 
+def _ingest_local_momentum(
+    slots: _FactSlots,
+    momentum: Any,
+    *,
+    client: Any,
+    symbol: str,
+) -> None:
+    payload = momentum
+    if payload is None and client is not None:
+        try:
+            from services.local_market_history_service import LocalMarketHistoryService
+
+            payload = LocalMarketHistoryService(client).compute(symbol)
+        except Exception:
+            return
+    if payload is None:
+        return
+    values = getattr(payload, "values", None)
+    if not isinstance(values, Mapping):
+        return
+    as_of = None
+    if getattr(payload, "provenance", None):
+        as_of = payload.provenance[0].source_as_of
+    for field, raw in values.items():
+        slots.set(
+            field,
+            raw,
+            source="wealth_portfolio_snapshots",
+            authority=AUTHORITY_CANDIDATE,
+            source_as_of=as_of,
+            period_kind=PERIOD_UNKNOWN,
+            normalization="LOCAL_MARK_RETURN",
+            confidence="MEDIUM",
+        )
+
+
 def _derive_comparable(slots: _FactSlots, currency: str, as_of: Optional[str]) -> None:
     values = slots.values
     period = PERIOD_FY
@@ -670,6 +707,8 @@ class SecurityFactsService:
         economic_layer: Optional[str] = None,
         stale: bool = False,
         allow_sec_cache_replay: bool = True,
+        client: Any = None,
+        local_momentum: Any = None,
     ) -> SecurityFacts:
         return self.build_detailed(
             symbol,
@@ -683,6 +722,8 @@ class SecurityFactsService:
             economic_layer=economic_layer,
             stale=stale,
             allow_sec_cache_replay=allow_sec_cache_replay,
+            client=client,
+            local_momentum=local_momentum,
         ).facts
 
     def build_detailed(
@@ -699,6 +740,8 @@ class SecurityFactsService:
         economic_layer: Optional[str] = None,
         stale: bool = False,
         allow_sec_cache_replay: bool = True,
+        client: Any = None,
+        local_momentum: Any = None,
     ) -> SecurityFactsBuildResult:
         ticker = _text(symbol).upper()
         cand = dict(candidate or {})
@@ -718,6 +761,7 @@ class SecurityFactsService:
         _ingest_candidate(slots, cand, stale=candidate_stale)
         _ingest_participation_inputs(slots, _financial_inputs(snap, participation_result))
         _ingest_company_intelligence(slots, company_intelligence)
+        _ingest_local_momentum(slots, local_momentum, client=client, symbol=ticker)
 
         currency = ""
         if extracted:

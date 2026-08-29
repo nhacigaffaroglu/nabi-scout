@@ -68,11 +68,16 @@ from services.research_eligibility_service import (
 )
 from components.research_eligibility_ui import render_research_eligibility_block
 from components.security_intelligence_ui import render_security_intelligence_section
+from repositories.security_intelligence_snapshot_repository import (
+    SecurityIntelligenceSnapshotRepository,
+)
 from services.security_facts_service import SecurityFactsService
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
     participation_from_sources,
 )
+from services.security_intelligence_contract import ENGINE_VERSION
+from services.security_intelligence_snapshot_service import load_previous_for_evaluation
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -676,6 +681,7 @@ si_facts = SecurityFactsService().build(
     security_resolution=security_resolution,
     stale=str(candidate.get("freshness_status") or "").upper() == "STALE",
     allow_sec_cache_replay=True,
+    client=client,
 )
 si_participation = participation_from_sources(
     queue_or_snapshot={
@@ -699,11 +705,31 @@ si_participation = participation_from_sources(
     candidate=candidate,
     research_allowed=research_eligibility.research_allowed,
 )
-si_view = SecurityIntelligenceService().evaluate(si_facts, si_participation)
+si_snapshot_repo = SecurityIntelligenceSnapshotRepository(client)
+si_previous = None
+si_persisted = None
+try:
+    si_persisted = si_snapshot_repo.get_latest(str(symbol))
+    si_previous = load_previous_for_evaluation(
+        si_snapshot_repo,
+        str(symbol),
+        as_of=si_facts.as_of,
+        facts_version=si_facts.facts_version,
+        engine_version=ENGINE_VERSION,
+    )
+except Exception:
+    si_previous = None
+    si_persisted = None
+si_view = SecurityIntelligenceService().evaluate(
+    si_facts,
+    si_participation,
+    previous=si_previous,
+)
 render_security_intelligence_section(
     si_view,
     si_facts,
     nabi_score=candidate.get("nabi_score"),
+    persisted_row=si_persisted,
 )
 
 if not research_eligibility.research_allowed:

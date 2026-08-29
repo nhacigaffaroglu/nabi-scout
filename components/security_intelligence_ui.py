@@ -28,6 +28,7 @@ def render_security_intelligence_section(
     facts: SecurityFacts,
     *,
     nabi_score=None,
+    persisted_row=None,
 ) -> None:
     st.subheader("Security Intelligence")
     st.caption(
@@ -45,6 +46,14 @@ def render_security_intelligence_section(
         f"research_allowed: {view.research_allowed} · "
         f"facts {view.facts_version} · engine {view.engine_version}"
     )
+    st.caption(
+        "Canlı evaluate() kaynak gerçektir. Kayıtlı snapshot geçmiş ve değişim içindir."
+    )
+    if persisted_row:
+        st.caption(
+            "Kayıtlı snapshot: "
+            f"{persisted_row.get('id') or '—'} · as_of {persisted_row.get('as_of') or '—'}"
+        )
     if nabi_score not in (None, "") and view.overall_score is not None:
         st.caption(
             "SI overall ≠ NABI Skoru v4: SI portföy uyumu ve likiditeyi içermez; "

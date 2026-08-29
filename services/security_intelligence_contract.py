@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 ENGINE_VERSION = "security_intelligence_8b.1"
-FACTS_VERSION = "security_facts_8b.1"
+FACTS_VERSION = "security_facts_8c.1"
 
 DIM_QUALITY = "QUALITY"
 DIM_GROWTH = "GROWTH"

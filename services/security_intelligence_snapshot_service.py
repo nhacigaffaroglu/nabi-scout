@@ -1,13 +1,19 @@
 """Persist Security Intelligence snapshots.
 
-Idempotency: UPSERT on (symbol, as_of_key, facts_version, engine_version).
-Replay of the same identity updates the same row and does not create duplicates.
+Idempotency:
+  same (symbol, as_of_key, facts_version, engine_version)
+  + identical semantic payload → skip write (0 timestamp churn)
+  same identity + changed payload → UPSERT (intentional update)
+
+A new facts_version or engine_version creates a new row and does not
+overwrite older history.
 
 Does not write portfolios, transactions, Participation, candidates, or Hybrid.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
@@ -23,6 +29,8 @@ from services.security_intelligence_contract import (
 
 
 UNDATED_AS_OF_KEY = "UNDATED"
+MIN_PERSIST_COMPLETENESS_PCT = 50.0
+_TRANSIENT_KEYS = frozenset({"id", "created_at", "updated_at"})
 
 
 @dataclass(frozen=True)
@@ -30,6 +38,7 @@ class SaveSecurityIntelligenceResult:
     saved: bool
     skipped_duplicate: bool = False
     persistence_failed: bool = False
+    insufficient: bool = False
     row: Optional[Dict[str, Any]] = None
     message: str = ""
     dry_run: bool = False
@@ -50,7 +59,6 @@ def snapshot_row_from_view(
 
 
 def snapshot_to_row(snap: SecurityIntelligenceSnapshot) -> Dict[str, Any]:
-    now = datetime.now(timezone.utc).isoformat()
     return {
         "symbol": str(snap.symbol or "").strip().upper(),
         "as_of": snap.as_of,
@@ -71,7 +79,6 @@ def snapshot_to_row(snap: SecurityIntelligenceSnapshot) -> Dict[str, Any]:
         "risk_flags": list(snap.risk_flags),
         "reason_codes": list(snap.reason_codes),
         "change_flags": list(snap.change_flags),
-        "updated_at": now,
     }
 
 
@@ -98,13 +105,91 @@ def snapshot_from_row(row: Mapping[str, Any]) -> SecurityIntelligenceSnapshot:
     )
 
 
+def semantic_payload(row: Mapping[str, Any]) -> Dict[str, Any]:
+    return {key: row.get(key) for key in snapshot_to_row(snapshot_from_row(row)) if key not in _TRANSIENT_KEYS}
+
+
+def payloads_semantically_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return json.dumps(semantic_payload(left), sort_keys=True, default=str) == json.dumps(
+        semantic_payload(right), sort_keys=True, default=str
+    )
+
+
+def may_persist_view(
+    view: SecurityIntelligenceView,
+    *,
+    completeness_pct: Optional[float] = None,
+) -> bool:
+    if view.overall_score is not None:
+        return True
+    if completeness_pct is not None and completeness_pct >= MIN_PERSIST_COMPLETENESS_PCT:
+        return True
+    return False
+
+
+def latest_snapshot(
+    repo: SecurityIntelligenceSnapshotRepository,
+    symbol: str,
+) -> Optional[SecurityIntelligenceSnapshot]:
+    row = repo.get_latest(symbol)
+    return snapshot_from_row(row) if row else None
+
+
+def load_previous_for_evaluation(
+    repo: SecurityIntelligenceSnapshotRepository,
+    symbol: str,
+    *,
+    as_of: Optional[str],
+    facts_version: str,
+    engine_version: str,
+) -> Optional[SecurityIntelligenceSnapshot]:
+    latest = repo.get_latest(symbol)
+    if latest is None:
+        return None
+    same_identity = (
+        as_of_key(latest.get("as_of")) == as_of_key(as_of)
+        and str(latest.get("facts_version") or "") == facts_version
+        and str(latest.get("engine_version") or "") == engine_version
+    )
+    if same_identity:
+        return previous_snapshot(repo, symbol, before_as_of=latest.get("as_of"))
+    return snapshot_from_row(latest)
+
+
+def previous_snapshot(
+    repo: SecurityIntelligenceSnapshotRepository,
+    symbol: str,
+    *,
+    before_as_of: Optional[str] = None,
+    facts_version: Optional[str] = None,
+    engine_version: Optional[str] = None,
+) -> Optional[SecurityIntelligenceSnapshot]:
+    row = repo.get_previous(
+        symbol,
+        before_as_of=before_as_of,
+        facts_version=facts_version,
+        engine_version=engine_version,
+    )
+    if row is None and (facts_version or engine_version):
+        row = repo.get_previous(symbol, before_as_of=before_as_of)
+    return snapshot_from_row(row) if row else None
+
+
 def save_security_intelligence_snapshot(
     repo: SecurityIntelligenceSnapshotRepository,
     view: SecurityIntelligenceView,
     *,
     as_of: Optional[str] = None,
     dry_run: bool = False,
+    completeness_pct: Optional[float] = None,
+    require_sufficient: bool = False,
 ) -> SaveSecurityIntelligenceResult:
+    if require_sufficient and not may_persist_view(view, completeness_pct=completeness_pct):
+        return SaveSecurityIntelligenceResult(
+            saved=False,
+            insufficient=True,
+            message="SecurityFacts too sparse to persist a snapshot.",
+        )
     payload = snapshot_row_from_view(view, as_of=as_of)
     if dry_run:
         return SaveSecurityIntelligenceResult(
@@ -120,6 +205,16 @@ def save_security_intelligence_snapshot(
             facts_version=payload["facts_version"],
             engine_version=payload["engine_version"],
         )
+        if existing is not None and payloads_semantically_equal(existing, payload):
+            return SaveSecurityIntelligenceResult(
+                saved=False,
+                skipped_duplicate=True,
+                row=dict(existing),
+                message="Identical snapshot already present; write skipped.",
+            )
+        if existing is None:
+            payload["created_at"] = datetime.now(timezone.utc).isoformat()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         row = repo.upsert(payload)
     except Exception:
         return SaveSecurityIntelligenceResult(
@@ -127,14 +222,13 @@ def save_security_intelligence_snapshot(
             persistence_failed=True,
             message="Security Intelligence snapshot could not be saved.",
         )
-    skipped = existing is not None
     return SaveSecurityIntelligenceResult(
-        saved=not skipped,
-        skipped_duplicate=skipped,
+        saved=True,
+        skipped_duplicate=False,
         row=row,
         message=(
-            "Security Intelligence snapshot already present; upserted."
-            if skipped
+            "Security Intelligence snapshot updated."
+            if existing is not None
             else "Security Intelligence snapshot saved."
         ),
     )

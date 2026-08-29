@@ -7,6 +7,9 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.participation_assessment_repository import (
     ParticipationAssessmentRepository,
 )
+from repositories.security_intelligence_snapshot_repository import (
+    SecurityIntelligenceSnapshotRepository,
+)
 from services.security_facts_service import SecurityFactsService
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
@@ -41,6 +44,9 @@ class InvestmentIntelligenceView:
     security_intelligence_state: Optional[str] = None
     security_intelligence_confidence: Optional[float] = None
     has_security_intelligence: bool = False
+    security_intelligence_snapshot_id: Optional[str] = None
+    security_intelligence_snapshot_as_of: Optional[str] = None
+    has_persisted_security_intelligence: bool = False
 
 
 def get_investment_intelligence(
@@ -76,6 +82,7 @@ def get_investment_intelligence(
         candidate=candidate,
         participation_snapshot=participation,
         allow_sec_cache_replay=False,
+        client=client,
     )
     si_view = SecurityIntelligenceService().evaluate(
         facts,
@@ -89,6 +96,13 @@ def get_investment_intelligence(
     si_state = si_view.investment_state
     si_confidence = si_view.overall_confidence
     has_si = True
+    persisted = None
+    try:
+        persisted = SecurityIntelligenceSnapshotRepository(client).get_latest(
+            normalized_symbol
+        )
+    except Exception:
+        persisted = None
 
     return InvestmentIntelligenceView(
         symbol=normalized_symbol,
@@ -110,6 +124,9 @@ def get_investment_intelligence(
         security_intelligence_state=si_state,
         security_intelligence_confidence=si_confidence,
         has_security_intelligence=has_si,
+        security_intelligence_snapshot_id=(persisted or {}).get("id"),
+        security_intelligence_snapshot_as_of=(persisted or {}).get("as_of"),
+        has_persisted_security_intelligence=persisted is not None,
     )
 
 
@@ -134,4 +151,7 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
         "security_intelligence_state": view.security_intelligence_state,
         "security_intelligence_confidence": view.security_intelligence_confidence,
         "has_security_intelligence": view.has_security_intelligence,
+        "security_intelligence_snapshot_id": view.security_intelligence_snapshot_id,
+        "security_intelligence_snapshot_as_of": view.security_intelligence_snapshot_as_of,
+        "has_persisted_security_intelligence": view.has_persisted_security_intelligence,
     }

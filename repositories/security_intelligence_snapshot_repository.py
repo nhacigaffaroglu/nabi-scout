@@ -33,7 +33,7 @@ class SecurityIntelligenceSnapshotRepository:
             .limit(1)
             .execute()
         )
-        rows = response.data or []
+        rows = response.data if isinstance(response.data, list) else []
         return rows[0] if rows else None
 
     def get_by_identity(
@@ -55,8 +55,35 @@ class SecurityIntelligenceSnapshotRepository:
             .limit(1)
             .execute()
         )
-        rows = response.data or []
+        rows = response.data if isinstance(response.data, list) else []
         return rows[0] if rows else None
+
+    def get_previous(
+        self,
+        symbol: str,
+        *,
+        before_as_of: Optional[str] = None,
+        exclude_id: Optional[str] = None,
+        facts_version: Optional[str] = None,
+        engine_version: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Latest persisted snapshot strictly older than the current evaluation."""
+        rows = self.get_recent_history(symbol, limit=25)
+        before = str(before_as_of or "").strip()
+        for row in rows:
+            if exclude_id and str(row.get("id") or "") == str(exclude_id):
+                continue
+            if facts_version and str(row.get("facts_version") or "") != facts_version:
+                continue
+            if engine_version and str(row.get("engine_version") or "") != engine_version:
+                continue
+            as_of = str(row.get("as_of") or "")
+            if before and as_of and as_of >= before:
+                continue
+            if before and not as_of:
+                continue
+            return row
+        return None
 
     def get_recent_history(
         self,
@@ -75,4 +102,4 @@ class SecurityIntelligenceSnapshotRepository:
             .limit(max(1, min(int(limit), 25)))
             .execute()
         )
-        return response.data or []
+        return response.data if isinstance(response.data, list) else []
