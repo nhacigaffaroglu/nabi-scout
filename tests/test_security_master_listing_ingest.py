@@ -16,6 +16,7 @@ from services.security_master_listing_ingest import (
     SecurityMasterWriteGuardError,
     ingest_merged_us_listing_facts,
     planned_listing_source_path,
+    scan_persisted_conflicts,
 )
 from services.security_master_service import SecurityMasterService
 from services.universe_discovery_service import ingest_merged_exchange_listings
@@ -139,6 +140,34 @@ class ListingIngestContractTests(unittest.TestCase):
         self.assertEqual(plan["expected_universe_queue_writes"], 0)
         self.assertEqual(len(plan["planned_Nasdaq_calls"]), 2)
         self.assertEqual(len(plan["planned_SEC_calls"]), 1)
+
+    def test_conflict_scan_is_in_memory(self) -> None:
+        rows = [
+            {
+                "identifier": "MSFT",
+                "identifier_type": "TICKER",
+                "instrument_type": INSTRUMENT_EQUITY,
+                "source": "alpha",
+                "observed_at": "2026-01-01T00:00:00+00:00",
+            },
+            {
+                "identifier": "MSFT",
+                "identifier_type": "TICKER",
+                "instrument_type": INSTRUMENT_ETF,
+                "source": "beta",
+                "observed_at": "2026-08-01T00:00:00+00:00",
+            },
+            {
+                "identifier": "AAPL",
+                "identifier_type": "TICKER",
+                "instrument_type": INSTRUMENT_EQUITY,
+                "source": SOURCE_US_LISTING,
+                "observed_at": "2026-08-01T00:00:00+00:00",
+            },
+        ]
+        found = scan_persisted_conflicts(rows)
+        self.assertEqual([row["identifier"] for row in found], ["MSFT"])
+        self.assertEqual(found[0]["limitation"], "SOURCE_CONFLICT")
 
     def test_discovery_ingest_is_a_separate_function(self) -> None:
         self.assertTrue(inspect.isfunction(ingest_merged_exchange_listings))

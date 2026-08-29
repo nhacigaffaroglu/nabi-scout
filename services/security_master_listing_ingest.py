@@ -9,8 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
+from collections import defaultdict
+
 from repositories.security_master_repository import PersistFactsResult
-from services.security_master_contract import INSTRUMENT_EQUITY, INSTRUMENT_ETF
+from services.security_master_contract import (
+    INSTRUMENT_EQUITY,
+    INSTRUMENT_ETF,
+    RESOLUTION_CONFLICT,
+    SOURCE_PRECEDENCE,
+)
 from services.security_master_service import (
     SecurityMasterService,
     listing_row_to_fact,
@@ -153,6 +160,40 @@ def ingest_merged_us_listing_facts(
         unchanged=result.unchanged,
         unexpected_instrument_types=tuple(sorted(set(unexpected))),
     )
+
+
+def scan_persisted_conflicts(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Detect same-rank source disagreements without extra repository reads."""
+    grouped: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row.get("identifier") or ""), str(row.get("identifier_type") or ""))].append(row)
+    found: list[dict[str, Any]] = []
+    for (identifier, identifier_type), group in grouped.items():
+        ranked = sorted(
+            group,
+            key=lambda item: (
+                SOURCE_PRECEDENCE.get(str(item.get("source") or ""), 1000),
+                str(item.get("source") or ""),
+                str(item.get("observed_at") or ""),
+            ),
+        )
+        best_rank = SOURCE_PRECEDENCE.get(str(ranked[0].get("source") or ""), 1000)
+        top = [
+            item
+            for item in ranked
+            if SOURCE_PRECEDENCE.get(str(item.get("source") or ""), 1000) == best_rank
+        ]
+        types = {str(item.get("instrument_type") or "") for item in top}
+        if len(types) > 1:
+            found.append(
+                {
+                    "identifier": identifier,
+                    "identifier_type": identifier_type,
+                    "limitation": "SOURCE_CONFLICT",
+                    "status": RESOLUTION_CONFLICT,
+                }
+            )
+    return found
 
 
 def planned_listing_source_path() -> dict[str, Any]:

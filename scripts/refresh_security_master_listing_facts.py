@@ -32,6 +32,7 @@ from services.security_master_listing_ingest import (
     SecurityMasterWriteGuard,
     ingest_merged_us_listing_facts,
     planned_listing_source_path,
+    scan_persisted_conflicts,
 )
 from services.security_master_service import SecurityMasterService, summarize_holding_coverage
 from services.supabase_admin_client import apply_local_secrets_to_env, create_admin_supabase_client
@@ -267,22 +268,16 @@ def _fact_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _conflicts(master: SecurityMasterService, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+def _memory_master(rows: list[dict[str, Any]], *, include_canonical_static: bool) -> SecurityMasterService:
+    repo = SecurityMasterRepository()
     for row in rows:
-        grouped[(str(row.get("identifier") or ""), str(row.get("identifier_type") or ""))].append(row)
-    found = []
-    for (identifier, identifier_type), _group in grouped.items():
-        resolution = master.resolve_security(identifier, identifier_type=identifier_type)
-        if resolution.status == RESOLUTION_CONFLICT:
-            found.append(
-                {
-                    "identifier": identifier,
-                    "identifier_type": identifier_type,
-                    "limitation": resolution.limitation,
-                }
-            )
-    return found
+        key = (
+            str(row.get("identifier") or "").strip().upper(),
+            str(row.get("identifier_type") or "").strip().upper(),
+            str(row.get("source") or "").strip(),
+        )
+        repo._memory[key] = dict(row)
+    return SecurityMasterService(repo=repo, include_canonical_static=include_canonical_static)
 
 
 def _sample(rows: list[dict[str, Any]], instrument: str, limit: int = 5) -> list[dict[str, Any]]:
@@ -483,9 +478,9 @@ def main() -> int:
 
     rows = repo.list_all()
     summary = _fact_summary(rows)
-    persisted_master = SecurityMasterService(repo=repo, include_canonical_static=False)
+    persisted_master = _memory_master(rows, include_canonical_static=False)
     report["security_master"] = summary
-    report["conflicts"] = _conflicts(persisted_master, rows)
+    report["conflicts"] = scan_persisted_conflicts(rows)
     report["sample_equity"] = _sample(rows, "EQUITY")
     report["sample_etf"] = _sample(rows, "ETF")
     name_derived = [
@@ -498,7 +493,7 @@ def main() -> int:
         for row in name_derived[:20]
     ]
     report["queue_cross_check"] = _queue_cross_check(persisted_master, queue_before["rows"])
-    coverage_master = SecurityMasterService(repo=repo, include_canonical_static=True)
+    coverage_master = _memory_master(rows, include_canonical_static=True)
     report["fund_coverage_readonly"] = _fund_coverage(client, coverage_master)
 
     queue_after = _queue_snapshot(client)
