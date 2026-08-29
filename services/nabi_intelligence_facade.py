@@ -11,6 +11,7 @@ from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
 from repositories.universe_expansion_repository import UniverseExpansionRepository
+from services.portfolio_security_decision_contract import PortfolioSecurityDecision
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
     build_canonical_security_intelligence_inputs,
@@ -51,6 +52,7 @@ class InvestmentIntelligenceView:
     security_intelligence_snapshot_as_of: Optional[str] = None
     has_persisted_security_intelligence: bool = False
     signal_context: Optional[SignalIntelligenceContext] = None
+    portfolio_security_decision: Optional[PortfolioSecurityDecision] = None
 
 
 def get_investment_intelligence(
@@ -116,6 +118,20 @@ def get_investment_intelligence(
     except Exception:
         persisted = None
 
+    from services.portfolio_security_decision_service import (
+        evaluate_portfolio_security_for_symbol,
+        fail_closed_portfolio_security_decision,
+    )
+
+    try:
+        portfolio_security_decision = evaluate_portfolio_security_for_symbol(
+            client, normalized_symbol
+        )
+    except Exception:
+        portfolio_security_decision = fail_closed_portfolio_security_decision(
+            normalized_symbol
+        )
+
     return InvestmentIntelligenceView(
         symbol=normalized_symbol,
         market=(candidate or {}).get("market") or market,
@@ -140,6 +156,7 @@ def get_investment_intelligence(
         security_intelligence_snapshot_as_of=(persisted or {}).get("as_of"),
         has_persisted_security_intelligence=persisted is not None,
         signal_context=SignalIntelligenceService().context_for(normalized_symbol),
+        portfolio_security_decision=portfolio_security_decision,
     )
 
 
@@ -171,5 +188,10 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
             view.signal_context.to_dict()
             if view.signal_context is not None
             else empty_signal_context(view.symbol).to_dict()
+        ),
+        "portfolio_security_decision": (
+            view.portfolio_security_decision.to_dict()
+            if view.portfolio_security_decision is not None
+            else None
         ),
     }

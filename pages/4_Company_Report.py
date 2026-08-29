@@ -67,12 +67,19 @@ from services.research_eligibility_service import (
     evaluate_research_eligibility_from_participation_view,
 )
 from components.research_eligibility_ui import render_research_eligibility_block
+from components.portfolio_security_decision_ui import (
+    render_portfolio_security_decision_section,
+)
 from components.security_intelligence_ui import render_security_intelligence_section
 from components.signal_intelligence_ui import render_signal_intelligence_section
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
 from repositories.universe_expansion_repository import UniverseExpansionRepository
+from services.portfolio_security_decision_service import (
+    evaluate_portfolio_security_for_symbol,
+    fail_closed_portfolio_security_decision,
+)
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
     build_canonical_security_intelligence_inputs,
@@ -718,6 +725,11 @@ render_security_intelligence_section(
     nabi_score=candidate.get("nabi_score"),
     persisted_row=si_persisted,
 )
+if symbol and symbol != "—":
+    portfolio_decision = evaluate_portfolio_security_for_symbol(client, str(symbol))
+else:
+    portfolio_decision = fail_closed_portfolio_security_decision(str(symbol or ""))
+render_portfolio_security_decision_section(portfolio_decision)
 render_signal_intelligence_section(SignalIntelligenceService().context_for(str(symbol)))
 
 if not research_eligibility.research_allowed:
