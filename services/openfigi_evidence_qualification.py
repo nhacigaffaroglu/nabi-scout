@@ -86,6 +86,8 @@ class OpenFigiQualification:
     market_sector: str
     figi: str
     provider_name: str
+    composite_figi: str = ""
+    share_class_figi: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +100,8 @@ class OpenFigiQualification:
             "securityType2": self.security_type2,
             "marketSector": self.market_sector,
             "figi": self.figi,
+            "compositeFIGI": self.composite_figi,
+            "shareClassFIGI": self.share_class_figi,
             "provider_name": self.provider_name,
         }
 
@@ -177,6 +181,8 @@ def qualify_mapping(
             market_sector="",
             figi="",
             provider_name="",
+            composite_figi="",
+            share_class_figi="",
         )
     status, chosen = disambiguate_candidates(
         result.candidates, official_name=official_name
@@ -193,6 +199,8 @@ def qualify_mapping(
             market_sector="",
             figi="",
             provider_name="",
+            composite_figi="",
+            share_class_figi="",
         )
     if status == MATCH_MULTIPLE or chosen is None:
         return OpenFigiQualification(
@@ -206,6 +214,8 @@ def qualify_mapping(
             market_sector="",
             figi="",
             provider_name="",
+            composite_figi="",
+            share_class_figi="",
         )
     instrument, safety, reason = _classify_structured(
         chosen.security_type, chosen.security_type2
@@ -221,4 +231,6 @@ def qualify_mapping(
         market_sector=chosen.market_sector,
         figi=chosen.figi,
         provider_name=chosen.name,
+        composite_figi=chosen.composite_figi,
+        share_class_figi=chosen.share_class_figi,
     )
