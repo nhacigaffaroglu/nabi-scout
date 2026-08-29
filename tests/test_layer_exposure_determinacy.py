@@ -362,9 +362,10 @@ class IntegrationTests(unittest.TestCase):
 
     def test_21_new_money_does_not_consume_robust_status(self) -> None:
         source = NEW_MONEY.read_text(encoding="utf-8")
-        self.assertNotIn("ROBUST_UNDERWEIGHT", source)
-        self.assertNotIn("exposure_determinacy", source)
+        self.assertIn("select_hybrid_allocation_intent", source)
         self.assertIn("DriftStatus.UNDERWEIGHT", source)
+        self.assertIn("enable_hybrid_exposure_allocation: Optional[bool] = None", source)
+        self.assertNotIn("known_pct + unknown_pct", source)
 
     def test_22_robust_uw_does_not_create_allocation(self) -> None:
         plan = allocate_new_money(

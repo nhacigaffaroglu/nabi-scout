@@ -311,13 +311,15 @@ class AdviserAndAllocationTests(unittest.TestCase):
         self.assertIn("EXPOSURE_CLASSIFICATION_INCOMPLETE", plan.limitations)
 
     def test_14_18_participation_and_mix_maintenance_not_in_production(self) -> None:
-        self.assertNotIn("ROBUST_UNDERWEIGHT", NEW_MONEY.read_text(encoding="utf-8"))
-        self.assertNotIn("exposure_diagnostics", NEW_MONEY.read_text(encoding="utf-8"))
+        source = NEW_MONEY.read_text(encoding="utf-8")
+        self.assertIn("select_hybrid_allocation_intent", source)
+        self.assertNotIn("exposure_diagnostics", source)
         self.assertEqual(MIX_MAINTENANCE_RECOMMENDATION, "OPTION_C_U0_ONLY")
         self.assertNotIn(MIX_MAINTENANCE_RECOMMENDATION, NEW_MONEY.read_text(encoding="utf-8"))
 
     def test_19_blocker_hierarchy_deterministic(self) -> None:
-        self.assertEqual(HYBRID_BLOCKER_PRECEDENCE[0], "PORTFOLIO_EXPOSURE_UNSAFE")
+        self.assertEqual(HYBRID_BLOCKER_PRECEDENCE[0], "PORTFOLIO_EXPOSURE_UNAVAILABLE")
+        self.assertEqual(HYBRID_BLOCKER_PRECEDENCE[1], "PORTFOLIO_EXPOSURE_UNSAFE")
         self.assertLess(
             HYBRID_BLOCKER_PRECEDENCE.index(SHADOW_BLOCKER_NO_FILL),
             HYBRID_BLOCKER_PRECEDENCE.index("PARTICIPATION_BLOCKED"),

@@ -33,6 +33,14 @@ from services.portfolio_allocation_intelligence import (
     _map_asset_class,
     _map_market,
 )
+from services.hybrid_exposure_allocation_policy import (
+    HybridExposureAllocationPolicy,
+    HybridPortfolioMode,
+    NO_ELIGIBLE_FILL_FOR_ROBUST_UNDERWEIGHT_LAYER,
+    NO_ROBUST_UNDERWEIGHT_LAYER,
+    resolve_hybrid_allocation_policy,
+    select_hybrid_allocation_intent,
+)
 from services.portfolio_economic_exposure import (
     EconomicExposureBucket,
     InstrumentExposureView,
@@ -79,6 +87,8 @@ REASON_CONCENTRATION_LIMIT = "CONCENTRATION_LIMIT"
 REASON_MIX_MAINTENANCE = "MIX_MAINTENANCE"
 REASON_RESIDUAL_CASH = "RESIDUAL_CASH"
 REASON_NO_ELIGIBLE_SECURITY = "NO_ELIGIBLE_SECURITY"
+REASON_RESEARCH_NOT_ALLOWED = "RESEARCH_NOT_ALLOWED"
+LIVE_BLOCKER_INCOMPLETE = "EXPOSURE_CLASSIFICATION_INCOMPLETE"
 
 CANDIDATE_CLASS_ALIASES = {
     "hisse": "equity",
@@ -130,6 +140,9 @@ class AllocationPlan:
     skipped: Tuple[AllocationSkip, ...]
     limitations: Tuple[str, ...] = ()
     primary_dimension: Optional[str] = None
+    hybrid_allocation_active: bool = False
+    hybrid_portfolio_mode: Optional[str] = None
+    hybrid_policy: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -174,6 +187,27 @@ def _participation_blocked(value: Any) -> bool:
 
 def _participation_is_uygun(value: Any) -> bool:
     return normalize_participation_status(value) == PARTICIPATION_STATUS_UYGUN
+
+
+def _research_explicitly_denied(*sources: Any) -> bool:
+    """Fail closed only when research_allowed is explicitly false. Missing is not inferred."""
+    for source in sources:
+        if source is None:
+            continue
+        value = None
+        if isinstance(source, Mapping):
+            value = source.get("research_allowed")
+        else:
+            value = getattr(source, "research_allowed", None)
+            if value is None:
+                nabi = getattr(source, "nabi", None)
+                if nabi is not None:
+                    value = getattr(nabi, "research_allowed", None)
+        if value is False:
+            return True
+        if isinstance(value, str) and value.strip().lower() in {"false", "0", "no"}:
+            return True
+    return False
 
 
 def _resolve_participation(
@@ -401,8 +435,13 @@ def allocate_new_money(
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
     security_master: Optional[SecurityMasterService] = None,
+    hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
+    enable_hybrid_exposure_allocation: Optional[bool] = None,
 ) -> AllocationPlan:
-    """Return a proposed plan only. Never writes or fetches."""
+    """Return a proposed plan only. Never writes or fetches.
+
+    Hybrid layer selection is resolved once here. Missing flag is OFF.
+    """
     amount = Decimal(str(available_amount))
     currency = normalize_currency(amount_currency)
     min_trade = Decimal(str(minimum_trade_amount or 0))
@@ -447,7 +486,12 @@ def allocate_new_money(
             assets=assets,
             positions=positions,
             exposure_buckets=exposure_buckets,
+            exposure_view=exposure_view,
         )
+    hybrid = resolve_hybrid_allocation_policy(
+        enable_hybrid_exposure_allocation,
+        policy=hybrid_policy,
+    )
     limitations.extend(intelligence.limitations)
     if not policy_is_configured(policy):
         return AllocationPlan(
@@ -500,19 +544,52 @@ def allocate_new_money(
         for row in policy.targets
         if row.dimension == dimension
     }
-    underweight = sorted(
-        (
-            row
-            for row in drift_by_bucket.values()
-            if row.status == DriftStatus.UNDERWEIGHT and row.drift_pct is not None
-        ),
-        key=lambda row: (row.drift_pct if row.drift_pct is not None else 0.0, row.bucket_id),
+    unpriced = bool(portfolio_view.unpriced_position_count) or bool(
+        intelligence.unpriced_holdings
     )
-    overweight = {
-        row.bucket_id
-        for row in drift_by_bucket.values()
-        if row.status == DriftStatus.OVERWEIGHT
-    }
+    intent = select_hybrid_allocation_intent(
+        policy=hybrid,
+        determinacy=intelligence.exposure_determinacy,
+        valuation_complete=not unpriced,
+        unpriced=unpriced,
+        dimension=dimension.value,
+    )
+    if hybrid.enabled:
+        limitations = [item for item in limitations if item != LIVE_BLOCKER_INCOMPLETE]
+    if intent.blocker:
+        residual_limits = [intent.blocker]
+        if amount > 0:
+            residual_limits.append(REASON_RESIDUAL_CASH)
+        return AllocationPlan(
+            input_amount=amount,
+            currency=currency,
+            recommendations=(),
+            total_allocated=Decimal("0"),
+            residual_cash=amount,
+            skipped=(),
+            limitations=tuple(dict.fromkeys(residual_limits)),
+            primary_dimension=dimension.value,
+            hybrid_allocation_active=hybrid.enabled,
+            hybrid_portfolio_mode=intent.mode.value,
+            hybrid_policy=hybrid.to_dict(),
+        )
+    if intent.use_robust_layers:
+        underweight = list(intent.underweight_rows)
+        overweight = set(intent.overweight_layers)
+    else:
+        underweight = sorted(
+            (
+                row
+                for row in drift_by_bucket.values()
+                if row.status == DriftStatus.UNDERWEIGHT and row.drift_pct is not None
+            ),
+            key=lambda row: (row.drift_pct if row.drift_pct is not None else 0.0, row.bucket_id),
+        )
+        overweight = {
+            row.bucket_id
+            for row in drift_by_bucket.values()
+            if row.status == DriftStatus.OVERWEIGHT
+        }
 
     asset_by_id = {str(row.get("id") or ""): row for row in (assets or [])}
     asset_by_symbol = {
@@ -549,6 +626,19 @@ def allocate_new_money(
                     symbol,
                     REASON_PARTICIPATION_BLOCKED,
                     "Katılım durumu mevcut pozisyon artırımını engelliyor.",
+                )
+            )
+            continue
+        if _research_explicitly_denied(
+            row,
+            candidates_by_symbol.get(symbol),
+            asset_by_symbol.get(symbol) or asset_by_id.get(str(row.asset_id or "")),
+        ):
+            skipped.append(
+                AllocationSkip(
+                    symbol,
+                    REASON_RESEARCH_NOT_ALLOWED,
+                    "research_allowed false; araştırma kapalı varlık tahsis edilmez.",
                 )
             )
             continue
@@ -629,6 +719,15 @@ def allocate_new_money(
                     symbol,
                     REASON_PARTICIPATION_BLOCKED,
                     "Katılım durumu yeni fırsat tahsisini engelliyor.",
+                )
+            )
+            continue
+        if _research_explicitly_denied(raw):
+            skipped.append(
+                AllocationSkip(
+                    symbol,
+                    REASON_RESEARCH_NOT_ALLOWED,
+                    "research_allowed false; araştırma kapalı varlık tahsis edilmez.",
                 )
             )
             continue
@@ -967,7 +1066,7 @@ def allocate_new_money(
         if layer != "cash" and remaining > 0 and _needed(layer) > 0:
             limitations.append(f"UNFILLED_UNDERWEIGHT:{layer}")
 
-    if remaining > 0 and not underweight:
+    if remaining > 0 and not underweight and intent.allow_mix_maintenance:
         fill_mode = "mix"
         on_target_layers = sorted(
             row.bucket_id
@@ -987,6 +1086,15 @@ def allocate_new_money(
         residual = Decimal("0")
     if residual > 0:
         limitations.append(REASON_RESIDUAL_CASH)
+    if intent.mode == HybridPortfolioMode.BOUNDED:
+        hybrid_limit = None
+        if not underweight:
+            hybrid_limit = NO_ROBUST_UNDERWEIGHT_LAYER
+        elif total_allocated <= 0:
+            first_layer = underweight[0].bucket_id
+            hybrid_limit = f"{NO_ELIGIBLE_FILL_FOR_ROBUST_UNDERWEIGHT_LAYER}:{first_layer}"
+        if hybrid_limit:
+            limitations = [hybrid_limit, *limitations]
     unique_skips = []
     seen_skip = set()
     for row in skipped:
@@ -1004,4 +1112,7 @@ def allocate_new_money(
         skipped=tuple(unique_skips),
         limitations=tuple(dict.fromkeys(limitations)),
         primary_dimension=dimension.value,
+        hybrid_allocation_active=hybrid.enabled,
+        hybrid_portfolio_mode=intent.mode.value,
+        hybrid_policy=hybrid.to_dict(),
     )

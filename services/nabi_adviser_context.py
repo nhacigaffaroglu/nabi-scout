@@ -78,6 +78,17 @@ from services.portfolio_allocation_intelligence import (
 )
 from services.portfolio_economic_exposure import build_economic_exposure
 from services.wealth_goal_planning import planning_conversion
+from services.hybrid_exposure_allocation_policy import (
+    HybridExposureAllocationPolicy,
+    NO_ELIGIBLE_FILL_FOR_ROBUST_UNDERWEIGHT_LAYER,
+    NO_ROBUST_UNDERWEIGHT_LAYER,
+    PORTFOLIO_EXPOSURE_UNAVAILABLE,
+    PORTFOLIO_EXPOSURE_UNSAFE,
+    first_live_blocker,
+    overlay_adviser_hybrid_fields,
+    resolve_hybrid_allocation_policy,
+    resolve_hybrid_portfolio_mode,
+)
 from services.wealth_new_money_allocation import (
     AllocationPlan,
     _allocation_buckets_from_exposure,
@@ -172,6 +183,7 @@ def _economic_exposure_context(
     assets: Sequence[Any] = (),
     positions: Sequence[Any] = (),
     candidates: Sequence[Mapping[str, Any]] = (),
+    hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
 ) -> Optional[dict[str, Any]]:
     if portfolio_view is None or policy is None:
         return None
@@ -211,7 +223,24 @@ def _economic_exposure_context(
         for row in intelligence.drift
         if row.dimension == AllocationDimension.ECONOMIC_EXPOSURE
     ]
-    return payload
+    resolved = hybrid_policy or resolve_hybrid_allocation_policy()
+    unpriced = bool(getattr(portfolio_view, "unpriced_position_count", 0)) or bool(
+        intelligence.unpriced_holdings
+    )
+    mode = resolve_hybrid_portfolio_mode(
+        policy=resolved,
+        determinacy=intelligence.exposure_determinacy,
+        valuation_complete=not unpriced,
+        unpriced=unpriced,
+        dimension=AllocationDimension.ECONOMIC_EXPOSURE.value,
+    )
+    live = first_live_blocker([str(item) for item in (new_money.get("limitations") or [])])
+    return overlay_adviser_hybrid_fields(
+        payload,
+        policy=resolved,
+        mode=mode,
+        live_blocker=live,
+    )
 
 
 def _allocation_dict(plan: Optional[AllocationPlan]) -> dict[str, Any]:
@@ -224,6 +253,9 @@ def _allocation_dict(plan: Optional[AllocationPlan]) -> dict[str, Any]:
         "residual_cash": str(plan.residual_cash),
         "limitations": list(plan.limitations),
         "primary_dimension": plan.primary_dimension,
+        "hybrid_allocation_active": plan.hybrid_allocation_active,
+        "hybrid_portfolio_mode": plan.hybrid_portfolio_mode,
+        "hybrid_policy": plan.hybrid_policy,
         "recommendations": [
             {
                 "symbol": item.symbol,
@@ -418,6 +450,31 @@ def _compose_new_money(new_money: Mapping[str, Any]) -> str:
     if fx_blocked:
         return (
             "Dağılım hesaplanamadı çünkü gerekli kur dönüşümü mevcut değil. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if PORTFOLIO_EXPOSURE_UNAVAILABLE in limitations:
+        return (
+            "Portföy maruziyeti fiyatlanamadığı için yeni para dağıtılamadı. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if PORTFOLIO_EXPOSURE_UNSAFE in limitations:
+        return (
+            "Bilinmeyen ekonomik maruziyet onaylı tavanı aştığı için yeni para "
+            "dağıtılamadı. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if NO_ROBUST_UNDERWEIGHT_LAYER in limitations:
+        return (
+            "Dayanıklı açık katman olmadığı için yeni para dağıtılamadı. "
+            f"{residual or amount} nakitte tutulabilir."
+        )
+    if any(
+        item == NO_ELIGIBLE_FILL_FOR_ROBUST_UNDERWEIGHT_LAYER
+        or item.startswith(f"{NO_ELIGIBLE_FILL_FOR_ROBUST_UNDERWEIGHT_LAYER}:")
+        for item in limitations
+    ):
+        return (
+            "Dayanıklı açık katmanlar için uygun doldurma varlığı yok. "
             f"{residual or amount} nakitte tutulabilir."
         )
     if "EXPOSURE_CLASSIFICATION_INCOMPLETE" in limitations:
@@ -776,6 +833,8 @@ def build_nabi_adviser_context(
     conversation_state: Optional[Mapping[str, Any]] = None,
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master: Any = None,
+    hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
+    enable_hybrid_exposure_allocation: Optional[bool] = None,
 ) -> NabiAdviserContext:
     prior = dict(conversation_state or {})
     parsed = parse_adviser_question(question, prior)
@@ -873,6 +932,10 @@ def build_nabi_adviser_context(
                     rate,
                     contribution_currency=str(currency),
                 )
+            resolved_hybrid = resolve_hybrid_allocation_policy(
+                enable_hybrid_exposure_allocation,
+                policy=hybrid_policy,
+            )
             scenario_plan = allocate_new_money(
                 available_amount=Decimal(str(amount)),
                 amount_currency=str(currency),
@@ -884,6 +947,7 @@ def build_nabi_adviser_context(
                 positions=positions,
                 fund_snapshots=fund_snapshots,
                 security_master=security_master,
+                hybrid_policy=resolved_hybrid,
             )
             new_money = _allocation_dict(scenario_plan)
     else:
@@ -905,6 +969,10 @@ def build_nabi_adviser_context(
         assets=assets,
         positions=positions,
         candidates=candidates,
+        hybrid_policy=resolve_hybrid_allocation_policy(
+            enable_hybrid_exposure_allocation,
+            policy=hybrid_policy,
+        ),
     )
     canonical = _compose_canonical_answer(
         parsed,
