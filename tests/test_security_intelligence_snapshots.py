@@ -474,6 +474,8 @@ class SnapshotIdempotencyTests(unittest.TestCase):
         self.assertIn("SecurityIntelligenceService", page)
         self.assertIn("get_latest", facade)
         self.assertIn("SecurityIntelligenceService", facade)
+        self.assertIn("SignalIntelligenceService", page)
+        self.assertIn("signal_context", facade)
         self.assertNotIn(".insert(", facade)
         self.assertNotIn("nabi_score_v4", facade)
         ui = Path("components/security_intelligence_ui.py").read_text(encoding="utf-8")

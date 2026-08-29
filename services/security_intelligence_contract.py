@@ -13,7 +13,10 @@ LLM/explanation layers may narrate these facts later. They must not invent them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Optional, Sequence
+
+if TYPE_CHECKING:
+    from services.signal_intelligence_contract import SignalIntelligenceContext
 
 ENGINE_VERSION = "security_intelligence_8b.1"
 FACTS_VERSION = "security_facts_8c.1"
@@ -88,6 +91,9 @@ CHANGE_RISK_INCREASING = "RISK_INCREASING"
 CHANGE_RISK_DECREASING = "RISK_DECREASING"
 CHANGE_PARTICIPATION_CHANGED = "PARTICIPATION_CHANGED"
 CHANGE_DATA_QUALITY_CHANGED = "DATA_QUALITY_CHANGED"
+CHANGE_NEW_MATERIAL_SIGNAL = "NEW_MATERIAL_SIGNAL"
+CHANGE_SIGNAL_CONFLICT_DETECTED = "SIGNAL_CONFLICT_DETECTED"
+CHANGE_SIGNAL_VERIFIED = "SIGNAL_VERIFIED"
 
 CHANGE_FLAGS = (
     CHANGE_QUALITY_IMPROVING,
@@ -106,6 +112,9 @@ CHANGE_FLAGS = (
     CHANGE_RISK_DECREASING,
     CHANGE_PARTICIPATION_CHANGED,
     CHANGE_DATA_QUALITY_CHANGED,
+    CHANGE_NEW_MATERIAL_SIGNAL,
+    CHANGE_SIGNAL_CONFLICT_DETECTED,
+    CHANGE_SIGNAL_VERIFIED,
 )
 
 SNAPSHOT_TABLE = "security_intelligence_snapshots"
@@ -453,6 +462,7 @@ class SecurityIntelligenceView:
     investable: bool
     engine_version: str = ENGINE_VERSION
     facts_version: str = FACTS_VERSION
+    signal_context: Optional["SignalIntelligenceContext"] = None
 
     def dimension(self, name: str) -> DimensionResult:
         mapping = {
@@ -491,6 +501,7 @@ class SecurityIntelligenceView:
             "investable": self.investable,
             "engine_version": self.engine_version,
             "facts_version": self.facts_version,
+            "signal_context": self.signal_context.to_dict() if self.signal_context is not None else None,
         }
 
 

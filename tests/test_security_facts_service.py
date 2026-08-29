@@ -197,12 +197,14 @@ class CanonicalConsumptionTests(unittest.TestCase):
         self.assertIn("SecurityFactsService", source)
         self.assertIn("SecurityIntelligenceService", source)
         self.assertIn("render_security_intelligence_section", source)
+        self.assertIn("render_signal_intelligence_section", source)
         self.assertNotIn("evaluate_security_intelligence(", source)
         self.assertIn("build_company_intelligence", source)
 
     def test_facade_uses_canonical_si(self) -> None:
         source = FACADE.read_text(encoding="utf-8")
         self.assertIn("SecurityIntelligenceService", source)
+        self.assertIn("SignalIntelligenceService", source)
         self.assertIn("SecurityFactsService", source)
         self.assertNotIn("nabi_score_v4", source)
         self.assertNotIn(".insert(", source)

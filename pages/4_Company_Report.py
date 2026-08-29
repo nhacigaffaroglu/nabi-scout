@@ -68,6 +68,7 @@ from services.research_eligibility_service import (
 )
 from components.research_eligibility_ui import render_research_eligibility_block
 from components.security_intelligence_ui import render_security_intelligence_section
+from components.signal_intelligence_ui import render_signal_intelligence_section
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
@@ -78,6 +79,7 @@ from services.security_intelligence_service import (
 )
 from services.security_intelligence_contract import ENGINE_VERSION
 from services.security_intelligence_snapshot_service import load_previous_for_evaluation
+from services.signal_intelligence_service import SignalIntelligenceService
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -731,6 +733,7 @@ render_security_intelligence_section(
     nabi_score=candidate.get("nabi_score"),
     persisted_row=si_persisted,
 )
+render_signal_intelligence_section(SignalIntelligenceService().context_for(str(symbol)))
 
 if not research_eligibility.research_allowed:
     render_research_eligibility_block(research_eligibility)

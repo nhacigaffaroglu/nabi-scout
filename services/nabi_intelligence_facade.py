@@ -15,6 +15,8 @@ from services.security_intelligence_service import (
     SecurityIntelligenceService,
     participation_from_sources,
 )
+from services.signal_intelligence_contract import SignalIntelligenceContext, empty_signal_context
+from services.signal_intelligence_service import SignalIntelligenceService
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class InvestmentIntelligenceView:
     security_intelligence_snapshot_id: Optional[str] = None
     security_intelligence_snapshot_as_of: Optional[str] = None
     has_persisted_security_intelligence: bool = False
+    signal_context: Optional[SignalIntelligenceContext] = None
 
 
 def get_investment_intelligence(
@@ -127,6 +130,7 @@ def get_investment_intelligence(
         security_intelligence_snapshot_id=(persisted or {}).get("id"),
         security_intelligence_snapshot_as_of=(persisted or {}).get("as_of"),
         has_persisted_security_intelligence=persisted is not None,
+        signal_context=SignalIntelligenceService().context_for(normalized_symbol),
     )
 
 
@@ -154,4 +158,9 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
         "security_intelligence_snapshot_id": view.security_intelligence_snapshot_id,
         "security_intelligence_snapshot_as_of": view.security_intelligence_snapshot_as_of,
         "has_persisted_security_intelligence": view.has_persisted_security_intelligence,
+        "signal_context": (
+            view.signal_context.to_dict()
+            if view.signal_context is not None
+            else empty_signal_context(view.symbol).to_dict()
+        ),
     }
