@@ -25,9 +25,57 @@ from services.security_intelligence_engine import evaluate_security_intelligence
 
 __all__ = (
     "SecurityIntelligenceService",
+    "build_canonical_security_intelligence_inputs",
+    "explicit_persisted_research_allowed",
     "facts_from_candidate",
     "participation_from_sources",
 )
+
+
+def explicit_persisted_research_allowed(
+    *,
+    queue_row: Optional[Mapping[str, Any]] = None,
+    snapshot: Optional[Mapping[str, Any]] = None,
+) -> Optional[bool]:
+    """Persisted boolean only. Never inferred from Participation status."""
+    for row in (queue_row, snapshot):
+        if not isinstance(row, Mapping) or "research_allowed" not in row:
+            continue
+        raw = row.get("research_allowed")
+        if raw is None:
+            continue
+        return bool(raw)
+    return None
+
+
+def build_canonical_security_intelligence_inputs(
+    symbol: str,
+    *,
+    candidate: Optional[Mapping[str, Any]] = None,
+    participation_snapshot: Optional[Mapping[str, Any]] = None,
+    queue_row: Optional[Mapping[str, Any]] = None,
+    security_resolution: Any = None,
+    client: Any = None,
+    facts_service: Optional[SecurityFactsService] = None,
+) -> tuple[SecurityFacts, SecurityParticipationContext]:
+    """Shared Company Report / facade SI inputs. Persisted sources only."""
+    facts = (facts_service or SecurityFactsService()).build(
+        symbol,
+        candidate=candidate,
+        participation_snapshot=participation_snapshot,
+        security_resolution=security_resolution,
+        stale=str((candidate or {}).get("freshness_status") or "").upper() == "STALE",
+        allow_sec_cache_replay=True,
+        client=client,
+    )
+    return facts, participation_from_sources(
+        queue_or_snapshot=participation_snapshot,
+        candidate=candidate,
+        research_allowed=explicit_persisted_research_allowed(
+            queue_row=queue_row,
+            snapshot=participation_snapshot,
+        ),
+    )
 
 
 def participation_from_sources(

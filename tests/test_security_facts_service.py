@@ -194,7 +194,7 @@ class SecurityIntelligenceUiTests(unittest.TestCase):
 class CanonicalConsumptionTests(unittest.TestCase):
     def test_company_report_uses_canonical_si(self) -> None:
         source = PAGE.read_text(encoding="utf-8")
-        self.assertIn("SecurityFactsService", source)
+        self.assertIn("build_canonical_security_intelligence_inputs", source)
         self.assertIn("SecurityIntelligenceService", source)
         self.assertIn("render_security_intelligence_section", source)
         self.assertIn("render_signal_intelligence_section", source)
@@ -205,7 +205,7 @@ class CanonicalConsumptionTests(unittest.TestCase):
         source = FACADE.read_text(encoding="utf-8")
         self.assertIn("SecurityIntelligenceService", source)
         self.assertIn("SignalIntelligenceService", source)
-        self.assertIn("SecurityFactsService", source)
+        self.assertIn("build_canonical_security_intelligence_inputs", source)
         self.assertNotIn("nabi_score_v4", source)
         self.assertNotIn(".insert(", source)
 

@@ -10,11 +10,12 @@ from repositories.participation_assessment_repository import (
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
-from services.security_facts_service import SecurityFactsService
+from repositories.universe_expansion_repository import UniverseExpansionRepository
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
-    participation_from_sources,
+    build_canonical_security_intelligence_inputs,
 )
+from services.security_master_service import production_security_master
 from services.signal_intelligence_contract import SignalIntelligenceContext, empty_signal_context
 from services.signal_intelligence_service import SignalIntelligenceService
 
@@ -80,20 +81,28 @@ def get_investment_intelligence(
     si_state = None
     si_confidence = None
     has_si = False
-    facts = SecurityFactsService().build(
+    queue_row = None
+    try:
+        loaded_queue = UniverseExpansionRepository(client).get_by_symbol(normalized_symbol)
+        queue_row = loaded_queue if isinstance(loaded_queue, dict) else None
+    except Exception:
+        queue_row = None
+    security_resolution = None
+    try:
+        security_resolution = production_security_master(client).resolve_security(
+            normalized_symbol
+        )
+    except Exception:
+        security_resolution = None
+    facts, si_participation = build_canonical_security_intelligence_inputs(
         normalized_symbol,
         candidate=candidate,
         participation_snapshot=participation,
-        allow_sec_cache_replay=False,
+        queue_row=queue_row,
+        security_resolution=security_resolution,
         client=client,
     )
-    si_view = SecurityIntelligenceService().evaluate(
-        facts,
-        participation_from_sources(
-            queue_or_snapshot=participation,
-            candidate=candidate,
-        ),
-    )
+    si_view = SecurityIntelligenceService().evaluate(facts, si_participation)
     si_overall = si_view.overall_score
     si_status = si_view.overall_status
     si_state = si_view.investment_state

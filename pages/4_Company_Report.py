@@ -72,10 +72,10 @@ from components.signal_intelligence_ui import render_signal_intelligence_section
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
-from services.security_facts_service import SecurityFactsService
+from repositories.universe_expansion_repository import UniverseExpansionRepository
 from services.security_intelligence_service import (
     SecurityIntelligenceService,
-    participation_from_sources,
+    build_canonical_security_intelligence_inputs,
 )
 from services.security_intelligence_contract import ENGINE_VERSION
 from services.security_intelligence_snapshot_service import load_previous_for_evaluation
@@ -670,42 +670,27 @@ try:
 except Exception:
     security_resolution = None
 
-si_facts = SecurityFactsService().build(
+si_queue_row = None
+try:
+    loaded_queue = UniverseExpansionRepository(client).get_by_symbol(str(symbol))
+    si_queue_row = loaded_queue if isinstance(loaded_queue, dict) else None
+except Exception:
+    si_queue_row = None
+si_participation_snapshot = None
+try:
+    loaded_snapshot = participation_repo.get_latest(str(symbol))
+    si_participation_snapshot = (
+        loaded_snapshot if isinstance(loaded_snapshot, dict) else None
+    )
+except Exception:
+    si_participation_snapshot = None
+si_facts, si_participation = build_canonical_security_intelligence_inputs(
     str(symbol),
     candidate=candidate,
-    participation_result=participation_view.result,
-    sec_financials=(
-        participation_view.result.sec_financials
-        if participation_view.result is not None
-        else None
-    ),
-    company_intelligence=company_intel_view,
+    participation_snapshot=si_participation_snapshot,
+    queue_row=si_queue_row,
     security_resolution=security_resolution,
-    stale=str(candidate.get("freshness_status") or "").upper() == "STALE",
-    allow_sec_cache_replay=True,
     client=client,
-)
-si_participation = participation_from_sources(
-    queue_or_snapshot={
-        "status": (
-            participation_view.result.participation_assessment.status
-            if participation_view.result is not None
-            else ""
-        ),
-        "methodology_id": (
-            participation_view.result.methodology_id
-            if participation_view.result is not None
-            else ""
-        ),
-        "assessed_at": (
-            participation_view.result.participation_assessment.as_of_date.isoformat()
-            if participation_view.result is not None
-            and participation_view.result.participation_assessment.as_of_date is not None
-            else None
-        ),
-    },
-    candidate=candidate,
-    research_allowed=research_eligibility.research_allowed,
 )
 si_snapshot_repo = SecurityIntelligenceSnapshotRepository(client)
 si_previous = None
