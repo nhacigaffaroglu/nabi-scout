@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -21,8 +23,10 @@ from services.security_intelligence_engine import (
 )
 from services.security_intelligence_snapshot_service import (
     as_of_key,
+    canonicalize_as_of,
     load_previous_for_evaluation,
     may_persist_view,
+    payloads_semantically_equal,
     save_security_intelligence_snapshot,
     snapshot_from_row,
     snapshot_row_from_view,
@@ -163,6 +167,138 @@ class SnapshotIdempotencyTests(unittest.TestCase):
         self.assertEqual(len(repo.rows), 1)
         self.assertEqual(repo.upserts, 1)
         self.assertEqual(as_of_key("2026-01-31"), "2026-01-31")
+
+    def test_runtime_timestamp_difference_skips_write(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        stored = repo.get_latest("CRM")
+        assert stored is not None
+        stored["created_at"] = "2026-08-01T00:00:00+00:00"
+        stored["updated_at"] = "2026-08-29T12:34:56+00:00"
+        stored["id"] = "208751a8-c403-44a1-b8a0-7e8b61ac6d4a"
+        second = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(second.skipped_duplicate)
+        self.assertFalse(second.saved)
+        self.assertEqual(repo.upserts, 1)
+        self.assertEqual(second.row["id"], "208751a8-c403-44a1-b8a0-7e8b61ac6d4a")
+
+    def test_midnight_timestamptz_as_of_skips_write(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        stored = repo.get_latest("CRM")
+        assert stored is not None
+        stored["as_of"] = "2026-01-31T00:00:00+00:00"
+        stored["overall_score"] = Decimal(str(stored["overall_score"]))
+        second = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(second.skipped_duplicate)
+        self.assertEqual(repo.upserts, 1)
+        self.assertEqual(canonicalize_as_of("2026-01-31T00:00:00+00:00"), "2026-01-31")
+        self.assertTrue(
+            payloads_semantically_equal(
+                stored,
+                snapshot_row_from_view(view, as_of="2026-01-31"),
+            )
+        )
+
+    def test_stable_json_ordering_skips_write(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        stored = repo.get_latest("CRM")
+        assert stored is not None
+        stored["dimension_scores"] = {
+            key: stored["dimension_scores"][key]
+            for key in reversed(list(stored["dimension_scores"]))
+        }
+        stored["data_quality"] = {
+            key: stored["data_quality"][key]
+            for key in reversed(list(stored["data_quality"]))
+        }
+        second = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(second.skipped_duplicate)
+        self.assertEqual(repo.upserts, 1)
+
+    def test_genuine_score_change_upserts_then_replay_skips(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        changed = replace(view, overall_score=round((view.overall_score or 50.0) + 1.0, 1))
+        updated = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        replay = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(updated.saved)
+        self.assertFalse(updated.skipped_duplicate)
+        self.assertTrue(replay.skipped_duplicate)
+        self.assertFalse(replay.saved)
+        self.assertEqual(len(repo.rows), 1)
+        self.assertEqual(repo.upserts, 2)
+
+    def test_participation_change_upserts(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        changed = replace(
+            view,
+            participation_status=PARTICIPATION_STATUS_KONTROL_ET,
+            research_allowed=False,
+        )
+        updated = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        replay = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        self.assertTrue(updated.saved)
+        self.assertTrue(replay.skipped_duplicate)
+        self.assertEqual(len(repo.rows), 1)
+        self.assertEqual(repo.upserts, 2)
+
+    def test_data_quality_semantic_change_upserts(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        changed = replace(
+            view,
+            data_quality=replace(
+                view.data_quality,
+                score=0.0 if (view.data_quality.score or 0) > 0 else 12.0,
+                status="INSUFFICIENT_DATA",
+            ),
+        )
+        updated = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        replay = save_security_intelligence_snapshot(repo, changed, as_of="2026-01-31")
+        self.assertTrue(updated.saved)
+        self.assertTrue(replay.skipped_duplicate)
+        self.assertEqual(repo.upserts, 2)
+
+    def test_engine_version_creates_separate_row(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        other = replace(view, engine_version="security_intelligence_8c.1-test")
+        second = save_security_intelligence_snapshot(repo, other, as_of="2026-01-31")
+        replay = save_security_intelligence_snapshot(repo, other, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(second.saved)
+        self.assertTrue(replay.skipped_duplicate)
+        self.assertEqual(len(repo.rows), 2)
+        self.assertEqual(repo.upserts, 2)
+        self.assertNotEqual(first.row["engine_version"], second.row["engine_version"])
+
+    def test_facts_version_creates_separate_row(self) -> None:
+        repo = _FakeRepo()
+        view = _view()
+        first = save_security_intelligence_snapshot(repo, view, as_of="2026-01-31")
+        other = replace(view, facts_version="security_facts_8c.1-test")
+        second = save_security_intelligence_snapshot(repo, other, as_of="2026-01-31")
+        replay = save_security_intelligence_snapshot(repo, other, as_of="2026-01-31")
+        self.assertTrue(first.saved)
+        self.assertTrue(second.saved)
+        self.assertTrue(replay.skipped_duplicate)
+        self.assertEqual(len(repo.rows), 2)
+        self.assertEqual(repo.upserts, 2)
+        self.assertNotEqual(first.row["facts_version"], second.row["facts_version"])
 
     def test_engine_and_facts_versions_do_not_overwrite(self) -> None:
         repo = _FakeRepo()

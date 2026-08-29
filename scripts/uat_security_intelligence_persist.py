@@ -43,6 +43,21 @@ from services.universe_listing_identity import listing_identity
 TARGETS = ("CRM", "AAPL", "AVGO", "MRVL", "UPS", "TSLA")
 
 
+class _WriteCountRepo:
+    """Count actual SI snapshot upserts without changing repository behavior."""
+
+    def __init__(self, inner: SecurityIntelligenceSnapshotRepository) -> None:
+        self._inner = inner
+        self.writes = 0
+
+    def upsert(self, payload):
+        self.writes += 1
+        return self._inner.upsert(payload)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
 def main() -> int:
     apply_local_secrets_to_env()
     migration = apply_migration()
@@ -58,7 +73,8 @@ def main() -> int:
         for row in UniverseExpansionRepository(raw).list_all()
     }
     snaps = ParticipationAssessmentRepository(raw).list_latest_by_symbol()
-    repo = SecurityIntelligenceSnapshotRepository(raw)
+    inner_repo = SecurityIntelligenceSnapshotRepository(raw)
+    repo = _WriteCountRepo(inner_repo)
     facts_service = SecurityFactsService()
     service = SecurityIntelligenceService(facts_service)
     history = LocalMarketHistoryService(raw)
@@ -120,8 +136,6 @@ def main() -> int:
             completeness_pct=built.facts.completeness_pct,
             require_sufficient=True,
         )
-        if save.saved:
-            report["writes"]["security_intelligence_snapshots"] += 1
         replay = save_security_intelligence_snapshot(
             repo,
             view,
@@ -189,6 +203,7 @@ def main() -> int:
                 "completeness": built.facts.completeness_pct,
                 "cache": False,
             }
+    report["writes"]["security_intelligence_snapshots"] = repo.writes
     print(json.dumps(report, indent=2, default=str))
     return 0
 

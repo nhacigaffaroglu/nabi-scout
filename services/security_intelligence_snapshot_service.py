@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, Mapping, Optional
 
 from repositories.security_intelligence_snapshot_repository import (
@@ -30,7 +31,28 @@ from services.security_intelligence_contract import (
 
 UNDATED_AS_OF_KEY = "UNDATED"
 MIN_PERSIST_COMPLETENESS_PCT = 50.0
-_TRANSIENT_KEYS = frozenset({"id", "created_at", "updated_at"})
+PERSISTENCE_METADATA_FIELDS = frozenset({"id", "created_at", "updated_at"})
+SEMANTIC_FIELDS = (
+    "symbol",
+    "as_of",
+    "as_of_key",
+    "facts_version",
+    "engine_version",
+    "overall_score",
+    "overall_status",
+    "overall_confidence",
+    "investment_state",
+    "participation_status",
+    "research_allowed",
+    "dimension_scores",
+    "dimension_statuses",
+    "data_quality",
+    "strengths",
+    "weaknesses",
+    "risk_flags",
+    "reason_codes",
+    "change_flags",
+)
 
 
 @dataclass(frozen=True)
@@ -44,9 +66,118 @@ class SaveSecurityIntelligenceResult:
     dry_run: bool = False
 
 
+def canonicalize_as_of(value: Any) -> Optional[str]:
+    """Normalize date / midnight timestamptz to YYYY-MM-DD.
+
+    Postgres timestamptz stores a date-only as_of as 00:00:00+00. That is
+    storage representation, not a new financial period. A non-midnight
+    timestamp is kept because it can represent evidence freshness.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if (
+            value.hour == 0
+            and value.minute == 0
+            and value.second == 0
+            and value.microsecond == 0
+        ):
+            return value.date().isoformat()
+        return value.isoformat()
+    if hasattr(value, "isoformat") and not isinstance(value, (str, bytes)):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        date_part = text[:10]
+        remainder = text[10:]
+        if not remainder:
+            return date_part
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return text
+        if (
+            parsed.hour == 0
+            and parsed.minute == 0
+            and parsed.second == 0
+            and parsed.microsecond == 0
+        ):
+            return date_part
+        return parsed.isoformat()
+    return text
+
+
 def as_of_key(as_of: Optional[str]) -> str:
-    text = str(as_of or "").strip()
-    return text or UNDATED_AS_OF_KEY
+    canonical = canonicalize_as_of(as_of)
+    if canonical and len(canonical) >= 10 and canonical[4] == "-" and canonical[7] == "-":
+        return canonical[:10]
+    return canonical or UNDATED_AS_OF_KEY
+
+
+def _canonicalize_number(value: Any) -> Any:
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, Decimal):
+        value = float(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return round(value, 6)
+    if isinstance(value, int):
+        return value
+    return value
+
+
+def canonicalize_semantic_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): canonicalize_semantic_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [canonicalize_semantic_value(item) for item in value]
+    if isinstance(value, (Decimal, float, int)) and not isinstance(value, bool):
+        return _canonicalize_number(value)
+    return value
+
+
+def semantic_payload(row: Mapping[str, Any]) -> Dict[str, Any]:
+    rebuilt = snapshot_to_row(snapshot_from_row(row))
+    payload: Dict[str, Any] = {}
+    for field in SEMANTIC_FIELDS:
+        raw = rebuilt.get(field)
+        if field == "as_of":
+            raw = canonicalize_as_of(raw)
+        if field == "as_of_key":
+            raw = as_of_key(rebuilt.get("as_of") or raw)
+        payload[field] = canonicalize_semantic_value(raw)
+    return payload
+
+
+def canonical_semantic_json(row: Mapping[str, Any]) -> str:
+    return json.dumps(semantic_payload(row), sort_keys=True, separators=(",", ":"), default=str)
+
+
+def payloads_semantically_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    return canonical_semantic_json(left) == canonical_semantic_json(right)
+
+
+def semantic_payload_diffs(
+    left: Mapping[str, Any],
+    right: Mapping[str, Any],
+) -> tuple[tuple[str, Any, Any], ...]:
+    first = semantic_payload(left)
+    second = semantic_payload(right)
+    diffs: list[tuple[str, Any, Any]] = []
+    for field in SEMANTIC_FIELDS:
+        if first.get(field) != second.get(field):
+            diffs.append((field, first.get(field), second.get(field)))
+    return tuple(diffs)
 
 
 def snapshot_row_from_view(
@@ -61,7 +192,7 @@ def snapshot_row_from_view(
 def snapshot_to_row(snap: SecurityIntelligenceSnapshot) -> Dict[str, Any]:
     return {
         "symbol": str(snap.symbol or "").strip().upper(),
-        "as_of": snap.as_of,
+        "as_of": canonicalize_as_of(snap.as_of),
         "as_of_key": as_of_key(snap.as_of),
         "facts_version": snap.facts_version,
         "engine_version": snap.engine_version,
@@ -85,7 +216,7 @@ def snapshot_to_row(snap: SecurityIntelligenceSnapshot) -> Dict[str, Any]:
 def snapshot_from_row(row: Mapping[str, Any]) -> SecurityIntelligenceSnapshot:
     return SecurityIntelligenceSnapshot(
         symbol=str(row.get("symbol") or ""),
-        as_of=str(row.get("as_of") or "") or None,
+        as_of=canonicalize_as_of(row.get("as_of")),
         engine_version=str(row.get("engine_version") or ""),
         facts_version=str(row.get("facts_version") or ""),
         overall_score=row.get("overall_score"),
@@ -102,16 +233,6 @@ def snapshot_from_row(row: Mapping[str, Any]) -> SecurityIntelligenceSnapshot:
         risk_flags=tuple(row.get("risk_flags") or ()),
         reason_codes=tuple(row.get("reason_codes") or ()),
         data_quality=dict(row.get("data_quality") or {}),
-    )
-
-
-def semantic_payload(row: Mapping[str, Any]) -> Dict[str, Any]:
-    return {key: row.get(key) for key in snapshot_to_row(snapshot_from_row(row)) if key not in _TRANSIENT_KEYS}
-
-
-def payloads_semantically_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
-    return json.dumps(semantic_payload(left), sort_keys=True, default=str) == json.dumps(
-        semantic_payload(right), sort_keys=True, default=str
     )
 
 
