@@ -201,6 +201,26 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(plan.write_tables, ())
         self.assertIsNone(repo.get_by_symbol("O"))
 
+    def test_research_allowed_false_blocked(self) -> None:
+        self.assertEqual(
+            three_gate_eligibility(
+                classification_status=CLASSIFICATION_PASS,
+                participation_status=PARTICIPATION_STATUS_UYGUN,
+                actionability=ACTIONABILITY_NOT_RUN,
+            ),
+            GATE_BLOCKED,
+        )
+        self.assertEqual(
+            evaluate_discovery_record(
+                _row(
+                    research_allowed=False,
+                    participation_status=PARTICIPATION_STATUS_KONTROL_ET,
+                    actionability=ACTIONABILITY_NOT_RUN,
+                )
+            ),
+            GATE_BLOCKED,
+        )
+
     def test_hybrid_remains_off(self) -> None:
         self.assertFalse(resolve_hybrid_allocation_policy().enabled)
         self.assertNotIn("enable_hybrid", SERVICE.read_text(encoding="utf-8"))

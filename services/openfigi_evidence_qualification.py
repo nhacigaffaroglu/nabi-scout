@@ -88,6 +88,8 @@ class OpenFigiQualification:
     provider_name: str
     composite_figi: str = ""
     share_class_figi: str = ""
+    ticker: str = ""
+    exch_code: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +105,8 @@ class OpenFigiQualification:
             "compositeFIGI": self.composite_figi,
             "shareClassFIGI": self.share_class_figi,
             "provider_name": self.provider_name,
+            "ticker": self.ticker,
+            "exchCode": self.exch_code,
         }
 
 
@@ -229,8 +233,10 @@ def qualify_mapping(
         security_type=chosen.security_type,
         security_type2=chosen.security_type2,
         market_sector=chosen.market_sector,
-        figi=chosen.figi,
-        provider_name=chosen.name,
-        composite_figi=chosen.composite_figi,
-        share_class_figi=chosen.share_class_figi,
-    )
+            figi=chosen.figi,
+            provider_name=chosen.name,
+            composite_figi=chosen.composite_figi,
+            share_class_figi=chosen.share_class_figi,
+            ticker=chosen.ticker,
+            exch_code=chosen.exch_code,
+        )

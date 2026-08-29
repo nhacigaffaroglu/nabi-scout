@@ -11,9 +11,12 @@ from services.economic_classification_ingest import (
     SPRE_OPENFIGI_REIT_OBSERVATIONS,
     WRITE_GATE_FAIL,
     WRITE_GATE_PASS,
+    collect_us_listing_identity,
     persist_economic_ingest_plan,
     plan_spre_reit_economic_ingest,
+    plan_us_listing_reit_economic_ingest,
 )
+from services.openfigi_client import MATCH_EXACT_SINGLE, MATCH_MULTIPLE
 from services.exposure_determinacy_diagnostics import eligible_fill_assets
 from services.fund_intelligence_contract import FundHoldingRow, FundHoldingsSnapshotView
 from services.hybrid_exposure_allocation_policy import resolve_hybrid_allocation_policy
@@ -493,6 +496,149 @@ class ParticipationAndHybridTests(unittest.TestCase):
     def test_hybrid_remains_off_by_default(self) -> None:
         self.assertFalse(resolve_hybrid_allocation_policy().enabled)
         self.assertFalse(resolve_hybrid_allocation_policy(None).enabled)
+
+
+class UsListingReitIngestTests(unittest.TestCase):
+    def _listing(self, ticker: str, **kwargs) -> dict:
+        row = {
+            "ticker": ticker,
+            "identity_status": "exact",
+            "instrument_type": INSTRUMENT_EQUITY,
+            "source": SOURCE_US_LISTING,
+            "exchange": "NYSE",
+            "observed_at": "2026-08-29T00:00:00+00:00",
+        }
+        row.update(kwargs)
+        return row
+
+    def _qual(self, ticker: str, **kwargs) -> dict:
+        row = {
+            "match_status": MATCH_EXACT_SINGLE,
+            "figi": "BBG000BPCQX6",
+            "securityType": "REIT",
+            "securityType2": "REIT",
+            "ticker": ticker,
+        }
+        row.update(kwargs)
+        return row
+
+    def test_collect_us_listing_identity_exact_and_unmapped(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.upsert_security_fact(
+            SecurityFact(
+                "WELL",
+                IDENTIFIER_TYPE_TICKER,
+                INSTRUMENT_EQUITY,
+                SOURCE_US_LISTING,
+                "2026-08-29T00:00:00+00:00",
+                symbol="WELL",
+                exchange="NYSE",
+            )
+        )
+        exact = collect_us_listing_identity(master, "WELL", official_cusip="95040Q104")
+        self.assertEqual(exact["identity_status"], "exact")
+        self.assertEqual(exact["instrument_type"], INSTRUMENT_EQUITY)
+        self.assertEqual(exact["exchange"], "NYSE")
+        self.assertEqual(exact["cusip"], "95040Q104")
+        missing = collect_us_listing_identity(master, "NOPE")
+        self.assertEqual(missing["identity_status"], "unmapped")
+
+    def test_explicit_reit_persists_economic_only(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.upsert_security_fact(
+            SecurityFact(
+                "WELL",
+                IDENTIFIER_TYPE_TICKER,
+                INSTRUMENT_EQUITY,
+                SOURCE_US_LISTING,
+                "2026-08-29T00:00:00+00:00",
+                symbol="WELL",
+                exchange="NYSE",
+            )
+        )
+        plan = plan_us_listing_reit_economic_ingest(
+            [self._listing("WELL", cusip="95040Q104")],
+            {"WELL": self._qual("WELL")},
+        )
+        self.assertEqual(plan.write_gate, WRITE_GATE_PASS)
+        self.assertEqual(plan.exact, 1)
+        self.assertEqual(plan.rows[0].action, ACTION_INSERT)
+        self.assertEqual(plan.rows[0].economic_layer, "real_estate")
+        self.assertTrue(all(fact.instrument_type == INSTRUMENT_UNKNOWN for fact in plan.facts))
+        persist_economic_ingest_plan(plan, security_master=master)
+        self.assertEqual(master.resolve_security("WELL").instrument_type, INSTRUMENT_EQUITY)
+        identity = identity_service_from_security_master(master)
+        self.assertEqual(identity.resolve_economic_layer(["WELL"]).economic_layer, "real_estate")
+        self.assertEqual(identity.resolve_economic_layer(["95040Q104"]).economic_layer, "real_estate")
+
+    def test_name_inference_rejected(self) -> None:
+        plan = plan_us_listing_reit_economic_ingest(
+            [self._listing("WELL", issuer_name="Welltower Realty REIT")],
+            {
+                "WELL": self._qual(
+                    "WELL",
+                    match_status=MATCH_EXACT_SINGLE,
+                    securityType="Common Stock",
+                    securityType2="Common Stock",
+                )
+            },
+        )
+        self.assertEqual(plan.rows[0].action, ACTION_SKIP)
+        self.assertEqual(plan.rows[0].reason, "REIT_TOKEN_NOT_EXPLICIT")
+        self.assertEqual(plan.write_gate, WRITE_GATE_FAIL)
+        self.assertEqual(plan.facts, ())
+
+    def test_exact_identity_required(self) -> None:
+        unmapped = plan_us_listing_reit_economic_ingest(
+            [self._listing("ZZZZ", identity_status="unmapped", instrument_type="")],
+            {"ZZZZ": self._qual("ZZZZ")},
+        )
+        self.assertEqual(unmapped.rows[0].reason, "IDENTITY_UNMAPPED")
+        ambiguous = plan_us_listing_reit_economic_ingest(
+            [self._listing("WELL")],
+            {"WELL": self._qual("WELL", match_status=MATCH_MULTIPLE, figi="")},
+        )
+        self.assertEqual(ambiguous.rows[0].reason, "OPENFIGI_MULTIPLE")
+        self.assertEqual(ambiguous.ambiguous, 1)
+
+    def test_us_listing_ingest_idempotent(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.upsert_security_fact(
+            SecurityFact(
+                "PLD",
+                IDENTIFIER_TYPE_TICKER,
+                INSTRUMENT_EQUITY,
+                SOURCE_US_LISTING,
+                "2026-08-29T00:00:00+00:00",
+                symbol="PLD",
+                exchange="NYSE",
+            )
+        )
+        identities = [self._listing("PLD")]
+        quals = {"PLD": self._qual("PLD", figi="BBG000BX7WN1")}
+        first = plan_us_listing_reit_economic_ingest(identities, quals)
+        persist_economic_ingest_plan(first, security_master=master)
+        replay = plan_us_listing_reit_economic_ingest(
+            identities, quals, existing_rows=master.repo.list_all()
+        )
+        self.assertEqual(replay.rows[0].action, ACTION_NOOP)
+        second = persist_economic_ingest_plan(replay, security_master=master)
+        self.assertEqual(second.inserted, 0)
+        self.assertEqual(second.updated, 0)
+        self.assertEqual(master.resolve_security("PLD").instrument_type, INSTRUMENT_EQUITY)
+
+    def test_partial_pass_does_not_block_qualifying_writes(self) -> None:
+        plan = plan_us_listing_reit_economic_ingest(
+            [self._listing("WELL"), self._listing("FAKE", identity_status="unmapped", instrument_type="")],
+            {
+                "WELL": self._qual("WELL"),
+                "FAKE": self._qual("FAKE"),
+            },
+        )
+        self.assertEqual(plan.write_gate, WRITE_GATE_PASS)
+        self.assertEqual(plan.exact, 1)
+        self.assertEqual(plan.unmapped, 1)
+        self.assertEqual(sum(1 for row in plan.rows if row.action == ACTION_INSERT), 1)
 
 
 class RegulatorPrecedenceTests(unittest.TestCase):

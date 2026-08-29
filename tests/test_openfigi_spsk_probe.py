@@ -8,6 +8,7 @@ from services.openfigi_client import (
     ANON_MAX_JOBS_PER_REQUEST,
     ID_CUSIP,
     ID_SEDOL,
+    ID_TICKER,
     MATCH_ERROR,
     MATCH_EXACT_SINGLE,
     MATCH_MULTIPLE,
@@ -17,6 +18,7 @@ from services.openfigi_client import (
     OpenFigiError,
     OpenFigiJob,
     max_jobs_per_request,
+    openfigi_exch_code_for_listing,
     parse_mapping_entry,
     resolve_openfigi_api_key,
 )
@@ -90,6 +92,26 @@ class AnonymousClientTests(unittest.TestCase):
         )
         self.assertEqual(seen[0]["idType"], ID_SEDOL)
         self.assertEqual(seen[1]["idType"], ID_CUSIP)
+
+    def test_ticker_requires_exch_code(self) -> None:
+        client = OpenFigiClient(api_key=None, transport=lambda *args: (200, {}, []), min_interval_seconds=0)
+        with self.assertRaises(OpenFigiError):
+            client.map_jobs((OpenFigiJob(ID_TICKER, "WELL"),))
+
+    def test_ticker_with_exch_code_payload(self) -> None:
+        seen = []
+
+        def transport(url, headers, payload):
+            seen.extend(payload)
+            return (200, {}, [{"data": [_candidate(ticker="WELL", exch_code="UN", security_type="REIT", security_type2="REIT").to_dict()]}])
+
+        client = OpenFigiClient(api_key=None, transport=transport, min_interval_seconds=0)
+        client.map_jobs((OpenFigiJob(ID_TICKER, "WELL", exch_code="UN"),))
+        self.assertEqual(seen[0]["idType"], ID_TICKER)
+        self.assertEqual(seen[0]["idValue"], "WELL")
+        self.assertEqual(seen[0]["exchCode"], "UN")
+        self.assertEqual(openfigi_exch_code_for_listing("NYSE"), "UN")
+        self.assertEqual(openfigi_exch_code_for_listing("NASDAQ"), "UW")
 
     def test_single_mapping_accepted(self) -> None:
         entry = {"data": [_candidate().to_dict()]}

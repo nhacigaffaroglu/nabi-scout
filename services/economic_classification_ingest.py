@@ -6,12 +6,14 @@ Does not write instrument_type REIT or SUKUK. Does not change Participation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from repositories.security_master_repository import PersistFactsResult, facts_content_equal
 from services.official_fund_holdings_client import OfficialHolding
+from services.openfigi_client import MATCH_EXACT_SINGLE, MATCH_MULTIPLE, MATCH_NONE
 from services.reit_evidence_contract import (
     is_explicit_structured_reit,
+    listing_equity_is_not_reit,
     may_persist_reit_economic,
     name_is_not_evidence,
     persist_economic_blocked_reason,
@@ -29,9 +31,13 @@ from services.security_identity_contract import (
 )
 from services.security_identity_service import alias_fact, economic_fact
 from services.security_master_contract import (
+    IDENTIFIER_TYPE_CUSIP,
     IDENTIFIER_TYPE_SEDOL,
     IDENTIFIER_TYPE_TICKER,
+    INSTRUMENT_EQUITY,
+    RESOLUTION_CONFLICT,
     RESOLUTION_RESOLVED,
+    SOURCE_US_LISTING,
     SecurityFact,
 )
 from services.security_master_service import SecurityMasterService
@@ -44,6 +50,17 @@ ACTION_SKIP = "SKIP"
 
 WRITE_GATE_PASS = "PASS"
 WRITE_GATE_FAIL = "FAIL"
+
+US_REIT_ONBOARDING_TARGETS = (
+    "WELL",
+    "PLD",
+    "EQIX",
+    "O",
+    "AMT",
+    "SPG",
+    "DLR",
+    "PSA",
+)
 
 # 7J.2 OpenFIGI EXACT_SINGLE REIT observations. Not inferred from names.
 SPRE_OPENFIGI_REIT_OBSERVATIONS = (
@@ -149,6 +166,92 @@ class EconomicIngestPlan:
             if row.action != ACTION_SKIP:
                 planned.extend(row.facts)
         return tuple(planned)
+
+
+def collect_us_listing_identity(
+    master: SecurityMasterService,
+    ticker: Any,
+    *,
+    official_cusip: str = "",
+    official_sedol: str = "",
+    official_isin: str = "",
+) -> dict[str, Any]:
+    """Exact Security Master listing identity. No name or sector joins."""
+    ident = listing_identity(ticker)
+    if not ident:
+        return {
+            "ticker": "",
+            "identity_status": "unmapped",
+            "instrument_type": "",
+            "source": "",
+            "exchange": "",
+            "cusip": "",
+            "sedol": "",
+            "isin": "",
+            "figi": "",
+            "issuer_name": "",
+            "sm_row": False,
+            "reason": "EMPTY_TICKER",
+        }
+    facts = master.get_security_facts(ident, identifier_type=IDENTIFIER_TYPE_TICKER)
+    listing_facts = [row for row in facts if row.source == SOURCE_US_LISTING]
+    resolved = master.resolve_security(ident)
+    cusip = ""
+    sedol = ""
+    isin = ""
+    figi = ""
+    assessed_cusip = assess_identifier(official_cusip)
+    if assessed_cusip.identifier_type == IDENTIFIER_TYPE_CUSIP:
+        cusip = assessed_cusip.identifier or ""
+    assessed_sedol = assess_identifier(official_sedol)
+    if assessed_sedol.identifier_type == IDENTIFIER_TYPE_SEDOL:
+        sedol = assessed_sedol.identifier or ""
+    assessed_isin = assess_identifier(official_isin)
+    if assessed_isin.identifier_type == "ISIN":
+        isin = assessed_isin.identifier or ""
+    for fact in facts:
+        meta = dict(fact.metadata or {})
+        if not cusip:
+            extra = assess_identifier(meta.get("cusip"))
+            if extra.identifier_type == IDENTIFIER_TYPE_CUSIP:
+                cusip = extra.identifier or ""
+        if not sedol:
+            extra = assess_identifier(meta.get("sedol"))
+            if extra.identifier_type == IDENTIFIER_TYPE_SEDOL:
+                sedol = extra.identifier or ""
+        if not isin:
+            extra = assess_identifier(meta.get("isin"))
+            if extra.identifier_type == "ISIN":
+                isin = extra.identifier or ""
+        if not figi:
+            figi = str(meta.get("figi") or "").strip().upper()
+    listing = listing_facts[0] if listing_facts else None
+    if resolved.status == RESOLUTION_CONFLICT or len(listing_facts) > 1:
+        status = "ambiguous"
+        reason = "IDENTITY_CONFLICT"
+    elif listing is None:
+        status = "unmapped"
+        reason = resolved.limitation or "NO_US_LISTING"
+    else:
+        status = "exact"
+        reason = "US_LISTING"
+    return {
+        "ticker": ident,
+        "identity_status": status,
+        "instrument_type": (
+            listing.instrument_type if listing is not None else resolved.instrument_type
+        ),
+        "source": listing.source if listing is not None else (resolved.source or ""),
+        "exchange": (listing.exchange if listing is not None else "") or "",
+        "cusip": cusip,
+        "sedol": sedol,
+        "isin": isin,
+        "figi": figi,
+        "issuer_name": (listing.issuer_name if listing is not None else "") or "",
+        "sm_row": listing is not None,
+        "observed_at": (listing.observed_at if listing is not None else "") or "",
+        "reason": reason,
+    }
 
 
 def _official_by_ticker(holdings: Sequence[OfficialHolding]) -> dict[str, OfficialHolding]:
@@ -329,6 +432,275 @@ def plan_spre_reit_economic_ingest(
         reasons.append("SKIPPED_OBSERVATION")
     if plan.exact != len(observations):
         reasons.append("INCOMPLETE_EXACT_SET")
+    plan.write_gate_reasons = tuple(dict.fromkeys(reasons))
+    plan.write_gate = WRITE_GATE_PASS if not plan.write_gate_reasons else WRITE_GATE_FAIL
+    return plan
+
+
+def _qualification_map(
+    qualifications: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    if isinstance(qualifications, Mapping) and "ticker" not in qualifications:
+        return {
+            listing_identity(key): (
+                value.to_dict() if hasattr(value, "to_dict") else dict(value)
+            )
+            for key, value in qualifications.items()
+        }
+    mapped: dict[str, Mapping[str, Any]] = {}
+    for raw in qualifications:
+        row = raw.to_dict() if hasattr(raw, "to_dict") else dict(raw)
+        ticker = listing_identity(row.get("ticker") or row.get("symbol"))
+        if ticker:
+            mapped[ticker] = row
+    return mapped
+
+
+def _existing_fact_index(
+    existing_rows: Sequence[Mapping[str, Any]] | None,
+) -> dict[tuple[str, str, str], Mapping[str, Any]]:
+    return {
+        (
+            str(row.get("identifier") or "").strip().upper(),
+            str(row.get("identifier_type") or "").strip().upper(),
+            str(row.get("source") or "").strip(),
+        ): row
+        for row in (existing_rows or ())
+    }
+
+
+def _facts_already_present(
+    facts: Sequence[SecurityFact],
+    existing: Mapping[tuple[str, str, str], Mapping[str, Any]],
+) -> bool:
+    for fact in facts:
+        key = (fact.identifier, fact.identifier_type, fact.source)
+        current = existing.get(key)
+        payload = {
+            "identifier": fact.identifier,
+            "identifier_type": fact.identifier_type,
+            "instrument_type": fact.instrument_type,
+            "source": fact.source,
+            "symbol": fact.symbol,
+            "exchange": fact.exchange,
+            "issuer_name": fact.issuer_name,
+            "source_reference": fact.source_reference,
+            "metadata": dict(fact.metadata or {}),
+        }
+        if current is None or not facts_content_equal(current, payload):
+            return False
+    return True
+
+
+def _alias_if_exact(
+    raw: Any,
+    *,
+    expected_type: str,
+    canonical_id: str,
+    observed_at: str,
+    metadata: Mapping[str, Any],
+) -> Optional[SecurityFact]:
+    assessed = assess_identifier(raw)
+    if assessed.identifier and assessed.identifier_type == expected_type:
+        return alias_fact(
+            identifier=assessed.identifier,
+            identifier_type=expected_type,
+            canonical_id=canonical_id,
+            observed_at=observed_at,
+            metadata=metadata,
+        )
+    return None
+
+
+def plan_us_listing_reit_economic_ingest(
+    identities: Sequence[Mapping[str, Any]],
+    qualifications: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+    *,
+    existing_rows: Sequence[Mapping[str, Any]] | None = None,
+) -> EconomicIngestPlan:
+    """Persist economic real_estate for exact US listings with explicit REIT tokens.
+
+    Listing instrument_type stays EQUITY. Names and sector labels are not evidence.
+    Failed candidates stay SKIP and do not block writes for PASS rows.
+    """
+    qual_by_ticker = _qualification_map(qualifications)
+    existing = _existing_fact_index(existing_rows)
+    plan = EconomicIngestPlan()
+    reasons: list[str] = []
+    if not may_persist_reit_economic():
+        reasons.append(persist_economic_blocked_reason() or "ECONOMIC_REIT_PERSIST_DISABLED")
+    for raw in identities:
+        ticker = listing_identity(raw.get("ticker") or raw.get("symbol"))
+        name_is_not_evidence(raw.get("issuer_name") or raw.get("security_name"))
+        classify_from_name_or_fund(raw.get("issuer_name") or raw.get("security_name"), "")
+        instrument = str(raw.get("instrument_type") or "").strip().upper()
+        source = str(raw.get("source") or "").strip()
+        identity_status = str(raw.get("identity_status") or "").strip().lower()
+        cusip = str(raw.get("cusip") or "").strip().upper()
+        sedol = str(raw.get("sedol") or "").strip().upper()
+        figi = ""
+        if not ticker:
+            plan.unmapped += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, "", "", "", "", "", SOURCE_PROVIDER_EXPLICIT, "", 0.0,
+                    "EMPTY_TICKER",
+                )
+            )
+            continue
+        if identity_status == "unmapped" or not instrument:
+            plan.unmapped += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, "", instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "IDENTITY_UNMAPPED",
+                )
+            )
+            continue
+        if identity_status == "ambiguous":
+            plan.ambiguous += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, "", instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "IDENTITY_AMBIGUOUS",
+                )
+            )
+            continue
+        if not listing_equity_is_not_reit(instrument, source=source):
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, "", instrument, "", source, "", 0.0,
+                    "LISTING_NOT_US_EQUITY",
+                )
+            )
+            continue
+        qual = dict(qual_by_ticker.get(ticker) or {})
+        match_status = str(qual.get("match_status") or "").strip()
+        figi = str(qual.get("figi") or "").strip().upper()
+        security_type = qual.get("securityType") or qual.get("security_type") or ""
+        security_type2 = qual.get("securityType2") or qual.get("security_type2") or ""
+        provider_ticker = listing_identity(qual.get("ticker") or qual.get("provider_ticker"))
+        if match_status == MATCH_MULTIPLE:
+            plan.ambiguous += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, figi, instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "OPENFIGI_MULTIPLE",
+                )
+            )
+            continue
+        if match_status in {MATCH_NONE, ""}:
+            plan.unmapped += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, figi, instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "OPENFIGI_UNMAPPED",
+                )
+            )
+            continue
+        if match_status != MATCH_EXACT_SINGLE:
+            plan.unmapped += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, figi, instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, match_status or "OPENFIGI_NOT_EXACT",
+                )
+            )
+            continue
+        if provider_ticker and provider_ticker != ticker:
+            plan.ambiguous += 1
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, figi, instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "OPENFIGI_TICKER_MISMATCH",
+                )
+            )
+            continue
+        if not is_explicit_structured_reit(security_type, security_type2):
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, figi, instrument, "", SOURCE_PROVIDER_EXPLICIT,
+                    f"{security_type}/{security_type2}", 0.0, "REIT_TOKEN_NOT_EXPLICIT",
+                )
+            )
+            continue
+        if not figi:
+            plan.rows.append(
+                EconomicIngestPlanRow(
+                    ACTION_SKIP, ticker, sedol, "", instrument, "", SOURCE_PROVIDER_EXPLICIT, "",
+                    0.0, "FIGI_MISSING",
+                )
+            )
+            continue
+        observed_at = str(raw.get("observed_at") or qual.get("observed_at") or "")
+        canonical = canonical_id_from_figi(figi)
+        classification = EconomicClassification(
+            canonical_id=canonical,
+            economic_layer="real_estate",
+            source=SOURCE_PROVIDER_EXPLICIT,
+            evidence_type=EVIDENCE_OPENFIGI_SECURITY_TYPE,
+            evidence_reference=EVIDENCE_OPENFIGI_MAPPING,
+            status=RESOLUTION_RESOLVED,
+            observed_at=observed_at,
+            metadata={
+                "figi": figi,
+                "ticker": ticker,
+                "exchange": raw.get("exchange"),
+                "cusip": cusip,
+                "sedol": sedol,
+                "securityType": security_type,
+                "securityType2": security_type2,
+                "listing_instrument_type": INSTRUMENT_EQUITY,
+                "listing_source": SOURCE_US_LISTING,
+            },
+        )
+        facts = [
+            economic_fact(
+                identifier=ticker,
+                identifier_type=IDENTIFIER_TYPE_TICKER,
+                classification=classification,
+            )
+        ]
+        cusip_alias = _alias_if_exact(
+            cusip,
+            expected_type=IDENTIFIER_TYPE_CUSIP,
+            canonical_id=canonical,
+            observed_at=observed_at,
+            metadata={"figi": figi, "ticker": ticker},
+        )
+        if cusip_alias is not None:
+            facts.append(cusip_alias)
+        sedol_alias = _alias_if_exact(
+            sedol,
+            expected_type=IDENTIFIER_TYPE_SEDOL,
+            canonical_id=canonical,
+            observed_at=observed_at,
+            metadata={"figi": figi, "ticker": ticker},
+        )
+        if sedol_alias is not None:
+            facts.append(sedol_alias)
+        if any(fact.instrument_type != "UNKNOWN" for fact in facts):
+            reasons.append("INSTRUMENT_TYPE_NOT_UNKNOWN")
+        all_noop = _facts_already_present(facts, existing)
+        plan.exact += 1
+        plan.rows.append(
+            EconomicIngestPlanRow(
+                ACTION_NOOP if all_noop else ACTION_INSERT,
+                ticker,
+                sedol,
+                figi,
+                "UNKNOWN",
+                "real_estate",
+                SOURCE_PROVIDER_EXPLICIT,
+                f"{security_type}/{security_type2}",
+                0.0,
+                "IDEMPOTENT" if all_noop else "NEW_ECONOMIC_REAL_ESTATE",
+                facts=tuple(facts),
+            )
+        )
+    persistable = [row for row in plan.rows if row.action != ACTION_SKIP]
+    if not persistable:
+        reasons.append("NO_QUALIFYING_REIT")
     plan.write_gate_reasons = tuple(dict.fromkeys(reasons))
     plan.write_gate = WRITE_GATE_PASS if not plan.write_gate_reasons else WRITE_GATE_FAIL
     return plan

@@ -17,7 +17,15 @@ from urllib.request import Request, urlopen
 OPENFIGI_MAPPING_URL = "https://api.openfigi.com/v3/mapping"
 ID_SEDOL = "ID_SEDOL"
 ID_CUSIP = "ID_CUSIP"
-SUPPORTED_ID_TYPES = frozenset({ID_SEDOL, ID_CUSIP})
+ID_TICKER = "TICKER"
+SUPPORTED_ID_TYPES = frozenset({ID_SEDOL, ID_CUSIP, ID_TICKER})
+# Bloomberg/OpenFIGI exchCode for a canonical U.S. listing exchange.
+US_LISTING_TO_OPENFIGI_EXCH = {
+    "NYSE": "UN",
+    "NASDAQ": "UW",
+    "AMEX": "UA",
+    "ARCA": "UP",
+}
 
 ANON_MAX_JOBS_PER_REQUEST = 10
 ANON_MAX_REQUESTS_PER_MINUTE = 25
@@ -39,9 +47,20 @@ class OpenFigiError(RuntimeError):
 class OpenFigiJob:
     id_type: str
     id_value: str
+    exch_code: str = ""
 
     def to_payload(self) -> dict[str, str]:
-        return {"idType": self.id_type, "idValue": self.id_value}
+        payload = {"idType": self.id_type, "idValue": self.id_value}
+        exch = str(self.exch_code or "").strip().upper()
+        if exch:
+            payload["exchCode"] = exch
+        return payload
+
+
+def openfigi_exch_code_for_listing(exchange: Any) -> str:
+    from services.universe_listing_identity import normalize_us_exchange
+
+    return US_LISTING_TO_OPENFIGI_EXCH.get(normalize_us_exchange(exchange), "")
 
 
 @dataclass(frozen=True)
@@ -279,9 +298,14 @@ class OpenFigiClient:
         for job in jobs:
             id_type = str(job.id_type or "").strip()
             id_value = str(job.id_value or "").strip()
+            exch_code = str(job.exch_code or "").strip().upper()
             if id_type not in SUPPORTED_ID_TYPES or not id_value:
                 raise OpenFigiError(f"unsupported mapping job: {id_type}")
-            validated.append(OpenFigiJob(id_type=id_type, id_value=id_value))
+            if id_type == ID_TICKER and not exch_code:
+                raise OpenFigiError("TICKER requires exchCode")
+            validated.append(
+                OpenFigiJob(id_type=id_type, id_value=id_value, exch_code=exch_code)
+            )
         results: list[OpenFigiJobResult] = []
         for start in range(0, len(validated), self.max_jobs):
             batch = validated[start : start + self.max_jobs]
