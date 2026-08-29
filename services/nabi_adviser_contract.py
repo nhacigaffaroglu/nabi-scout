@@ -153,6 +153,7 @@ class NabiAdviserContext:
     limitations: Tuple[str, ...]
     canonical_answer: str
     prior_context: Optional[Mapping[str, Any]] = None
+    economic_exposure_context: Optional[dict[str, Any]] = None
 
     def to_llm_payload(self) -> dict[str, Any]:
         return {
@@ -163,6 +164,7 @@ class NabiAdviserContext:
             "wealth_context": self.wealth_context,
             "goal_context": self.goal_context,
             "new_money_context": self.new_money_context,
+            "economic_exposure_context": self.economic_exposure_context,
             "candidate_decision": self.candidate_decision,
             "participation_status": self.participation_status,
             "research_intelligence": self.research_intelligence,

@@ -5,6 +5,11 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, Optional, Sequence, Tuple
 
+from services.exposure_determinacy_diagnostics import (
+    ExposureDiagnosticsView,
+    build_exposure_diagnostics,
+    eligible_fill_assets,
+)
 from services.layer_exposure_determinacy import (
     ExposureDeterminacyView,
     assess_economic_exposure_determinacy,
@@ -225,6 +230,7 @@ class AllocationDecisionSignals:
     best_routing_bucket_id: Optional[str]
     limitations: Tuple[str, ...]
     unknown_exposure_symbols: Tuple[str, ...] = ()
+    exposure_diagnostics: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -244,6 +250,7 @@ class AllocationIntelligenceView:
     signals: AllocationDecisionSignals
     unknown_exposure_symbols: Tuple[str, ...] = ()
     exposure_determinacy: Optional[ExposureDeterminacyView] = None
+    exposure_diagnostics: Optional[ExposureDiagnosticsView] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -257,6 +264,8 @@ class AllocationIntelligenceView:
         }
         if self.exposure_determinacy is not None:
             payload["exposure_determinacy"] = self.exposure_determinacy.to_dict()
+        if self.exposure_diagnostics is not None:
+            payload["exposure_diagnostics"] = self.exposure_diagnostics.to_dict()
         return payload
 
 
@@ -691,6 +700,9 @@ def allocation_decision_signals(view: AllocationIntelligenceView) -> AllocationD
         best_routing_bucket_id=best,
         limitations=view.limitations,
         unknown_exposure_symbols=view.unknown_exposure_symbols,
+        exposure_diagnostics=(
+            None if view.exposure_diagnostics is None else view.exposure_diagnostics.to_dict()
+        ),
     )
 
 
@@ -745,6 +757,8 @@ def build_allocation_intelligence(
     assets: Optional[Sequence[dict]] = None,
     positions: Optional[Sequence[dict]] = None,
     exposure_buckets: Optional[Sequence[AllocationBucket]] = None,
+    exposure_view: Any = None,
+    candidates: Optional[Sequence[dict]] = None,
 ) -> AllocationIntelligenceView:
     """Deterministic observable allocation, explicit-target drift, contribution-only routing."""
     if policy is not None:
@@ -978,6 +992,20 @@ def build_allocation_intelligence(
         valuation_complete=current.valuation_complete,
         unpriced=bool(unresolved),
     )
+    exposure_diagnostics = None
+    if exposure_view is not None:
+        exposure_diagnostics = build_exposure_diagnostics(
+            exposure=exposure_view,
+            determinacy=exposure_determinacy,
+            production_drift=drift,
+            production_limitations=notes,
+            fill_assets=eligible_fill_assets(
+                getattr(exposure_view, "instruments", ()),
+                extra_symbols=candidates or (),
+                assets=assets or (),
+            ),
+            ceiling_allows=None,
+        )
     signals = AllocationDecisionSignals(
         target_status=status,
         completeness=completeness,
@@ -996,6 +1024,9 @@ def build_allocation_intelligence(
         ),
         limitations=notes,
         unknown_exposure_symbols=unknown_exposure_symbols,
+        exposure_diagnostics=(
+            None if exposure_diagnostics is None else exposure_diagnostics.to_dict()
+        ),
     )
     return AllocationIntelligenceView(
         completeness=completeness,
@@ -1013,4 +1044,5 @@ def build_allocation_intelligence(
         signals=signals,
         unknown_exposure_symbols=unknown_exposure_symbols,
         exposure_determinacy=exposure_determinacy,
+        exposure_diagnostics=exposure_diagnostics,
     )

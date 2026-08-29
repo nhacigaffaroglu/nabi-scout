@@ -573,6 +573,7 @@ def build_exposure_allocation_for_ui(
         assets=assets,
         positions=positions,
         exposure_buckets=allocation_buckets_from_exposure(exposure),
+        exposure_view=exposure,
     )
 
 

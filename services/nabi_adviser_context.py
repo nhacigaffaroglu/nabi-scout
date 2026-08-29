@@ -68,9 +68,19 @@ from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
 from services.research_intelligence_service import build_research_intelligence
+from services.exposure_determinacy_diagnostics import (
+    build_exposure_diagnostics,
+    eligible_fill_assets,
+)
+from services.portfolio_allocation_intelligence import (
+    AllocationDimension,
+    build_allocation_intelligence,
+)
+from services.portfolio_economic_exposure import build_economic_exposure
 from services.wealth_goal_planning import planning_conversion
 from services.wealth_new_money_allocation import (
     AllocationPlan,
+    _allocation_buckets_from_exposure,
     allocate_new_money,
     REASON_DATA_INCOMPLETE,
     REASON_FX_REQUIRED,
@@ -150,6 +160,58 @@ def _goal_dict(goal_dashboard: Any) -> dict[str, Any]:
         "progress": getattr(header, "progress_caption", None),
         "target_label": getattr(header, "target_wealth_label", None),
     }
+
+
+def _economic_exposure_context(
+    *,
+    portfolio_view: Any,
+    policy: Any,
+    new_money: Mapping[str, Any],
+    fund_snapshots: Optional[Mapping[str, Any]] = None,
+    security_master: Any = None,
+    assets: Sequence[Any] = (),
+    positions: Sequence[Any] = (),
+    candidates: Sequence[Mapping[str, Any]] = (),
+) -> Optional[dict[str, Any]]:
+    if portfolio_view is None or policy is None:
+        return None
+    exposure = build_economic_exposure(
+        portfolio_view,
+        fund_snapshots=fund_snapshots,
+        assets=assets,
+        positions=positions,
+        security_master=security_master,
+    )
+    intelligence = build_allocation_intelligence(
+        portfolio_view,
+        policy=policy,
+        assets=assets,
+        positions=positions,
+        exposure_buckets=_allocation_buckets_from_exposure(exposure),
+        exposure_view=exposure,
+        candidates=list(candidates),
+    )
+    diagnostics = intelligence.exposure_diagnostics or build_exposure_diagnostics(
+        exposure=exposure,
+        determinacy=intelligence.exposure_determinacy,
+        production_drift=intelligence.drift,
+        production_limitations=intelligence.limitations,
+        fill_assets=eligible_fill_assets(
+            exposure.instruments,
+            extra_symbols=candidates,
+            assets=assets,
+        ),
+    )
+    payload = diagnostics.to_adviser_dict(new_money=new_money)
+    payload["production_layer_statuses"] = [
+        {
+            "layer": row.bucket_id,
+            "status": row.status.value if hasattr(row.status, "value") else str(row.status),
+        }
+        for row in intelligence.drift
+        if row.dimension == AllocationDimension.ECONOMIC_EXPOSURE
+    ]
+    return payload
 
 
 def _allocation_dict(plan: Optional[AllocationPlan]) -> dict[str, Any]:
@@ -834,6 +896,16 @@ def build_nabi_adviser_context(
     weights = holding_weights(portfolio_view)
     actionable = sum(1 for row in candidates if is_actionable_opportunity(row))
     goal = _goal_dict(goal_dashboard)
+    economic_exposure = _economic_exposure_context(
+        portfolio_view=portfolio_view,
+        policy=policy,
+        new_money=new_money,
+        fund_snapshots=fund_snapshots,
+        security_master=security_master,
+        assets=assets,
+        positions=positions,
+        candidates=candidates,
+    )
     canonical = _compose_canonical_answer(
         parsed,
         rec=rec,
@@ -865,6 +937,7 @@ def build_nabi_adviser_context(
         },
         goal_context=goal,
         new_money_context=new_money,
+        economic_exposure_context=economic_exposure,
         candidate_decision=_decision_dict(focus_item),
         participation_status=authority_status
         or (focus_item.participation_status if focus_item else None),
