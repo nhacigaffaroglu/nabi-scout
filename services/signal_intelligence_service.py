@@ -87,7 +87,7 @@ class SignalIntelligenceService:
             existing_event is not None and _event_core(existing_event) != _event_core(event)
         )
         write_evidence = created_evidence or (
-            existing_evidence is not None and existing_evidence.to_dict() != evidence.to_dict()
+            existing_evidence is not None and _evidence_core(existing_evidence) != _evidence_core(evidence)
         )
         identical = not write_event and not write_evidence
         persisted = False
@@ -238,11 +238,38 @@ class SignalIntelligenceService:
         )
 
 
+def _canonical_timestamp(value: Any) -> Any:
+    """Compare-only timestamptz normalize. Storage representation is not a new event."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.replace(microsecond=0).isoformat()
+
+
 def _event_core(event: SignalEvent) -> dict[str, Any]:
     payload = event.to_dict()
     payload.pop("evidence_ids", None)
     payload.pop("headline", None)
     payload.pop("description", None)
+    for key in ("event_time", "effective_time", "as_of"):
+        payload[key] = _canonical_timestamp(payload.get(key))
+    return payload
+
+
+def _evidence_core(evidence: SignalEvidence) -> dict[str, Any]:
+    payload = evidence.to_dict()
+    for key in ("retrieved_at", "as_of"):
+        payload[key] = _canonical_timestamp(payload.get(key))
     return payload
 
 

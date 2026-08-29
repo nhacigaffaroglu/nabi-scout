@@ -318,6 +318,36 @@ class SecProviderSafetyTests(unittest.TestCase):
         self.assertIn("no last-run cursor", ingest)
 
 
+class PostgresTimestampReplayTests(unittest.TestCase):
+    def test_timestamptz_roundtrip_does_not_rewrite(self) -> None:
+        class TimestamptzRepo(InMemorySignalIntelligenceRepository):
+            @staticmethod
+            def _pg(value):
+                text = str(value or "")
+                return text.replace(".000Z", "+00:00").replace("Z", "+00:00") if text else value
+
+            def get_event(self, event_id: str):
+                row = super().get_event(event_id)
+                if not row:
+                    return None
+                for key in ("event_time", "effective_time", "as_of"):
+                    row[key] = self._pg(row.get(key))
+                return row
+
+            def get_evidence(self, evidence_id: str):
+                row = super().get_evidence(evidence_id)
+                if not row:
+                    return None
+                row["as_of"] = self._pg(row.get("as_of"))
+                return row
+
+        repo, first = _ingest(fixture_crm_single_item_8k(), as_of=date(2026, 3, 20), repo=TimestamptzRepo())
+        self.assertEqual(first.event_writes, 1)
+        _, replay = _ingest(fixture_crm_single_item_8k(), as_of=date(2026, 3, 20), repo=repo)
+        self.assertEqual(replay.event_writes, 0)
+        self.assertEqual(replay.evidence_writes, 0)
+
+
 class SecHeadlineMustNotCreateItems(unittest.TestCase):
     def test_headline_text_is_not_item_evidence(self) -> None:
         payload = submissions_from_rows(
