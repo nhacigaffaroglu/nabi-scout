@@ -19,7 +19,10 @@ from services.portfolio_intelligence_enrichment_contract import (
 )
 from services.portfolio_security_decision_contract import PortfolioSecurityContext
 from services.research_workflow_service import normalize_research_status
-from services.security_intelligence_contract import SecurityIntelligenceSnapshot
+from services.security_intelligence_contract import (
+    SecurityIntelligenceSnapshot,
+    persisted_snapshot_is_stale,
+)
 from services.security_intelligence_snapshot_service import latest_snapshot
 from services.security_master_contract import INSTRUMENT_UNKNOWN
 from services.signal_intelligence_contract import (
@@ -159,6 +162,7 @@ def build_portfolio_security_context(
         missing.append("si_state")
     if is_holding and bundle.portfolio_weight is None:
         missing.append("portfolio_weight")
+    stale = ("si",) if persisted_snapshot_is_stale(si) else ()
 
     return PortfolioSecurityContext(
         symbol=normalized,
@@ -189,7 +193,7 @@ def build_portfolio_security_context(
         market=_text(bundle.market) or None,
         lookthrough_only=bool(bundle.lookthrough_only),
         missing_inputs=tuple(dict.fromkeys(missing)),
-        stale_inputs=(),
+        stale_inputs=stale,
         as_of=bundle.as_of or (None if si is None else si.as_of) or signal_as_of,
     )
 

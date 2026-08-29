@@ -57,6 +57,7 @@ from services.portfolio_security_decision_contract import (
     REASON_SI_CAUTION,
     REASON_SI_INSUFFICIENT,
     REASON_SI_MISSING,
+    REASON_SI_STALE,
     REASON_SI_NOT_ATTRACTIVE,
     REASON_SI_WATCH,
     REASON_SIGNAL_CONFLICT,
@@ -222,6 +223,11 @@ def evaluate_portfolio_security_decision(
     if si_state is None:
         missing.append("si_state")
         return blocked(REASON_SI_MISSING, DECISION_INSUFFICIENT_DATA)
+    if "si" in context.stale_inputs:
+        return blocked(
+            REASON_SI_STALE,
+            DECISION_REVIEW if context.is_holding else DECISION_INSUFFICIENT_DATA,
+        )
     if si_state == STATE_INSUFFICIENT_DATA:
         return blocked(REASON_SI_INSUFFICIENT, DECISION_INSUFFICIENT_DATA)
     if participation is None:

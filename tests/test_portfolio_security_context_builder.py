@@ -16,7 +16,14 @@ from services.portfolio_security_context_builder import (
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
 from services.research_workflow_service import DEFAULT_RESEARCH_STATUS
-from services.security_intelligence_contract import SecurityIntelligenceSnapshot, STATE_WATCH
+from services.security_intelligence_contract import (
+    FRESHNESS_FRESH,
+    FRESHNESS_STALE,
+    FRESHNESS_UNKNOWN,
+    STALE_DATA,
+    SecurityIntelligenceSnapshot,
+    STATE_WATCH,
+)
 from services.signal_intelligence_contract import (
     DIRECTION_NEGATIVE,
     EVENT_SEC_FILING,
@@ -30,7 +37,14 @@ from services.signal_intelligence_contract import (
 BUILDER = Path("services/portfolio_security_context_builder.py")
 
 
-def _si(*, state: str = STATE_WATCH, score: float = 55.0) -> SecurityIntelligenceSnapshot:
+def _si(
+    *,
+    state: str = STATE_WATCH,
+    score: float = 55.0,
+    freshness: str = FRESHNESS_FRESH,
+    stale: bool = False,
+) -> SecurityIntelligenceSnapshot:
+    reasons = (STALE_DATA, "FRESHNESS_STALE") if stale else ()
     return SecurityIntelligenceSnapshot(
         symbol="CRM",
         as_of="2026-08-01",
@@ -42,7 +56,9 @@ def _si(*, state: str = STATE_WATCH, score: float = 55.0) -> SecurityIntelligenc
         participation_status=PARTICIPATION_STATUS_UYGUN,
         research_allowed=True,
         overall_confidence=0.7,
-        data_quality={"freshness_status": "FRESH"},
+        reason_codes=reasons,
+        risk_flags=(STALE_DATA,) if stale else (),
+        data_quality={"freshness_status": freshness, "reason_codes": list(reasons)},
     )
 
 
@@ -211,6 +227,36 @@ class PortfolioSecurityContextBuilderTests(unittest.TestCase):
 
     def test_economic_status_uses_existing_hybrid_resolver(self) -> None:
         self.assertEqual(resolve_economic_exposure_status(), "STRICT")
+
+    def test_builder_propagates_canonical_stale_si(self) -> None:
+        stale = build_portfolio_security_context(
+            "CRM",
+            PortfolioSecuritySourceBundle(
+                snapshot={"status": PARTICIPATION_STATUS_UYGUN},
+                queue_row={"research_allowed": True},
+                si_snapshot=_si(stale=True, freshness=FRESHNESS_STALE),
+            ),
+        )
+        fresh = build_portfolio_security_context(
+            "CRM",
+            PortfolioSecuritySourceBundle(si_snapshot=_si()),
+        )
+        unknown = build_portfolio_security_context(
+            "CRM",
+            PortfolioSecuritySourceBundle(
+                si_snapshot=_si(freshness=FRESHNESS_UNKNOWN)
+            ),
+        )
+        missing = build_portfolio_security_context("TSLA", PortfolioSecuritySourceBundle())
+        self.assertEqual(stale.stale_inputs, ("si",))
+        self.assertEqual(fresh.stale_inputs, ())
+        self.assertEqual(unknown.stale_inputs, ())
+        self.assertEqual(missing.stale_inputs, ())
+        self.assertIsNone(missing.si_state)
+        source = BUILDER.read_text(encoding="utf-8")
+        self.assertNotIn("get_investment_intelligence", source)
+        self.assertNotIn("evaluate_security_intelligence", source)
+        self.assertIn("persisted_snapshot_is_stale", source)
 
 
 if __name__ == "__main__":

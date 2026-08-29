@@ -38,6 +38,7 @@ from services.portfolio_security_decision_contract import (
     REASON_RESEARCH_NOT_ALLOWED,
     REASON_SI_INSUFFICIENT,
     REASON_SI_MISSING,
+    REASON_SI_STALE,
     REASON_SIGNAL_CONFLICT,
     REASON_UNSUPPORTED_INSTRUMENT,
     REASON_YENI_NOT_ACTIVE_RESEARCH,
@@ -173,6 +174,50 @@ class PortfolioSecurityDecisionMatrixTests(unittest.TestCase):
         self.assertFalse(result.exposure_increase_allowed)
         self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
         self.assertIn(REASON_SI_MISSING, result.blocking_reasons)
+
+    def test_fresh_attractive_si_preserves_increase(self) -> None:
+        result = evaluate_portfolio_security_decision(_healthy(stale_inputs=()))
+        self.assertTrue(result.exposure_increase_allowed)
+        self.assertEqual(result.decision, DECISION_CONSIDER_TOP_UP)
+
+    def test_stale_si_blocks_exposure_increase(self) -> None:
+        result = evaluate_portfolio_security_decision(_healthy(stale_inputs=("si",)))
+        self.assertFalse(result.exposure_increase_allowed)
+        self.assertNotIn(result.decision, INCREASE_DECISIONS)
+        self.assertEqual(result.decision, DECISION_REVIEW)
+        self.assertIn(REASON_SI_STALE, result.blocking_reasons)
+
+    def test_stale_attractive_cannot_consider(self) -> None:
+        held = evaluate_portfolio_security_decision(
+            _healthy(si_state=STATE_ATTRACTIVE, stale_inputs=("si",))
+        )
+        fresh_new = evaluate_portfolio_security_decision(
+            _healthy(
+                is_holding=False,
+                quantity=None,
+                market_value=None,
+                portfolio_weight=None,
+                research_status="INCELEMEDE",
+                candidate_exists=True,
+            )
+        )
+        stale_new = evaluate_portfolio_security_decision(
+            _healthy(
+                is_holding=False,
+                quantity=None,
+                market_value=None,
+                portfolio_weight=None,
+                research_status="INCELEMEDE",
+                candidate_exists=True,
+                stale_inputs=("si",),
+            )
+        )
+        self.assertEqual(held.decision, DECISION_REVIEW)
+        self.assertTrue(fresh_new.exposure_increase_allowed)
+        self.assertEqual(fresh_new.decision, DECISION_CONSIDER_NEW_POSITION)
+        self.assertFalse(stale_new.exposure_increase_allowed)
+        self.assertEqual(stale_new.decision, DECISION_INSUFFICIENT_DATA)
+        self.assertNotIn(stale_new.decision, INCREASE_DECISIONS)
 
     def test_m_holding_blocked_participation_is_not_sell(self) -> None:
         result = evaluate_portfolio_security_decision(

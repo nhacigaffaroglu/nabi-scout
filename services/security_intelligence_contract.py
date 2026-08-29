@@ -130,6 +130,9 @@ PERIOD_INCOMPATIBLE = "INCOMPATIBLE"
 FRESHNESS_FRESH = "FRESH"
 FRESHNESS_STALE = "STALE"
 FRESHNESS_UNKNOWN = "UNKNOWN"
+STALE_DATA = "STALE_DATA"
+FRESHNESS_STALE_REASON = "FRESHNESS_STALE"
+PERSISTED_STALE_MARKERS = frozenset({STALE_DATA, FRESHNESS_STALE_REASON, FRESHNESS_STALE})
 
 AUTHORITY_SEC = "SEC"
 AUTHORITY_CANDIDATE = "CANDIDATE"
@@ -547,6 +550,22 @@ class SecurityIntelligenceSnapshot:
             "reason_codes": list(self.reason_codes),
             "data_quality": dict(self.data_quality),
         }
+
+
+def persisted_snapshot_is_stale(
+    snap: Optional["SecurityIntelligenceSnapshot"],
+) -> bool:
+    """Read SI's own persisted stale markers. Does not invent an age threshold."""
+    if snap is None:
+        return False
+    quality = snap.data_quality or {}
+    markers = set(snap.reason_codes or ())
+    markers.update(snap.risk_flags or ())
+    markers.update(quality.get("reason_codes") or ())
+    freshness = str(quality.get("freshness_status") or "").strip().upper()
+    if freshness:
+        markers.add(freshness)
+    return bool(markers & PERSISTED_STALE_MARKERS)
 
 
 def snapshot_from_view(

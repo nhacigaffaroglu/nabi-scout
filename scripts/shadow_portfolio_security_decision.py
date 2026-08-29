@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ from services.portfolio_security_context_builder import (
     load_signal_context,
     resolve_economic_exposure_status,
 )
+from services.security_intelligence_contract import persisted_snapshot_is_stale
 from services.portfolio_security_decision_contract import (
     DECISION_REDUCE,
     REASON_CONCENTRATION_LIMIT,
@@ -173,7 +175,9 @@ def main() -> int:
             as_of=None if si_snapshot is None else si_snapshot.as_of,
         )
         context = build_portfolio_security_context(symbol, bundle)
-        decision = evaluate_portfolio_security_decision(context)
+        before = evaluate_portfolio_security_decision(replace(context, stale_inputs=()))
+        after = evaluate_portfolio_security_decision(context)
+        event_count = len(signals.repo.list_events(symbol)) if signals.repo is not None else 0
         rows.append(
             {
                 "symbol": symbol,
@@ -183,7 +187,9 @@ def main() -> int:
                 "research_allowed": context.research_allowed,
                 "si_state": context.si_state,
                 "si_as_of": context.si_as_of,
+                "si_stale": persisted_snapshot_is_stale(si_snapshot),
                 "si_score": context.si_score,
+                "persisted_signal_events": event_count,
                 "verified_material_negative": context.verified_material_negative,
                 "verified_material_positive": context.verified_material_positive,
                 "signal_conflict": context.signal_conflict,
@@ -191,11 +197,14 @@ def main() -> int:
                 "economic_exposure_status": context.economic_exposure_status,
                 "candidate_exists": context.candidate_exists,
                 "research_status": context.research_status,
-                "decision": decision.decision,
-                "exposure_increase_allowed": decision.exposure_increase_allowed,
-                "blocking_reasons": list(decision.blocking_reasons),
-                "reason_codes": list(decision.reason_codes),
+                "decision_before_freshness_gate": before.decision,
+                "decision_after_freshness_gate": after.decision,
+                "decision": after.decision,
+                "exposure_increase_allowed": after.exposure_increase_allowed,
+                "blocking_reasons": list(after.blocking_reasons),
+                "reason_codes": list(after.reason_codes),
                 "missing_inputs": list(context.missing_inputs),
+                "stale_inputs": list(context.stale_inputs),
                 "research_status_unchanged": context.research_status,
             }
         )
@@ -224,6 +233,23 @@ def main() -> int:
                 "results": rows,
                 "concentration_at_or_above_20": [row["symbol"] for row in concentrated],
                 "reduce_solely_from_concentration": reduce_from_concentration,
+                "signal_observation": {
+                    "persisted_event_symbols": [
+                        row["symbol"]
+                        for row in rows
+                        if row["persisted_signal_events"]
+                    ],
+                    "verified_material_negative": [
+                        row["symbol"] for row in rows if row["verified_material_negative"]
+                    ],
+                    "verified_material_positive": [
+                        row["symbol"] for row in rows if row["verified_material_positive"]
+                    ],
+                    "signal_conflict": [
+                        row["symbol"] for row in rows if row["signal_conflict"]
+                    ],
+                    "context_for_unchanged": True,
+                },
             },
             indent=2,
             default=str,
