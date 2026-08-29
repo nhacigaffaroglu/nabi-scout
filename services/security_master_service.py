@@ -37,7 +37,6 @@ from services.security_master_listing_evidence import (
 )
 from services.universe_listing_identity import listing_identity
 from services.wealth_asset_classification import (
-    CASH_SYMBOL,
     KNOWN_EQUITY_TR,
     KNOWN_EQUITY_US,
 )
@@ -85,16 +84,6 @@ def _row_to_fact(row: Mapping[str, Any]) -> SecurityFact:
 def _canonical_static_fact(identifier: str, identifier_type: str) -> Optional[SecurityFact]:
     if identifier_type != IDENTIFIER_TYPE_TICKER:
         return None
-    if identifier == CASH_SYMBOL:
-        return SecurityFact(
-            identifier=identifier,
-            identifier_type=IDENTIFIER_TYPE_TICKER,
-            instrument_type=INSTRUMENT_CASH,
-            source=SOURCE_CANONICAL_STATIC,
-            observed_at=_utcnow_iso(),
-            symbol=identifier,
-            source_reference="wealth_asset_classification.CASH_SYMBOL",
-        )
     if identifier in KNOWN_EQUITY_US or identifier in KNOWN_EQUITY_TR:
         return SecurityFact(
             identifier=identifier,

@@ -249,9 +249,9 @@ class LookthroughIntegrationTests(unittest.TestCase):
         self.assertNotIn("security_master", participation)
         self.assertNotIn("security_master", new_money)
 
-    def test_cash_identifier_is_cash_not_name_guess(self) -> None:
+    def test_cash_identifier_is_not_a_synthetic_instrument(self) -> None:
         master = SecurityMasterService()
-        self.assertEqual(master.resolve_security("CASH").instrument_type, INSTRUMENT_CASH)
+        self.assertEqual(master.resolve_security("CASH").instrument_type, INSTRUMENT_UNKNOWN)
         self.assertEqual(master.resolve_security("Cash&Other").instrument_type, INSTRUMENT_UNKNOWN)
 
     def test_canonical_allowlist_still_resolves_without_listing(self) -> None:
@@ -259,6 +259,93 @@ class LookthroughIntegrationTests(unittest.TestCase):
         resolution = master.resolve_security("AAPL")
         self.assertEqual(resolution.instrument_type, INSTRUMENT_EQUITY)
         self.assertEqual(resolution.source, SOURCE_CANONICAL_STATIC)
+
+
+class CashIdentityHardeningTests(unittest.TestCase):
+    def test_listed_ticker_cash_is_equity_not_cash_instrument(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.ingest_listing_facts(
+            [_listing("CASH", cik="907471", name="Pathward Financial, Inc.")]
+        )
+        resolution = master.resolve_security("CASH")
+        self.assertEqual(resolution.status, RESOLUTION_RESOLVED)
+        self.assertEqual(resolution.instrument_type, INSTRUMENT_EQUITY)
+        self.assertEqual(resolution.source, SOURCE_US_LISTING)
+        self.assertNotEqual(resolution.instrument_type, INSTRUMENT_CASH)
+
+    def test_holding_ticker_cash_without_type_uses_security_master(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.ingest_listing_facts(
+            [_listing("CASH", cik="907471", name="Pathward Financial, Inc.")]
+        )
+        summary = summarize_holding_coverage(
+            [FundHoldingRow("CASH", "Pathward Financial, Inc.", 100.0, None, None, None)],
+            security_master=master,
+        )
+        self.assertAlmostEqual(summary["classified_EQUITY"], 100.0)
+        self.assertEqual(summary["classified_CASH"], 0)
+        view = classify_instrument_exposure(
+            _etf("FUNDX"),
+            fund_snapshots={
+                "FUNDX": _snapshot(
+                    "FUNDX",
+                    (FundHoldingRow("CASH", "Pathward Financial, Inc.", 100.0, None, None, None),),
+                )
+            },
+            security_master=master,
+        )
+        self.assertEqual(view.economic_exposures[0].exposure_bucket, "equity")
+
+    def test_explicit_cash_asset_type_wins_over_ticker_and_name(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        master.ingest_listing_facts(
+            [_listing("CASH", cik="907471", name="Pathward Financial, Inc.")]
+        )
+        summary = summarize_holding_coverage(
+            [FundHoldingRow("CASH", "Pathward Financial, Inc.", 100.0, "cash", None, None)],
+            security_master=master,
+        )
+        self.assertAlmostEqual(summary["classified_CASH"], 100.0)
+        self.assertEqual(summary["classified_EQUITY"], 0)
+        view = classify_instrument_exposure(
+            _etf("FUNDY"),
+            fund_snapshots={
+                "FUNDY": _snapshot(
+                    "FUNDY",
+                    (FundHoldingRow("XYZ", "Operating cash USD", 100.0, "cash", None, None),),
+                )
+            },
+            security_master=master,
+        )
+        self.assertEqual(view.economic_exposures[0].exposure_bucket, "cash")
+
+    def test_cash_and_other_name_without_type_is_unknown(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        summary = summarize_holding_coverage(
+            [FundHoldingRow("Cash&Other", "Cash&Other", 100.0, None, None, None)],
+            security_master=master,
+        )
+        self.assertAlmostEqual(summary["UNKNOWN"], 100.0)
+        self.assertEqual(summary["classified_CASH"], 0)
+
+    def test_currency_or_cash_display_name_is_not_cash(self) -> None:
+        master = SecurityMasterService(include_canonical_static=False)
+        summary = summarize_holding_coverage(
+            [
+                FundHoldingRow("USD", "USD", 50.0, None, None, None),
+                FundHoldingRow("FOO", "Cash America International", 50.0, None, None, None),
+            ],
+            security_master=master,
+        )
+        self.assertAlmostEqual(summary["UNKNOWN"], 100.0)
+        self.assertEqual(summary["classified_CASH"], 0)
+
+    def test_canonical_static_does_not_inject_cash_ticker(self) -> None:
+        source = SM_SERVICE.read_text(encoding="utf-8")
+        self.assertNotIn("CASH_SYMBOL", source)
+        self.assertNotIn('identifier == "CASH"', source)
+        master = SecurityMasterService()
+        self.assertEqual(master.resolve_security("CASH").status, RESOLUTION_UNKNOWN)
 
 
 class CoverageReplayTests(unittest.TestCase):
@@ -290,7 +377,7 @@ class CoverageReplayTests(unittest.TestCase):
         spus_after = summarize_holding_coverage(spus, security_master=after)
         self.assertGreater(spus_before["classified_EQUITY"], 0)
         self.assertGreater(spus_after["classified_EQUITY"], spus_before["classified_EQUITY"])
-        self.assertGreater(spus_after["classified_CASH"], 0)
+        self.assertEqual(spus_after["classified_CASH"], 0)
         self.assertGreater(spus_after["UNKNOWN"], 0)
 
         spsk_before = summarize_holding_coverage(spsk, security_master=before)
@@ -312,6 +399,7 @@ class CoverageReplayTests(unittest.TestCase):
         self.assertNotIn("openai", source.lower())
         self.assertNotIn('if symbol == "SPSK"', source)
         self.assertNotIn("therefore sukuk", source.lower())
+        self.assertNotIn("CASH_SYMBOL", source)
         engine = ENGINE.read_text(encoding="utf-8")
         self.assertNotIn("KNOWN_EQUITY_US", engine)
 
