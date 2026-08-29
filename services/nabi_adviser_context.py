@@ -713,6 +713,7 @@ def build_nabi_adviser_context(
     theses: Optional[Mapping[str, Any]] = None,
     conversation_state: Optional[Mapping[str, Any]] = None,
     fund_snapshots: Optional[Mapping[str, Any]] = None,
+    security_master: Any = None,
 ) -> NabiAdviserContext:
     prior = dict(conversation_state or {})
     parsed = parse_adviser_question(question, prior)
@@ -820,6 +821,7 @@ def build_nabi_adviser_context(
                 assets=assets,
                 positions=positions,
                 fund_snapshots=fund_snapshots,
+                security_master=security_master,
             )
             new_money = _allocation_dict(scenario_plan)
     else:

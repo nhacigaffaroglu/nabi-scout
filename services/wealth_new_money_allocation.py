@@ -40,6 +40,7 @@ from services.portfolio_economic_exposure import (
     build_economic_exposure,
     classify_instrument_exposure,
 )
+from services.security_master_service import SecurityMasterService
 from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
     PositionValuationRow,
@@ -339,6 +340,7 @@ def _resolve_layers(
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
+    security_master: Optional[SecurityMasterService] = None,
 ) -> Tuple[str, ...]:
     if dimension != AllocationDimension.ECONOMIC_EXPOSURE:
         layer = _layer_of(dimension=dimension, asset_class=asset_class, market=market)
@@ -353,6 +355,7 @@ def _resolve_layers(
             user_overrides=exposure_overrides,
             canonical_mappings=canonical_mappings,
             fund_snapshots=fund_snapshots,
+            security_master=security_master,
         )
     return economic_exposure_layers(view)
 
@@ -397,6 +400,7 @@ def allocate_new_money(
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
+    security_master: Optional[SecurityMasterService] = None,
 ) -> AllocationPlan:
     """Return a proposed plan only. Never writes or fetches."""
     amount = Decimal(str(available_amount))
@@ -431,6 +435,7 @@ def allocate_new_money(
                 canonical_mappings=canonical_mappings,
                 assets=assets,
                 positions=positions,
+                security_master=security_master,
             )
             exposure_buckets = _allocation_buckets_from_exposure(exposure_view)
         intelligence = build_allocation_intelligence(
@@ -560,6 +565,7 @@ def allocate_new_money(
             fund_snapshots=fund_snapshots,
             canonical_mappings=canonical_mappings,
             exposure_overrides=exposure_overrides,
+            security_master=security_master,
         )
         if not layers:
             skipped.append(
@@ -652,6 +658,7 @@ def allocate_new_money(
             fund_snapshots=fund_snapshots,
             canonical_mappings=canonical_mappings,
             exposure_overrides=exposure_overrides,
+            security_master=security_master,
         )
         if not layers:
             skipped.append(

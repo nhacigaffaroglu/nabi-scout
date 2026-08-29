@@ -210,6 +210,11 @@ def compose_wealth_operating_views(
             if str(getattr(row, "asset_class", "") or "").strip().lower() in {"etf", "fund"}
             and str(getattr(row, "symbol", "") or "").strip()
         ]
+        security_master = None
+        if wealth is not None:
+            from services.security_master_service import try_security_master_from_wealth
+
+            security_master = try_security_master_from_wealth(wealth)
         allocation_plan = allocate_new_money(
             available_amount=plan.starting_monthly,
             amount_currency=plan.currency,
@@ -220,6 +225,7 @@ def compose_wealth_operating_views(
             assets=assets,
             positions=positions,
             fund_snapshots=load_persisted_fund_snapshots(wealth, fund_symbols),
+            security_master=security_master,
         )
     snaps = snapshots if snapshots is not None else _load_snapshots(wealth, portfolio_id)
     performance = build_performance_center(

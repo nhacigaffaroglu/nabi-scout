@@ -344,7 +344,9 @@ class OfficialSafetyTests(unittest.TestCase):
         self.assertNotIn("security_master", PARTICIPATION.read_text(encoding="utf-8"))
         self.assertNotIn("official_fund_holdings", PARTICIPATION.read_text(encoding="utf-8"))
         self.assertNotIn("official_fund_holdings", NEW_MONEY.read_text(encoding="utf-8"))
-        self.assertNotIn("security_master", NEW_MONEY.read_text(encoding="utf-8"))
+        new_money = NEW_MONEY.read_text(encoding="utf-8")
+        self.assertIn("security_master=security_master", new_money)
+        self.assertNotIn("SecurityMasterService()", new_money)
 
     def test_write_guard_blocks_queue(self) -> None:
         class _Table:

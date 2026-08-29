@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
@@ -530,29 +530,49 @@ def build_economic_exposure(
     """Observable economic exposure. No providers, no writes, no ticker-name inference."""
     existing = _all_rows(portfolio_view)
     recovered = _recover_rows(existing=existing, positions=positions, assets=assets)
-    rows = tuple(sorted((*existing, *recovered), key=lambda item: str(item.symbol or "").upper()))
-    instruments = tuple(
-        classify_instrument_exposure(
-            row,
-            user_overrides=user_overrides,
-            canonical_mappings=canonical_mappings,
-            fund_snapshots=fund_snapshots,
-            security_master=security_master,
+    rows = tuple(
+        sorted(
+            (*existing, *recovered),
+            key=lambda item: (
+                str(item.symbol or "").upper(),
+                str(item.position_id or ""),
+                str(item.account_id or ""),
+            ),
         )
-        for row in rows
-        if str(row.symbol or "").strip()
     )
+    classified_by_symbol: Dict[str, InstrumentExposureView] = {}
+    instruments_list: list[InstrumentExposureView] = []
+    for row in rows:
+        symbol = str(row.symbol or "").strip().upper()
+        if not symbol:
+            continue
+        cached = classified_by_symbol.get(symbol)
+        if cached is None:
+            cached = classify_instrument_exposure(
+                row,
+                user_overrides=user_overrides,
+                canonical_mappings=canonical_mappings,
+                fund_snapshots=fund_snapshots,
+                security_master=security_master,
+            )
+            classified_by_symbol[symbol] = cached
+        row_priced = bool(row.price_available and row.market_value is not None)
+        row_mv = _round(float(row.market_value)) if row_priced else None
+        instruments_list.append(
+            replace(
+                cached,
+                observable_market_value=row_mv,
+                valuation_available=row_priced,
+            )
+        )
+    instruments = tuple(instruments_list)
     priced_mv = float(portfolio_view.priced_total_market_value or 0.0)
     classified_mv = 0.0
     bucket_mv: Dict[str, float] = {key: 0.0 for key in EXPOSURE_BUCKET_ORDER}
     bucket_symbols: Dict[str, list[str]] = {key: [] for key in EXPOSURE_BUCKET_ORDER}
     bucket_unpriced: Dict[str, list[str]] = {key: [] for key in EXPOSURE_BUCKET_ORDER}
     bucket_conf: Dict[str, list[ExposureConfidence]] = {key: [] for key in EXPOSURE_BUCKET_ORDER}
-    seen_symbols: set[str] = set()
     for instrument in instruments:
-        if instrument.symbol in seen_symbols:
-            continue
-        seen_symbols.add(instrument.symbol)
         mv = instrument.observable_market_value
         classified = instrument.evidence_complete and not any(
             row.exposure_bucket == EconomicExposureBucket.UNKNOWN.value

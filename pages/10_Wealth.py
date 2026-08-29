@@ -902,6 +902,9 @@ with tab_adviser:
         and str(row.symbol or "").strip()
     ]
     adviser_fund_snapshots = load_persisted_fund_snapshots(wealth, fund_symbols)
+    from services.security_master_service import security_master_from_wealth
+
+    adviser_security_master = security_master_from_wealth(wealth)
     render_nabi_adviser(
         candidates=adviser_candidates,
         snapshots=adviser_snapshots,
@@ -918,6 +921,7 @@ with tab_adviser:
         assets=assets,
         positions=positions,
         fund_snapshots=adviser_fund_snapshots,
+        security_master=adviser_security_master,
     )
 
     with st.expander("Detaylar", expanded=False):

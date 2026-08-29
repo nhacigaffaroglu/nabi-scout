@@ -116,6 +116,58 @@ def listing_row_to_fact(row: Mapping[str, Any]) -> Optional[SecurityFact]:
     )
 
 
+class SecurityMasterUnavailableError(RuntimeError):
+    """Production Security Master facts are required but no client was provided."""
+
+
+def memory_security_master(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    include_canonical_static: bool = True,
+) -> "SecurityMasterService":
+    """Build an in-memory service from already-loaded fact rows."""
+    repo = SecurityMasterRepository()
+    for row in rows:
+        key = (
+            str(row.get("identifier") or "").strip().upper(),
+            str(row.get("identifier_type") or "").strip().upper(),
+            str(row.get("source") or "").strip(),
+        )
+        if not key[0] or not key[1] or not key[2]:
+            continue
+        repo._memory[key] = dict(row)
+    return SecurityMasterService(repo=repo, include_canonical_static=include_canonical_static)
+
+
+def production_security_master(
+    client: Any,
+    *,
+    include_canonical_static: bool = True,
+) -> "SecurityMasterService":
+    """Load production facts once, then resolve in-memory. Fail closed without a client."""
+    if client is None:
+        raise SecurityMasterUnavailableError(
+            "Production Security Master requires a database client."
+        )
+    return memory_security_master(
+        SecurityMasterRepository(client).list_all(),
+        include_canonical_static=include_canonical_static,
+    )
+
+
+def security_master_from_wealth(wealth: Any) -> "SecurityMasterService":
+    client = getattr(wealth, "client", None) if wealth is not None else None
+    return production_security_master(client)
+
+
+def try_security_master_from_wealth(wealth: Any) -> Optional["SecurityMasterService"]:
+    """Inject when a client exists. Tests/stubs without a client stay explicit None."""
+    client = getattr(wealth, "client", None) if wealth is not None else None
+    if client is None:
+        return None
+    return production_security_master(client)
+
+
 class SecurityMasterService:
     def __init__(
         self,

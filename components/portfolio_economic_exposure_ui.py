@@ -536,12 +536,18 @@ def build_economic_exposure_for_ui(
         snapshots = load_persisted_fund_snapshots(wealth, _etf_symbols(portfolio_view))
     assets = wealth.list_assets() if wealth is not None else None
     positions = wealth.list_positions() if wealth is not None else None
+    security_master = None
+    if wealth is not None:
+        from services.security_master_service import try_security_master_from_wealth
+
+        security_master = try_security_master_from_wealth(wealth)
     return build_economic_exposure(
         portfolio_view,
         fund_snapshots=snapshots,
         user_overrides=overrides_from_session(session_state),
         assets=assets,
         positions=positions,
+        security_master=security_master,
     )
 
 

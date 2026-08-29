@@ -243,11 +243,12 @@ class LookthroughIntegrationTests(unittest.TestCase):
             },
         )
 
-    def test_participation_and_new_money_do_not_import_security_master(self) -> None:
+    def test_participation_does_not_import_security_master(self) -> None:
         participation = Path("services/universe_expansion_onboarding_service.py").read_text(encoding="utf-8")
         new_money = Path("services/wealth_new_money_allocation.py").read_text(encoding="utf-8")
         self.assertNotIn("security_master", participation)
-        self.assertNotIn("security_master", new_money)
+        self.assertIn("security_master=security_master", new_money)
+        self.assertNotIn("SecurityMasterService()", new_money)
 
     def test_cash_identifier_is_not_a_synthetic_instrument(self) -> None:
         master = SecurityMasterService()
