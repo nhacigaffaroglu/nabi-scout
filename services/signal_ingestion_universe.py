@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from services.bist_symbol_mapping import BIST_PORTFOLIO_SYMBOLS, US_MARKETS
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN_DEGIL
-from services.research_workflow_service import is_open_research_status
+from services.research_workflow_service import normalize_research_status
 from services.wealth_asset_classification import (
     CASH_SYMBOL,
     KNOWN_EQUITY_TR,
@@ -36,7 +36,8 @@ EXCLUDED_SYMBOLS = frozenset(
     {CASH_SYMBOL, TF_PARTICIPATION_SYMBOL, *KNOWN_ETF_SYMBOLS, *KNOWN_EQUITY_TR, *BIST_PORTFOLIO_SYMBOLS}
 )
 TR_MARKETS = frozenset({"TR", "BIST", "IST", "TURKEY", "TURKIYE", "TÜRKİYE", "XIST"})
-INCOMPLETE_CANDIDATE_DECISIONS = frozenset({"VERİ EKSİK", "VERI EKSIK"})
+TERMINAL_RESEARCH_STATUS = "TAMAMLANDI"
+ACTIVE_RESEARCH_STATUSES = frozenset({"INCELEMEDE", "BEKLEMEDE", "TEKRAR_BAK"})
 
 
 @dataclass(frozen=True)
@@ -86,18 +87,14 @@ def _is_us_equity(
     return kind in EQUITY_KINDS
 
 
-def _is_researchable_candidate(row: Mapping[str, Any], snap: Mapping[str, Any]) -> bool:
-    """Require an existing research/identity reason. Do not ingest the raw ticker tape."""
-    if str(row.get("cik") or "").strip():
-        return True
-    if row.get("research_allowed"):
-        return True
-    if snap.get("status"):
-        return True
-    decision = str(row.get("decision") or row.get("decision_label") or "").strip().upper()
-    if decision and decision not in INCOMPLETE_CANDIDATE_DECISIONS:
-        return True
-    return False
+def has_active_research_reason(row: Mapping[str, Any]) -> bool:
+    """Category B: canonical in-progress workflow only.
+
+    YENI is the unreviewed default seed. Participation, CIK, decision, and
+    research_allowed are not research-workflow activity.
+    """
+    status = normalize_research_status(row.get("research_status"))
+    return status in ACTIVE_RESEARCH_STATUSES
 
 
 def build_signal_ingestion_universe(
@@ -163,16 +160,12 @@ def build_signal_ingestion_universe(
         if status == PARTICIPATION_STATUS_UYGUN_DEGIL:
             excluded.append((symbol, "uygun_degil_not_holding"))
             continue
-        research_status = row.get("research_status")
-        if research_status is None or str(research_status).strip() == "":
-            if not row.get("research_allowed"):
-                excluded.append((symbol, "research_not_open"))
-                continue
-        elif not is_open_research_status(research_status):
+        workflow = normalize_research_status(row.get("research_status"))
+        if workflow == TERMINAL_RESEARCH_STATUS:
             excluded.append((symbol, "research_not_open"))
             continue
-        if not _is_researchable_candidate(row, snap):
-            excluded.append((symbol, "not_researchable"))
+        if not has_active_research_reason(row):
+            excluded.append((symbol, "not_active_research"))
             continue
         candidate_members.append(
             SignalUniverseMember(
@@ -182,7 +175,7 @@ def build_signal_ingestion_universe(
                 market=market,
                 asset_class=asset_class or ASSET_CLASS_EQUITY,
                 participation_status=status or None,
-                reason="open_us_equity_research",
+                reason="active_us_equity_research",
             )
         )
         seen.add(symbol)

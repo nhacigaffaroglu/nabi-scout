@@ -6,7 +6,11 @@ from datetime import date
 from pathlib import Path
 
 from repositories.signal_intelligence_repository import InMemorySignalIntelligenceRepository
-from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN_DEGIL
+from services.participation_intelligence_contract import (
+    PARTICIPATION_STATUS_KONTROL_ET,
+    PARTICIPATION_STATUS_UYGUN,
+    PARTICIPATION_STATUS_UYGUN_DEGIL,
+)
 from services.signal_ingestion_orchestration import run_signal_ingestion_stage
 from services.signal_ingestion_policy import (
     ADAPTER_KAP,
@@ -55,7 +59,7 @@ def _candidate(symbol: str, **kwargs):
         "market": kwargs.pop("market", "US"),
         "asset_class": kwargs.pop("asset_class", "equity"),
         "research_status": kwargs.pop("research_status", "YENI"),
-        "research_allowed": kwargs.pop("research_allowed", True),
+        "research_allowed": kwargs.pop("research_allowed", None),
     }
     row.update(kwargs)
     return row
@@ -106,7 +110,10 @@ class UniverseConstructionTests(unittest.TestCase):
     def test_holdings_first_then_candidates_stable_order(self) -> None:
         universe = build_signal_ingestion_universe(
             holdings=[_holding("TSLA"), _holding("AAPL"), _holding("crm")],
-            candidates=[_candidate("NVDA"), _candidate("MSFT")],
+            candidates=[
+                _candidate("NVDA", research_status="INCELEMEDE"),
+                _candidate("MSFT", research_status="BEKLEMEDE"),
+            ],
         )
         self.assertEqual(universe.holdings, ("AAPL", "CRM", "TSLA"))
         self.assertEqual(universe.candidates, ("MSFT", "NVDA"))
@@ -124,8 +131,12 @@ class UniverseConstructionTests(unittest.TestCase):
         universe = build_signal_ingestion_universe(
             holdings=[_holding("CRM")],
             candidates=[
-                _candidate("NVDA", participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL),
-                _candidate("AAPL"),
+                _candidate(
+                    "NVDA",
+                    research_status="INCELEMEDE",
+                    participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL,
+                ),
+                _candidate("AAPL", research_status="INCELEMEDE"),
             ],
             participation_by_symbol={"NVDA": {"status": PARTICIPATION_STATUS_UYGUN_DEGIL}},
         )
@@ -159,7 +170,16 @@ class UniverseConstructionTests(unittest.TestCase):
 
     def test_hisse_abd_candidate_is_us_equity(self) -> None:
         universe = build_signal_ingestion_universe(
-            candidates=[_candidate("NVDA", market="ABD", asset_type="Hisse", asset_class="", cik="1045810")],
+            candidates=[
+                _candidate(
+                    "NVDA",
+                    market="ABD",
+                    asset_type="Hisse",
+                    asset_class="",
+                    cik="1045810",
+                    research_status="INCELEMEDE",
+                )
+            ],
         )
         self.assertEqual(universe.candidates, ("NVDA",))
 
@@ -177,7 +197,133 @@ class UniverseConstructionTests(unittest.TestCase):
             ],
         )
         self.assertEqual(universe.candidates, ())
-        self.assertIn(("AAL", "not_researchable"), universe.excluded)
+        self.assertIn(("AAL", "not_active_research"), universe.excluded)
+
+
+class CategoryPolicyRegressionTests(unittest.TestCase):
+    def test_a_holding_uygun_included(self) -> None:
+        universe = build_signal_ingestion_universe(
+            holdings=[_holding("CRM")],
+            participation_by_symbol={"CRM": {"status": PARTICIPATION_STATUS_UYGUN}},
+        )
+        self.assertEqual(universe.holdings, ("CRM",))
+        self.assertEqual(universe.members[0].reason, "portfolio_us_equity")
+
+    def test_b_holding_uygun_degil_included(self) -> None:
+        universe = build_signal_ingestion_universe(
+            holdings=[_holding("AAPL")],
+            participation_by_symbol={"AAPL": {"status": PARTICIPATION_STATUS_UYGUN_DEGIL}},
+        )
+        self.assertEqual(universe.holdings, ("AAPL",))
+
+    def test_c_research_allowed_and_cik_do_not_create_active_research(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[
+                _candidate(
+                    "JNJ",
+                    research_status="YENI",
+                    research_allowed=True,
+                    cik="200406",
+                    decision=None,
+                )
+            ],
+            participation_by_symbol={"JNJ": {"status": PARTICIPATION_STATUS_UYGUN}},
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("JNJ", "not_active_research"), universe.excluded)
+
+    def test_c_jnj_shaped_yeni_uygun_seed_excluded(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[
+                _candidate(
+                    "JNJ",
+                    research_status="YENI",
+                    research_allowed=None,
+                    decision=None,
+                    last_reviewed_at=None,
+                    cik=None,
+                )
+            ],
+            participation_by_symbol={"JNJ": {"status": PARTICIPATION_STATUS_UYGUN}},
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("JNJ", "not_active_research"), universe.excluded)
+
+    def test_d_yeni_kontrol_et_without_active_research_excluded(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[_candidate("AMZN", research_status="YENI", decision="İZLE")],
+            participation_by_symbol={"AMZN": {"status": PARTICIPATION_STATUS_KONTROL_ET}},
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("AMZN", "not_active_research"), universe.excluded)
+
+    def test_e_passive_veri_eksik_stub_excluded(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[_candidate("AAL", decision="VERİ EKSİK", research_status="YENI")],
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("AAL", "not_active_research"), universe.excluded)
+
+    def test_f_non_holding_uygun_degil_active_research_excluded(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[
+                _candidate(
+                    "NVDA",
+                    research_status="INCELEMEDE",
+                    decision="ADAY",
+                    participation_status=PARTICIPATION_STATUS_UYGUN_DEGIL,
+                )
+            ],
+            participation_by_symbol={"NVDA": {"status": PARTICIPATION_STATUS_UYGUN_DEGIL}},
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("NVDA", "uygun_degil_not_holding"), universe.excluded)
+
+    def test_g_active_research_allowed_participation_included(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[
+                _candidate(
+                    "NVDA",
+                    research_status="INCELEMEDE",
+                    decision="ADAY",
+                    cik="1045810",
+                )
+            ],
+            participation_by_symbol={"NVDA": {"status": PARTICIPATION_STATUS_KONTROL_ET}},
+        )
+        self.assertEqual(universe.candidates, ("NVDA",))
+        self.assertEqual(universe.members[0].reason, "active_us_equity_research")
+
+    def test_h_tamamlandi_is_terminal_even_with_aday(self) -> None:
+        universe = build_signal_ingestion_universe(
+            candidates=[
+                _candidate(
+                    "MSFT",
+                    research_status="TAMAMLANDI",
+                    decision="ADAY",
+                    decision_label="ARAŞTIRMA ADAYI",
+                    conviction_score=85.4,
+                    cik="789019",
+                )
+            ],
+            participation_by_symbol={"MSFT": {"status": PARTICIPATION_STATUS_KONTROL_ET}},
+        )
+        self.assertEqual(universe.candidates, ())
+        self.assertIn(("MSFT", "research_not_open"), universe.excluded)
+
+    def test_i_etf_fund_bist_cash_excluded(self) -> None:
+        universe = build_signal_ingestion_universe(
+            holdings=[
+                _holding("SPUS", asset_class="etf"),
+                _holding("CASH", asset_class="cash"),
+                _holding("BIMAS", market="BIST"),
+            ],
+            candidates=[
+                _candidate("HLAL", asset_class="etf", research_status="INCELEMEDE"),
+                _candidate("VWRA", asset_class="fund", research_status="INCELEMEDE"),
+            ],
+        )
+        self.assertEqual(universe.eligible, ())
 
 
 class BoundsAndCapacityTests(unittest.TestCase):
@@ -197,7 +343,10 @@ class BoundsAndCapacityTests(unittest.TestCase):
     def test_stage_capacity_and_stable_order(self) -> None:
         report = run_signal_ingestion_stage(
             holdings=[_holding("TSLA"), _holding("AAPL"), _holding("CRM")],
-            candidates=[_candidate("NVDA"), _candidate("MSFT")],
+            candidates=[
+                _candidate("NVDA", research_status="INCELEMEDE"),
+                _candidate("MSFT", research_status="TEKRAR_BAK"),
+            ],
             enable_sec_signal_ingestion=True,
             max_symbols_per_run=3,
             submissions_by_symbol={"AAPL": {}, "CRM": fixture_crm_single_item_8k(), "TSLA": {}},
