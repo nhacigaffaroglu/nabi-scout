@@ -180,6 +180,7 @@ def _economic_exposure_context(
     new_money: Mapping[str, Any],
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master: Any = None,
+    identity_service: Any = None,
     assets: Sequence[Any] = (),
     positions: Sequence[Any] = (),
     candidates: Sequence[Mapping[str, Any]] = (),
@@ -193,6 +194,7 @@ def _economic_exposure_context(
         assets=assets,
         positions=positions,
         security_master=security_master,
+        identity_service=identity_service,
     )
     intelligence = build_allocation_intelligence(
         portfolio_view,
@@ -833,6 +835,7 @@ def build_nabi_adviser_context(
     conversation_state: Optional[Mapping[str, Any]] = None,
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master: Any = None,
+    identity_service: Any = None,
     hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
     enable_hybrid_exposure_allocation: Optional[bool] = None,
 ) -> NabiAdviserContext:
@@ -947,6 +950,7 @@ def build_nabi_adviser_context(
                 positions=positions,
                 fund_snapshots=fund_snapshots,
                 security_master=security_master,
+                identity_service=identity_service,
                 hybrid_policy=resolved_hybrid,
             )
             new_money = _allocation_dict(scenario_plan)
@@ -966,6 +970,7 @@ def build_nabi_adviser_context(
         new_money=new_money,
         fund_snapshots=fund_snapshots,
         security_master=security_master,
+        identity_service=identity_service,
         assets=assets,
         positions=positions,
         candidates=candidates,

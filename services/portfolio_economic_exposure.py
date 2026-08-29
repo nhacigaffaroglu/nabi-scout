@@ -10,6 +10,7 @@ from services.portfolio_intelligence_contract import (
     PortfolioIntelligenceView,
     PositionValuationRow,
 )
+from services.security_identity_service import SecurityIdentityService
 from services.security_master_service import SecurityMasterService
 from services.wealth_asset_classification import (
     CASH_SYMBOL,
@@ -357,15 +358,30 @@ def _scale_issuer_reported_weights(
     return scaled, "MATERIAL_ISSUER_WEIGHT_OVERFLOW"
 
 
+def _holding_tokens(holding) -> tuple[Any, ...]:
+    tokens = [getattr(holding, "underlying_symbol", None)]
+    cusip = getattr(holding, "cusip", None) or getattr(holding, "cusip_raw", None)
+    if cusip:
+        tokens.append(cusip)
+    return tuple(item for item in tokens if item)
+
+
 def _holding_policy_bucket(
     holding,
     *,
     security_master: SecurityMasterService,
+    identity_service: Optional[SecurityIdentityService] = None,
 ) -> str:
     asset_type = str(holding.asset_type or "").strip().lower()
     bucket = _HOLDING_ASSET_TYPE_MAP.get(asset_type)
     if bucket is not None:
         return bucket
+    if identity_service is not None:
+        economic = identity_service.resolve_economic_layer(_holding_tokens(holding))
+        if economic.status == "CONFLICT":
+            return EconomicExposureBucket.UNKNOWN.value
+        if economic.resolved and economic.economic_layer:
+            return economic.economic_layer
     resolution = security_master.resolve_security(holding.underlying_symbol)
     policy = resolution.policy_asset_type
     if policy:
@@ -379,6 +395,7 @@ def _lookthrough_exposures(
     snapshot: FundHoldingsSnapshotView,
     *,
     security_master: Optional[SecurityMasterService] = None,
+    identity_service: Optional[SecurityIdentityService] = None,
 ) -> Tuple[Tuple[EconomicExposure, ...], bool]:
     master = security_master or SecurityMasterService()
     weights: Dict[str, float] = {}
@@ -387,7 +404,11 @@ def _lookthrough_exposures(
         slice_pct = float(holding.weight_pct or 0.0)
         if slice_pct <= 0:
             continue
-        bucket = _holding_policy_bucket(holding, security_master=master)
+        bucket = _holding_policy_bucket(
+            holding,
+            security_master=master,
+            identity_service=identity_service,
+        )
         weights[bucket] = weights.get(bucket, 0.0) + slice_pct
         if bucket != EconomicExposureBucket.UNKNOWN.value:
             mapped += slice_pct
@@ -435,6 +456,7 @@ def classify_instrument_exposure(
     canonical_mappings: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     fund_snapshots: Optional[Mapping[str, FundHoldingsSnapshotView]] = None,
     security_master: Optional[SecurityMasterService] = None,
+    identity_service: Optional[SecurityIdentityService] = None,
 ) -> InstrumentExposureView:
     symbol = str(row.symbol or "").strip().upper()
     instrument_class = _instrument_class(row)
@@ -466,6 +488,7 @@ def classify_instrument_exposure(
             exposures, complete = _lookthrough_exposures(
                 snapshot,
                 security_master=security_master,
+                identity_service=identity_service,
             )
         else:
             exposures = _unknown(limitation="HOLDINGS_LOOKTHROUGH_EMPTY")
@@ -526,6 +549,7 @@ def build_economic_exposure(
     assets: Optional[Sequence[dict]] = None,
     positions: Optional[Sequence[dict]] = None,
     security_master: Optional[SecurityMasterService] = None,
+    identity_service: Optional[SecurityIdentityService] = None,
 ) -> PortfolioEconomicExposureView:
     """Observable economic exposure. No providers, no writes, no ticker-name inference."""
     existing = _all_rows(portfolio_view)
@@ -554,6 +578,7 @@ def build_economic_exposure(
                 canonical_mappings=canonical_mappings,
                 fund_snapshots=fund_snapshots,
                 security_master=security_master,
+                identity_service=identity_service,
             )
             classified_by_symbol[symbol] = cached
         row_priced = bool(row.price_available and row.market_value is not None)

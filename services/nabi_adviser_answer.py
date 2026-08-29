@@ -105,6 +105,7 @@ def answer_nabi_adviser(
     conversation_state: Optional[Mapping[str, Any]] = None,
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master=None,
+    identity_service=None,
 ) -> NabiAdviserAnswer:
     context = build_nabi_adviser_context(
         question,
@@ -123,6 +124,7 @@ def answer_nabi_adviser(
         conversation_state=conversation_state,
         fund_snapshots=fund_snapshots,
         security_master=security_master,
+        identity_service=identity_service,
     )
     parsed = parse_adviser_question(question, conversation_state)
     followup_state = build_followup_state(

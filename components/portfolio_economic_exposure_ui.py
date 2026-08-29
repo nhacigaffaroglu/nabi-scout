@@ -541,6 +541,11 @@ def build_economic_exposure_for_ui(
         from services.security_master_service import try_security_master_from_wealth
 
         security_master = try_security_master_from_wealth(wealth)
+    identity_service = None
+    if wealth is not None:
+        from services.security_identity_service import try_identity_service_from_wealth
+
+        identity_service = try_identity_service_from_wealth(wealth)
     return build_economic_exposure(
         portfolio_view,
         fund_snapshots=snapshots,
@@ -548,6 +553,7 @@ def build_economic_exposure_for_ui(
         assets=assets,
         positions=positions,
         security_master=security_master,
+        identity_service=identity_service,
     )
 
 

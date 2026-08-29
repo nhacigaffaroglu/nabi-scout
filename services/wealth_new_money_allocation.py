@@ -375,6 +375,7 @@ def _resolve_layers(
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
     security_master: Optional[SecurityMasterService] = None,
+    identity_service: Optional[Any] = None,
 ) -> Tuple[str, ...]:
     if dimension != AllocationDimension.ECONOMIC_EXPOSURE:
         layer = _layer_of(dimension=dimension, asset_class=asset_class, market=market)
@@ -390,6 +391,7 @@ def _resolve_layers(
             canonical_mappings=canonical_mappings,
             fund_snapshots=fund_snapshots,
             security_master=security_master,
+            identity_service=identity_service,
         )
     return economic_exposure_layers(view)
 
@@ -435,6 +437,7 @@ def allocate_new_money(
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
     security_master: Optional[SecurityMasterService] = None,
+    identity_service: Optional[Any] = None,
     hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
     enable_hybrid_exposure_allocation: Optional[bool] = None,
 ) -> AllocationPlan:
@@ -475,6 +478,7 @@ def allocate_new_money(
                 assets=assets,
                 positions=positions,
                 security_master=security_master,
+                identity_service=identity_service,
             )
             exposure_buckets = _allocation_buckets_from_exposure(exposure_view)
         intelligence = build_allocation_intelligence(
@@ -656,6 +660,7 @@ def allocate_new_money(
             canonical_mappings=canonical_mappings,
             exposure_overrides=exposure_overrides,
             security_master=security_master,
+            identity_service=identity_service,
         )
         if not layers:
             skipped.append(
@@ -758,6 +763,7 @@ def allocate_new_money(
             canonical_mappings=canonical_mappings,
             exposure_overrides=exposure_overrides,
             security_master=security_master,
+            identity_service=identity_service,
         )
         if not layers:
             skipped.append(

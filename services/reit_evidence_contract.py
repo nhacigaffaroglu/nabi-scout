@@ -1,13 +1,8 @@
 """REIT / real_estate evidence. No name, SPRE, or mandate inference.
 
-instrument_type=REIT is the current Security Master slot that maps to
-economic real_estate. U.S. listing evidence currently writes EQUITY for
-common stock with a CIK, including names that contain REIT.
-
-Until legal form and economic layer are separate fields, and lookthrough
-can join official SEDOL/CUSIP rather than ticker-only holdings, REIT
-facts must not be persisted. OpenFIGI securityType=REIT may be recorded
-as a probe observation only.
+instrument_type remains a legal/listing fact. OpenFIGI securityType=REIT
+may establish economic_layer=real_estate through SecurityIdentityService.
+It must not overwrite us_listing EQUITY with instrument_type=REIT.
 """
 
 from __future__ import annotations
@@ -23,14 +18,16 @@ from services.security_master_contract import (
 
 EXPLICIT_REIT_TYPES = frozenset({"REIT", "REIT EQUITY"})
 
-# Listing EQUITY is not silently replaced. REIT ingest stays closed.
-REIT_MODEL_GAP = True
-REIT_MODEL_GAP_REASON = (
-    "instrument_type cannot hold both legal common-stock form and economic "
-    "real_estate; lookthrough resolves persisted ticker, not official SEDOL/"
-    "CUSIP; us_listing EQUITY must not be overwritten."
-)
+# Instrument REIT writes stay closed. Economic real_estate may persist.
+REIT_MODEL_GAP = False
+REIT_INSTRUMENT_PERSIST = False
 PERSIST_OPENFIGI_REIT = False
+PERSIST_OPENFIGI_REIT_ECONOMIC = True
+REIT_MODEL_GAP_REASON = ""
+REIT_INSTRUMENT_BLOCK_REASON = (
+    "instrument_type=REIT is not written; listing EQUITY is preserved and "
+    "economic_layer=real_estate is stored separately."
+)
 
 INSUFFICIENT_ALONE = frozenset(
     {
@@ -81,12 +78,20 @@ def listing_equity_is_not_reit(instrument_type: Any, *, source: Any = None) -> b
 
 
 def may_persist_reit_fact() -> bool:
-    return (not REIT_MODEL_GAP) and PERSIST_OPENFIGI_REIT
+    return False
+
+
+def may_persist_reit_economic() -> bool:
+    return PERSIST_OPENFIGI_REIT_ECONOMIC and not REIT_INSTRUMENT_PERSIST
 
 
 def persist_blocked_reason() -> str:
-    if REIT_MODEL_GAP:
-        return REIT_MODEL_GAP_REASON
-    if not PERSIST_OPENFIGI_REIT:
-        return "OPENFIGI_REIT_PERSIST_DISABLED"
+    return REIT_INSTRUMENT_BLOCK_REASON
+
+
+def persist_economic_blocked_reason() -> str:
+    if not PERSIST_OPENFIGI_REIT_ECONOMIC:
+        return "OPENFIGI_REIT_ECONOMIC_PERSIST_DISABLED"
+    if REIT_INSTRUMENT_PERSIST:
+        return "INSTRUMENT_REIT_PERSIST_MUST_STAY_OFF"
     return ""

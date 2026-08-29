@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from repositories.security_master_repository import SecurityMasterRepository
+from services.security_identity_contract import IDENTITY_FACT_SOURCES
 from services.security_master_contract import (
     IDENTIFIER_TYPE_CUSIP,
     IDENTIFIER_TYPE_ISIN,
@@ -271,7 +272,11 @@ class SecurityMasterService:
                 observed_at=None,
                 limitation="EMPTY_IDENTIFIER",
             )
-        candidates = list(self.get_security_facts(ident, identifier_type=itype))
+        candidates = [
+            row
+            for row in self.get_security_facts(ident, identifier_type=itype)
+            if row.source not in IDENTITY_FACT_SOURCES
+        ]
         sources = {row.source for row in candidates}
         listing_row = self.listing_index.get(ident) if itype == IDENTIFIER_TYPE_TICKER else None
         listing_fact = listing_row_to_fact(listing_row) if listing_row else None

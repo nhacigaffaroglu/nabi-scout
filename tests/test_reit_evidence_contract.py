@@ -25,6 +25,7 @@ from services.reit_evidence_contract import (
     classify_from_name_or_fund,
     is_explicit_structured_reit,
     listing_equity_is_not_reit,
+    may_persist_reit_economic,
     may_persist_reit_fact,
     name_is_not_evidence,
     persist_blocked_reason,
@@ -88,9 +89,10 @@ class ReitContractTests(unittest.TestCase):
     def test_structured_reit_token_is_explicit_but_not_persisted(self) -> None:
         self.assertTrue(is_explicit_structured_reit("REIT", "REIT"))
         self.assertFalse(is_explicit_structured_reit("COMMON STOCK"))
-        self.assertTrue(REIT_MODEL_GAP)
+        self.assertFalse(REIT_MODEL_GAP)
         self.assertFalse(may_persist_reit_fact())
-        self.assertIn("instrument_type cannot hold both", persist_blocked_reason())
+        self.assertTrue(may_persist_reit_economic())
+        self.assertIn("economic_layer=real_estate", persist_blocked_reason())
 
     def test_listing_equity_is_not_silently_reit(self) -> None:
         self.assertTrue(listing_equity_is_not_reit(INSTRUMENT_EQUITY, source=SOURCE_US_LISTING))

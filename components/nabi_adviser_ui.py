@@ -81,6 +81,7 @@ def render_nabi_adviser(
     positions: Sequence[Any] = (),
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master: Any = None,
+    identity_service: Any = None,
 ) -> None:
     import streamlit as st
 
@@ -99,6 +100,7 @@ def render_nabi_adviser(
         positions=positions,
         fund_snapshots=fund_snapshots,
         security_master=security_master,
+        identity_service=identity_service,
     )
     ensure_adviser_conversation_store(session_state, chat_key)
     get_adviser_followup_state(session_state, chat_key)
