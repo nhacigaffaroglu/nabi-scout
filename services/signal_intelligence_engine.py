@@ -80,6 +80,7 @@ from services.signal_intelligence_contract import (
     SUBTYPE_ROUTINE_FILING,
     SUBTYPE_SANCTION,
     TIER_1_PRIMARY,
+    TIER_1_SOURCE_TYPES,
     TIER_2_HIGH_QUALITY_SECONDARY,
     TIER_3_SECONDARY_ANALYSIS,
     TIER_4_SOCIAL_DISCOVERY,
@@ -129,35 +130,55 @@ def _event_date_key(raw: RawSignalInput) -> str:
     return canonical_event_date(raw.effective_time) or canonical_event_date(raw.event_time) or "UNDATED"
 
 
+def normalize_logical_event_key(value: Optional[str]) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def authoritative_event_id(raw: RawSignalInput) -> Optional[str]:
+    """SEC accession, KAP disclosure id, or issuer/exchange/regulator event id.
+
+    A TIER 1 evidence external_id is treated as the authoritative event id
+    when authoritative_event_id is omitted. Newswire/social article ids are
+    never promoted to event identity.
+    """
+    explicit = str(raw.authoritative_event_id or "").strip()
+    if explicit:
+        return explicit
+    source = resolve_source(raw.source_id, raw.source_type)
+    external = str(raw.external_id or "").strip()
+    if external and source.source_type in TIER_1_SOURCE_TYPES:
+        return external
+    return None
+
+
 def event_identity(raw: RawSignalInput) -> str:
     """Stable event identity. Never headline-only.
 
-    Factual subject + type + date collapses multi-source reports of the
-    same event. Authoritative external ids are used when subject is absent
-    and remain the evidence identity in all cases.
+    1. Authoritative external event id
+    2. Authoritative composite when logical_event_key is present
+    3. Canonical fingerprint fallback
     """
     symbol = normalize_symbol(raw.symbol)
     event_type = classify_event_type(raw.event_type)
     source = resolve_source(raw.source_id, raw.source_type)
-    external = str(raw.external_id or "").strip()
+    auth_id = authoritative_event_id(raw)
+    logical_key = normalize_logical_event_key(raw.logical_event_key)
+    if auth_id and logical_key:
+        digest = hashlib.sha256(
+            f"{symbol}|{auth_id}|{logical_key}".encode("utf-8")
+        ).hexdigest()[:32]
+        return f"evt:{digest}"
+    if auth_id:
+        digest = hashlib.sha256(f"{symbol}|{auth_id}".encode("utf-8")).hexdigest()[:32]
+        return f"evt:{digest}"
     subject = normalize_factual_subject(raw.factual_subject)
     if subject:
         digest = hashlib.sha256(
             f"{symbol}|{event_type}|{_event_date_key(raw)}|{subject}".encode("utf-8")
         ).hexdigest()[:32]
         return f"evt:{digest}"
-    if external and source.authority == TIER_1_PRIMARY:
-        digest = hashlib.sha256(
-            f"{symbol}|{source.source_type}|{external}".encode("utf-8")
-        ).hexdigest()[:32]
-        return f"evt:{digest}"
-    if external:
-        digest = hashlib.sha256(
-            f"{symbol}|{event_type}|{_event_date_key(raw)}|{source.source_type}|{external}".encode("utf-8")
-        ).hexdigest()[:32]
-        return f"evt:{digest}"
     digest = hashlib.sha256(
-        f"{symbol}|{event_type}|{_event_date_key(raw)}|{source.source_id}|{raw.raw_reference or ''}".encode("utf-8")
+        f"{symbol}|{event_type}|{_event_date_key(raw)}|{source.source_id}|{raw.external_id or ''}|{raw.raw_reference or ''}".encode("utf-8")
     ).hexdigest()[:32]
     return f"evt:{digest}"
 
@@ -412,6 +433,7 @@ def build_event(
     if verification == VERIFIED:
         reasons.append("AUTHORITATIVE_VERIFICATION")
     event_id = event_identity(raw)
+    logical_key = normalize_logical_event_key(raw.logical_event_key) or None
     return SignalEvent(
         event_id=event_id,
         symbol=normalize_symbol(raw.symbol),
@@ -432,6 +454,8 @@ def build_event(
         factual_subject=normalize_factual_subject(raw.factual_subject) or None,
         raw_reference=raw.raw_reference,
         as_of=raw.as_of or canonical_event_date(raw.effective_time or raw.event_time),
+        authoritative_event_id=authoritative_event_id(raw),
+        logical_event_key=logical_key or None,
     )
 
 

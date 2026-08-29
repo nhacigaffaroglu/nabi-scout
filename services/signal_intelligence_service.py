@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 from services.security_intelligence_contract import SecurityIntelligenceView
 from services.signal_intelligence_contract import (
@@ -51,21 +51,9 @@ class SignalIntelligenceService:
 
     def ingest(self, raw: RawSignalInput) -> IngestSignalResult:
         event_id = event_identity(raw)
-        evidence = build_evidence(raw, event_id)
         existing_event = self._get_event(event_id)
-        existing_evidence = self._get_evidence(evidence.evidence_id)
-        evidence_rows = [evidence]
         extra_directions = []
         if existing_event is not None:
-            stored_ids = tuple(existing_event.evidence_ids)
-            if evidence.evidence_id not in stored_ids:
-                stored_ids = stored_ids + (evidence.evidence_id,)
-            for item_id in stored_ids:
-                if item_id == evidence.evidence_id:
-                    continue
-                row = self._get_evidence(item_id)
-                if row is not None:
-                    evidence_rows.append(row)
             extra_directions.append((existing_event.source_authority, existing_event.direction))
             source = resolve_source(raw.source_id, raw.source_type)
             extra_directions.append(
@@ -73,30 +61,42 @@ class SignalIntelligenceService:
             )
             raw = replace(
                 raw,
-                event_type=raw.event_type or existing_event.event_type,
-                event_subtype=raw.event_subtype or existing_event.event_subtype,
-                factual_subject=raw.factual_subject or existing_event.factual_subject,
-                headline=raw.headline or existing_event.headline,
-                description=raw.description or existing_event.description,
-                event_time=raw.event_time or existing_event.event_time,
-                effective_time=raw.effective_time or existing_event.effective_time,
-                security_id=raw.security_id or existing_event.security_id,
-                raw_reference=raw.raw_reference or existing_event.raw_reference,
+                event_type=existing_event.event_type,
+                event_subtype=existing_event.event_subtype or raw.event_subtype,
+                factual_subject=existing_event.factual_subject or raw.factual_subject,
+                headline=existing_event.headline or raw.headline,
+                description=existing_event.description or raw.description,
+                event_time=existing_event.event_time or raw.event_time,
+                effective_time=existing_event.effective_time or raw.effective_time,
+                security_id=existing_event.security_id or raw.security_id,
+                raw_reference=existing_event.raw_reference or raw.raw_reference,
+                authoritative_event_id=existing_event.authoritative_event_id or raw.authoritative_event_id,
+                logical_event_key=existing_event.logical_event_key or raw.logical_event_key,
             )
+        evidence = build_evidence(raw, event_id)
+        existing_evidence = self._get_evidence(evidence.evidence_id)
+        evidence_rows = [evidence]
+        if existing_event is not None:
+            for row in self._evidence_for_event(event_id):
+                if row.evidence_id != evidence.evidence_id:
+                    evidence_rows.append(row)
         event = build_event(raw, evidence_rows, extra_directions=extra_directions)
         created_evidence = existing_evidence is None
         created_event = existing_event is None
-        identical = (
-            existing_event is not None
-            and existing_evidence is not None
-            and existing_event.to_dict() == event.to_dict()
-            and existing_evidence.to_dict() == evidence.to_dict()
+        write_event = created_event or (
+            existing_event is not None and _event_core(existing_event) != _event_core(event)
         )
+        write_evidence = created_evidence or (
+            existing_evidence is not None and existing_evidence.to_dict() != evidence.to_dict()
+        )
+        identical = not write_event and not write_evidence
         persisted = False
         persistence_skipped = True
-        if not identical:
+        if write_event:
             self._store_event(event)
+        if write_evidence:
             self._store_evidence(evidence)
+        if write_event or write_evidence:
             persisted, persistence_skipped = self._maybe_persist(event, evidence)
         message = (
             "Identical signal already present; write skipped."
@@ -146,6 +146,11 @@ class SignalIntelligenceService:
             )
         return replace(view, signal_context=context, change_flags=flags)
 
+    def _evidence_for_event(self, event_id: str) -> list[SignalEvidence]:
+        if self.repo is None:
+            return []
+        return [self._evidence_from_row(row) for row in self.repo.list_evidence(event_id)]
+
     def _get_event(self, event_id: str) -> Optional[SignalEvent]:
         if self.repo is None:
             return None
@@ -182,7 +187,7 @@ class SignalIntelligenceService:
         return False, True
 
     def _event_from_row(self, row: Mapping[str, Any]) -> SignalEvent:
-        return SignalEvent(
+        event = SignalEvent(
             event_id=str(row.get("event_id") or ""),
             symbol=str(row.get("symbol") or ""),
             security_id=row.get("security_id"),
@@ -202,9 +207,15 @@ class SignalIntelligenceService:
             factual_subject=row.get("factual_subject"),
             raw_reference=row.get("raw_reference"),
             as_of=row.get("as_of"),
+            authoritative_event_id=row.get("authoritative_event_id"),
+            logical_event_key=row.get("logical_event_key"),
             contract_version=str(row.get("contract_version") or SIGNAL_CONTRACT_VERSION),
             engine_version=str(row.get("engine_version") or SIGNAL_ENGINE_VERSION),
         )
+        linked = tuple(item.evidence_id for item in self._evidence_for_event(event.event_id))
+        if linked:
+            event = replace(event, evidence_ids=linked)
+        return event
 
     def _evidence_from_row(self, row: Mapping[str, Any]) -> SignalEvidence:
         return SignalEvidence(
@@ -225,6 +236,14 @@ class SignalIntelligenceService:
             contract_version=str(row.get("contract_version") or SIGNAL_CONTRACT_VERSION),
             engine_version=str(row.get("engine_version") or SIGNAL_ENGINE_VERSION),
         )
+
+
+def _event_core(event: SignalEvent) -> dict[str, Any]:
+    payload = event.to_dict()
+    payload.pop("evidence_ids", None)
+    payload.pop("headline", None)
+    payload.pop("description", None)
+    return payload
 
 
 def ingest_many(

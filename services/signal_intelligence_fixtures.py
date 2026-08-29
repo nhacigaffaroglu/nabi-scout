@@ -60,6 +60,7 @@ def fixture_merger_sec() -> RawSignalInput:
         effective_time="2026-04-01",
         source_url="https://www.sec.gov/Archives/edgar/data/1108524/000110852426000099/crm-8k.htm",
         external_id="0001108524-26-000099",
+        authoritative_event_id="0001108524-26-000099",
         raw_reference="sec:accession:0001108524-26-000099",
     )
 
@@ -76,6 +77,7 @@ def fixture_merger_newswire() -> RawSignalInput:
         effective_time="2026-04-01",
         source_url="https://example.test/newswire/crm-merger",
         external_id="wire-crm-merger-2026-04-01",
+        authoritative_event_id="0001108524-26-000099",
         raw_reference="newswire:wire-crm-merger-2026-04-01",
     )
 
@@ -92,6 +94,7 @@ def fixture_conflict_positive() -> RawSignalInput:
         event_time="2026-05-10",
         effective_time="2026-05-10",
         external_id="0001108524-26-000111",
+        authoritative_event_id="0001108524-26-000111",
         raw_reference="sec:accession:0001108524-26-000111",
     )
 
@@ -108,6 +111,7 @@ def fixture_conflict_negative() -> RawSignalInput:
         event_time="2026-05-10",
         effective_time="2026-05-10",
         external_id="ir-crm-div-2026-05",
+        authoritative_event_id="0001108524-26-000111",
         raw_reference="official_ir:ir-crm-div-2026-05",
     )
 

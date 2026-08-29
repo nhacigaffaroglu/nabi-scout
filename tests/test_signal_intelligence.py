@@ -24,19 +24,23 @@ from services.signal_intelligence_contract import (
     DIRECTION_NEGATIVE,
     DIRECTION_POSITIVE,
     EVENT_MERGER_ACQUISITION,
+    EVENT_SEC_FILING,
     EVENT_SOCIAL_SIGNAL,
     EVENT_TYPES,
+    RawSignalInput,
     MATERIALITY_CRITICAL,
     MATERIALITY_HIGH,
     MATERIALITY_UNKNOWN,
     SIGNAL_CONTRACT_VERSION,
     SIGNAL_ENGINE_VERSION,
+    SOURCE_SEC,
     TIER_1_PRIMARY,
     TIER_4_SOCIAL_DISCOVERY,
     UNVERIFIED,
     VERIFIED,
 )
 from services.signal_intelligence_engine import (
+    authoritative_event_id,
     classify_event_type,
     event_identity,
     resolve_materiality,
@@ -92,6 +96,11 @@ class SignalContractTests(unittest.TestCase):
         self.assertIn("create table if not exists public.signal_evidence", sql)
         self.assertIn("unique (event_id)", sql)
         self.assertIn("unique (evidence_id)", sql)
+        self.assertIn("authoritative_event_id", sql)
+        self.assertIn("logical_event_key", sql)
+        self.assertIn("signal_events_authoritative_idx", sql)
+        self.assertIn("signal_evidence_event_idx", sql)
+        self.assertIn("signal_evidence_external_idx", sql)
         self.assertNotIn("drop table", sql.lower())
         self.assertNotIn("truncate", sql.lower())
 
@@ -147,6 +156,132 @@ class SignalIngestTests(unittest.TestCase):
         right = fixture_sec_8k_verified()
         right = type(right)(**{**right.__dict__, "headline": "Completely different headline"})
         self.assertEqual(event_identity(left), event_identity(right))
+
+    def test_authoritative_id_beats_factual_subject(self) -> None:
+        accession = "0001108524-26-000088"
+        first = fixture_sec_8k_verified()
+        other_subject = RawSignalInput(
+            **{
+                **first.__dict__,
+                "factual_subject": "entirely different subject text",
+                "headline": "Different headline",
+            }
+        )
+        self.assertEqual(authoritative_event_id(first), accession)
+        self.assertEqual(event_identity(first), event_identity(other_subject))
+
+    def test_same_accession_different_logical_events_are_distinct(self) -> None:
+        base = {
+            "symbol": "CRM",
+            "source_id": "sec",
+            "source_type": SOURCE_SEC,
+            "event_type": EVENT_SEC_FILING,
+            "external_id": "0001108524-26-000200",
+            "authoritative_event_id": "0001108524-26-000200",
+            "factual_subject": "same filing",
+            "event_time": "2026-07-01",
+        }
+        item_202 = RawSignalInput(**base, logical_event_key="ITEM 2.02")
+        item_502 = RawSignalInput(**base, logical_event_key="ITEM 5.02")
+        same_item = RawSignalInput(**base, logical_event_key="item 2.02")
+        self.assertNotEqual(event_identity(item_202), event_identity(item_502))
+        self.assertEqual(event_identity(item_202), event_identity(same_item))
+
+    def test_fingerprint_used_only_without_authoritative_id(self) -> None:
+        social = fixture_social_only_claim()
+        self.assertIsNone(authoritative_event_id(social))
+        same_subject = RawSignalInput(**{**social.__dict__, "headline": "other wording"})
+        different_subject = RawSignalInput(
+            **{**social.__dict__, "factual_subject": "a different rumor"}
+        )
+        self.assertEqual(event_identity(social), event_identity(same_subject))
+        self.assertNotEqual(event_identity(social), event_identity(different_subject))
+
+    def test_newswire_article_id_is_not_event_identity(self) -> None:
+        wire = fixture_merger_newswire()
+        self.assertEqual(authoritative_event_id(wire), "0001108524-26-000099")
+        self.assertEqual(event_identity(wire), event_identity(fixture_merger_sec()))
+        self.assertNotEqual(wire.external_id, authoritative_event_id(wire))
+
+    def test_same_accession_replay_is_one_event_no_write(self) -> None:
+        service = _service()
+        first = service.ingest(fixture_sec_8k_verified())
+        replay = service.ingest(fixture_sec_8k_verified())
+        self.assertEqual(first.event.event_id, replay.event.event_id)
+        self.assertEqual(authoritative_event_id(fixture_sec_8k_verified()), "0001108524-26-000088")
+        self.assertTrue(replay.replay_skipped)
+        self.assertEqual(len(service.repo.events), 1)
+        self.assertEqual(service.repo.event_writes, 1)
+        self.assertEqual(service.repo.evidence_writes, 1)
+
+    def test_different_accessions_same_day_are_two_events(self) -> None:
+        service = _service()
+        first = service.ingest(fixture_sec_8k_verified())
+        other = RawSignalInput(
+            **{
+                **fixture_sec_8k_verified().__dict__,
+                "external_id": "0001108524-26-000089",
+                "authoritative_event_id": "0001108524-26-000089",
+                "factual_subject": first.event.factual_subject,
+                "event_time": fixture_sec_8k_verified().event_time,
+            }
+        )
+        second = service.ingest(other)
+        self.assertNotEqual(first.event.event_id, second.event.event_id)
+        self.assertEqual(len(service.repo.events), 2)
+        self.assertEqual(len(service.repo.evidence), 2)
+
+    def test_same_accession_different_headline_same_event(self) -> None:
+        service = _service()
+        first = service.ingest(fixture_sec_8k_verified())
+        renamed = RawSignalInput(
+            **{**fixture_sec_8k_verified().__dict__, "headline": "Totally different headline"}
+        )
+        second = service.ingest(renamed)
+        self.assertEqual(first.event.event_id, second.event.event_id)
+        self.assertTrue(second.replay_skipped)
+        self.assertEqual(service.repo.event_writes, 1)
+
+    def test_fingerprint_fallback_is_deterministic(self) -> None:
+        first = event_identity(fixture_social_only_claim())
+        second = event_identity(fixture_social_only_claim())
+        self.assertTrue(first.startswith("evt:"))
+        self.assertEqual(first, second)
+        self.assertIsNone(authoritative_event_id(fixture_social_only_claim()))
+
+    def test_secondary_evidence_cites_authoritative_id(self) -> None:
+        service = _service()
+        sec = service.ingest(fixture_merger_sec())
+        after_sec_events = service.repo.event_writes
+        after_sec_evidence = service.repo.evidence_writes
+        wire = service.ingest(fixture_merger_newswire())
+        self.assertEqual(sec.event.event_id, wire.event.event_id)
+        self.assertEqual(len(service.repo.events), 1)
+        self.assertEqual(len(service.repo.list_evidence(sec.event.event_id)), 2)
+        self.assertEqual(service.repo.event_writes, after_sec_events)
+        self.assertEqual(service.repo.evidence_writes, after_sec_evidence + 1)
+        self.assertFalse(wire.created_event)
+        self.assertTrue(wire.created_evidence)
+
+
+class SignalRepositoryUatTests(unittest.TestCase):
+    def test_one_event_replay_zero_then_second_evidence_only(self) -> None:
+        service = _service()
+        first = service.ingest(fixture_merger_sec())
+        self.assertEqual(len(service.repo.events), 1)
+        self.assertEqual(len(service.repo.evidence), 1)
+        self.assertEqual(service.repo.event_writes, 1)
+        self.assertEqual(service.repo.evidence_writes, 1)
+        replay = service.ingest(fixture_merger_sec())
+        self.assertTrue(replay.replay_skipped)
+        self.assertEqual(service.repo.event_writes, 1)
+        self.assertEqual(service.repo.evidence_writes, 1)
+        second = service.ingest(fixture_merger_newswire())
+        self.assertEqual(second.event.event_id, first.event.event_id)
+        self.assertEqual(len(service.repo.events), 1)
+        self.assertEqual(len(service.repo.evidence), 2)
+        self.assertEqual(service.repo.event_writes, 1)
+        self.assertEqual(service.repo.evidence_writes, 2)
 
     def test_missing_denominator_stays_unknown(self) -> None:
         materiality, reasons = resolve_materiality(

@@ -2,6 +2,14 @@
 -- Idempotent: safe to run multiple times in Supabase SQL Editor.
 -- PRE-DEPLOY MIGRATION REQUIRED — do not apply automatically from application code.
 -- Production persist is disabled until this file is applied explicitly.
+--
+-- Event identity (application-computed event_id; never headline-only):
+--   1. authoritative_event_id (SEC accession / KAP id / issuer-exchange-regulator id)
+--   2. composite authoritative_event_id + logical_event_key when one source
+--      document exposes multiple logical events
+--   3. fingerprint fallback: symbol + event_type + date + factual_subject
+-- Evidence identity is unique evidence_id. Secondary sources cite
+-- authoritative_event_id and add evidence rows only.
 
 create table if not exists public.signal_events (
     id uuid primary key default gen_random_uuid(),
@@ -23,6 +31,8 @@ create table if not exists public.signal_events (
     evidence_ids jsonb not null default '[]'::jsonb,
     factual_subject text,
     raw_reference text,
+    authoritative_event_id text,
+    logical_event_key text,
     as_of timestamptz,
     contract_version text not null,
     engine_version text not null,
@@ -33,6 +43,9 @@ create table if not exists public.signal_events (
 
 create index if not exists signal_events_symbol_time_idx
     on public.signal_events (symbol, event_time desc);
+
+create index if not exists signal_events_authoritative_idx
+    on public.signal_events (symbol, authoritative_event_id);
 
 create table if not exists public.signal_evidence (
     id uuid primary key default gen_random_uuid(),

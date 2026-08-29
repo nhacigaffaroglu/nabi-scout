@@ -43,6 +43,7 @@ def raw_from_local_sec_filing(
     factual_subject: Optional[str] = None,
     headline: Optional[str] = None,
     event_subtype: Optional[str] = None,
+    logical_event_key: Optional[str] = None,
     security_id: Optional[str] = None,
 ) -> RawSignalInput:
     """Map a local SEC filing reference. Does not fetch EDGAR."""
@@ -58,6 +59,8 @@ def raw_from_local_sec_filing(
         effective_time=filed_at,
         source_url=filing_url,
         external_id=accession,
+        authoritative_event_id=accession,
+        logical_event_key=logical_event_key,
         raw_reference=f"sec:accession:{accession}",
         security_id=security_id,
         as_of=filed_at,
@@ -73,6 +76,7 @@ def raw_from_local_sec_row(row: Mapping[str, object], *, symbol: str) -> RawSign
         filed_at=str(row.get("filed_at") or row.get("as_of") or "") or None,
         factual_subject=str(row.get("factual_subject") or "") or None,
         headline=str(row.get("headline") or "") or None,
+        logical_event_key=str(row.get("logical_event_key") or row.get("item") or "") or None,
         security_id=str(row.get("security_id") or "") or None,
     )
 

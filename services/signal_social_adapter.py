@@ -32,12 +32,12 @@ class SocialSignalAdapter:
         "TIER_4_SOCIAL_DISCOVERY regardless of followers or engagement."
     )
     dedup_strategy = (
-        "Evidence identity uses platform post id when provided; event "
-        "identity uses factual_subject + type + date when an independent "
-        "authoritative event exists, otherwise a social-only fingerprint."
+        "Evidence identity uses platform post id. Event identity uses a "
+        "cited authoritative_event_id (SEC/KAP/issuer) when present; "
+        "otherwise the canonical fingerprint. Headline is never identity."
     )
     confirmation_path = (
-        "A matching SEC/KAP/issuer event may VERIFIED the factual event. "
+        "Cite the SEC/KAP/issuer event id to join the factual event. "
         "The social evidence row is never upgraded."
     )
 
@@ -55,6 +55,7 @@ class SocialSignalAdapter:
         url: Optional[str] = None,
         factual_subject: Optional[str] = None,
         event_type: Optional[str] = None,
+        authoritative_event_id: Optional[str] = None,
     ) -> RawSignalInput:
         source = resolve_source(source_id, SOURCE_SOCIAL_X)
         if source.source_type != SOURCE_SOCIAL_X:
@@ -70,6 +71,7 @@ class SocialSignalAdapter:
             event_time=posted_at,
             source_url=url,
             external_id=post_id,
+            authoritative_event_id=authoritative_event_id,
             raw_reference=f"social:{source.source_id}:{post_id or 'unidentified'}",
         )
 

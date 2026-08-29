@@ -242,6 +242,18 @@ SUBTYPE_ROUTINE_FILING = "ROUTINE_FILING"
 # - MIXED: M&A / asset sale without acquirer/target role.
 # - UNKNOWN: management change, social-only, OTHER, missing subtype.
 # Direction never implies BUY / investable.
+#
+# Event identity priority (never headline-only):
+# 1. Authoritative external event id — SEC accession, KAP disclosure id,
+#    issuer / exchange / regulator event id.
+# 2. Authoritative deterministic composite — same primary id plus an
+#    explicit logical_event_key when one source document exposes multiple
+#    logical events (for example one 8-K accession with Item 2.02 and 5.02).
+# 3. Canonical fingerprint fallback — symbol, event_type, effective/event
+#    date, normalized factual subject.
+# Secondary sources join an existing event only by citing the same
+# authoritative_event_id. A newswire article id is evidence identity, not
+# event identity.
 
 
 @dataclass(frozen=True)
@@ -260,6 +272,8 @@ class RawSignalInput:
     effective_time: Optional[str] = None
     source_url: Optional[str] = None
     external_id: Optional[str] = None
+    authoritative_event_id: Optional[str] = None
+    logical_event_key: Optional[str] = None
     evidence_id: Optional[str] = None
     retrieved_at: Optional[str] = None
     as_of: Optional[str] = None
@@ -332,6 +346,8 @@ class SignalEvent:
     factual_subject: Optional[str]
     raw_reference: Optional[str]
     as_of: Optional[str]
+    authoritative_event_id: Optional[str] = None
+    logical_event_key: Optional[str] = None
     contract_version: str = SIGNAL_CONTRACT_VERSION
     engine_version: str = SIGNAL_ENGINE_VERSION
 
@@ -356,6 +372,8 @@ class SignalEvent:
             "factual_subject": self.factual_subject,
             "raw_reference": self.raw_reference,
             "as_of": self.as_of,
+            "authoritative_event_id": self.authoritative_event_id,
+            "logical_event_key": self.logical_event_key,
             "contract_version": self.contract_version,
             "engine_version": self.engine_version,
         }
