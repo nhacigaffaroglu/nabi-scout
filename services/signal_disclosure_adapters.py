@@ -1,13 +1,15 @@
 """Authoritative disclosure adapters for Signal Intelligence.
 
-SEC: normalize already-local filing evidence. No live SEC calls.
-KAP / official IR: interface only — no client exists in this repository.
+SEC 8-K metadata is normalized here. Live submissions fetch lives in
+SECFinancialClient. KAP / official IR remain interface only.
 """
 
 from __future__ import annotations
 
 from typing import Mapping, Optional
 
+from services.sec_eight_k_discovery import SecEightKFiling, logical_items
+from services.sec_eight_k_taxonomy import generic_8k_mapping, map_sec_8k_item
 from services.signal_intelligence_contract import (
     EVENT_KAP_DISCLOSURE,
     EVENT_SEC_FILING,
@@ -45,13 +47,14 @@ def raw_from_local_sec_filing(
     event_subtype: Optional[str] = None,
     logical_event_key: Optional[str] = None,
     security_id: Optional[str] = None,
+    event_type: Optional[str] = None,
 ) -> RawSignalInput:
     """Map a local SEC filing reference. Does not fetch EDGAR."""
     return RawSignalInput(
         symbol=symbol,
         source_id="sec",
         source_type=SOURCE_SEC,
-        event_type=EVENT_SEC_FILING,
+        event_type=event_type or EVENT_SEC_FILING,
         event_subtype=event_subtype or subtype_from_sec_form(form),
         headline=headline or f"SEC {form or 'filing'} {accession}",
         factual_subject=factual_subject,
@@ -79,6 +82,46 @@ def raw_from_local_sec_row(row: Mapping[str, object], *, symbol: str) -> RawSign
         logical_event_key=str(row.get("logical_event_key") or row.get("item") or "") or None,
         security_id=str(row.get("security_id") or "") or None,
     )
+
+
+def raw_inputs_from_8k_filing(filing: SecEightKFiling) -> tuple[RawSignalInput, ...]:
+    """One RawSignalInput per reliable 8-K item; otherwise one generic FORM_8K."""
+    event_time = filing.acceptance_at or filing.filing_date
+    standalone = logical_items(filing.items)
+    if not standalone:
+        event_type, subtype = generic_8k_mapping()
+        return (
+            raw_from_local_sec_filing(
+                symbol=filing.symbol,
+                accession=filing.accession,
+                form=filing.form,
+                filing_url=filing.filing_url,
+                filed_at=event_time,
+                headline=f"SEC {filing.form} {filing.accession}",
+                event_subtype=subtype,
+                security_id=filing.cik,
+                event_type=event_type,
+            ),
+        )
+    rows = []
+    for item in standalone:
+        event_type, subtype = map_sec_8k_item(item)
+        rows.append(
+            raw_from_local_sec_filing(
+                symbol=filing.symbol,
+                accession=filing.accession,
+                form=filing.form,
+                filing_url=filing.filing_url,
+                filed_at=event_time,
+                factual_subject=f"sec 8-k item {item}",
+                headline=f"SEC {filing.form} {filing.accession} Item {item}",
+                event_subtype=subtype,
+                logical_event_key=item,
+                security_id=filing.cik,
+                event_type=event_type,
+            )
+        )
+    return tuple(rows)
 
 
 class KapDisclosureAdapter:

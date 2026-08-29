@@ -188,6 +188,12 @@ def evidence_identity(raw: RawSignalInput, event_id: str) -> str:
         return str(raw.evidence_id).strip()
     source = resolve_source(raw.source_id, raw.source_type)
     external = str(raw.external_id or "").strip()
+    logical_key = normalize_logical_event_key(raw.logical_event_key)
+    if external and logical_key:
+        digest = hashlib.sha256(
+            f"{source.source_type}|{external}|{logical_key}".encode("utf-8")
+        ).hexdigest()[:32]
+        return f"evd:{digest}"
     if external:
         digest = hashlib.sha256(
             f"{source.source_type}|{external}".encode("utf-8")

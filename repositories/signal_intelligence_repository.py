@@ -7,9 +7,52 @@ additive migration is applied explicitly.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from services.signal_intelligence_contract import SIGNAL_EVENTS_TABLE, SIGNAL_EVIDENCE_TABLE
+
+REQUIRED_SIGNAL_EVENT_COLUMNS = (
+    "event_id",
+    "symbol",
+    "authoritative_event_id",
+    "logical_event_key",
+    "contract_version",
+    "engine_version",
+    "created_at",
+    "updated_at",
+)
+REQUIRED_SIGNAL_EVIDENCE_COLUMNS = (
+    "evidence_id",
+    "event_id",
+    "source_type",
+    "external_id",
+    "contract_version",
+    "engine_version",
+    "created_at",
+    "updated_at",
+)
+
+
+def verify_signal_intelligence_schema(client) -> Tuple[bool, str]:
+    """Read-only probe. Never applies DDL."""
+    try:
+        events = (
+            client.table(SIGNAL_EVENTS_TABLE)
+            .select(",".join(REQUIRED_SIGNAL_EVENT_COLUMNS))
+            .limit(1)
+            .execute()
+        )
+        evidence = (
+            client.table(SIGNAL_EVIDENCE_TABLE)
+            .select(",".join(REQUIRED_SIGNAL_EVIDENCE_COLUMNS))
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        return False, str(exc)[:240]
+    if events is None or evidence is None:
+        return False, "signal tables returned no response"
+    return True, "signal_events and signal_evidence schema verified"
 
 
 class InMemorySignalIntelligenceRepository:
