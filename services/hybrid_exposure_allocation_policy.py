@@ -7,6 +7,7 @@ actionable layer set. Missing flag is OFF.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping, Optional, Sequence, Tuple
@@ -54,7 +55,7 @@ class HybridPortfolioMode(str, Enum):
 @dataclass(frozen=True)
 class HybridExposureAllocationPolicy:
     enable_hybrid_exposure_allocation: bool = False
-    max_unknown_portfolio_pct: float = HYBRID_MAX_UNKNOWN_PORTFOLIO_PCT
+    max_unknown_portfolio_pct: Optional[float] = HYBRID_MAX_UNKNOWN_PORTFOLIO_PCT
     max_unknown_absolute_value: Optional[float] = HYBRID_MAX_UNKNOWN_ABSOLUTE_VALUE
     bounded_mix_maintenance: bool = HYBRID_BOUNDED_MIX_MAINTENANCE
 
@@ -112,12 +113,25 @@ def explicit_flag_is_enabled(value: Any) -> bool:
     return str(value).strip().lower() in _TRUTHY
 
 
+def policy_ceiling_is_usable(value: Any) -> bool:
+    """Hybrid ON requires an explicit finite non-negative ceiling. Missing/invalid fail closed."""
+    if value is None or isinstance(value, bool):
+        return False
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and number >= 0
+
+
 def _round_unknown(value: Any) -> Optional[float]:
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
         return None
     return round(number, WEIGHT_QUANT)
 
@@ -143,6 +157,8 @@ def resolve_hybrid_portfolio_mode(
         return HybridPortfolioMode.UNAVAILABLE
     unknown = _round_unknown(determinacy.unknown_pct)
     if unknown is None:
+        return HybridPortfolioMode.UNAVAILABLE
+    if not policy_ceiling_is_usable(policy.max_unknown_portfolio_pct):
         return HybridPortfolioMode.UNAVAILABLE
     if unknown == 0.0:
         return HybridPortfolioMode.COMPLETE
@@ -261,9 +277,24 @@ def overlay_adviser_hybrid_fields(
     out["hybrid_policy"] = policy.to_dict()
     out["portfolio_mode"] = mode.value
     out["live_blocker"] = live_blocker
+    out["ceiling"] = policy.max_unknown_portfolio_pct
     new_money = dict(out.get("new_money") or {})
     new_money["live_blocker"] = live_blocker
+    new_money["portfolio_mode"] = mode.value
+    new_money["hybrid_allocation_active"] = bool(policy.enabled)
     if not policy.enabled:
         new_money.setdefault("production_blocker", live_blocker)
     out["new_money"] = new_money
+    out.setdefault(
+        "robust_underweight_layers",
+        new_money.get("robust_underweight_layers") or [],
+    )
+    out.setdefault(
+        "fillable_robust_underweight_layers",
+        new_money.get("fillable_robust_underweight_layers") or [],
+    )
+    out.setdefault(
+        "unfillable_robust_underweight_layers",
+        new_money.get("unfillable_robust_underweight_layers") or [],
+    )
     return out
