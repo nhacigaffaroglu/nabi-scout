@@ -550,6 +550,8 @@ class NabiIntelligenceFacadeTests(unittest.TestCase):
         self.assertTrue(view.has_candidate)
         self.assertTrue(view.has_participation_snapshot)
         self.assertEqual(view.participation_status, "Uygun")
+        self.assertTrue(view.has_security_intelligence)
+        self.assertNotEqual(view.security_intelligence_overall, view.nabi_score)
         candidate_cls.return_value.create.assert_not_called()
         candidate_cls.return_value.upsert_by_symbol.assert_not_called()
 

@@ -15,8 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
-ENGINE_VERSION = "security_intelligence_8a.1"
-FACTS_VERSION = "security_facts_8a.1"
+ENGINE_VERSION = "security_intelligence_8b.1"
+FACTS_VERSION = "security_facts_8b.1"
 
 DIM_QUALITY = "QUALITY"
 DIM_GROWTH = "GROWTH"
@@ -108,8 +108,115 @@ CHANGE_FLAGS = (
     CHANGE_DATA_QUALITY_CHANGED,
 )
 
-# Persistence is designed, not migrated in 8A.
-PROPOSED_SNAPSHOT_TABLE = "security_intelligence_snapshots"
+SNAPSHOT_TABLE = "security_intelligence_snapshots"
+PROPOSED_SNAPSHOT_TABLE = SNAPSHOT_TABLE
+
+PERIOD_FY = "FY"
+PERIOD_TTM = "TTM"
+PERIOD_Q = "Q"
+PERIOD_MIXED = "MIXED"
+PERIOD_UNKNOWN = "UNKNOWN"
+PERIOD_INCOMPATIBLE = "INCOMPATIBLE"
+
+FRESHNESS_FRESH = "FRESH"
+FRESHNESS_STALE = "STALE"
+FRESHNESS_UNKNOWN = "UNKNOWN"
+
+AUTHORITY_SEC = "SEC"
+AUTHORITY_CANDIDATE = "CANDIDATE"
+AUTHORITY_PARTICIPATION = "PARTICIPATION"
+AUTHORITY_COMPANY_INTELLIGENCE = "COMPANY_INTELLIGENCE"
+AUTHORITY_SECURITY_MASTER = "SECURITY_MASTER"
+AUTHORITY_DERIVED = "DERIVED"
+AUTHORITY_MIXED = "MIXED"
+AUTHORITY_UNKNOWN = "UNKNOWN"
+
+CRITICAL_FACT_FIELDS = (
+    "price",
+    "market_cap",
+    "revenue",
+    "free_cash_flow",
+    "gross_margin",
+    "operating_margin",
+    "net_margin",
+    "fcf_margin",
+    "roe",
+    "roa",
+    "roic",
+    "revenue_growth_yoy",
+    "eps_growth_yoy",
+    "pe",
+    "price_to_sales",
+    "price_to_book",
+    "debt_to_equity",
+    "current_ratio",
+    "interest_coverage",
+    "return_3m",
+    "return_1y",
+)
+
+PERCENT_FACT_FIELDS = frozenset(
+    {
+        "gross_margin",
+        "operating_margin",
+        "net_margin",
+        "fcf_margin",
+        "roe",
+        "roa",
+        "roic",
+        "revenue_growth_yoy",
+        "revenue_cagr_3y",
+        "eps_growth_yoy",
+        "eps_cagr_3y",
+        "fcf_growth_yoy",
+        "fcf_cagr_3y",
+        "payout_ratio",
+        "fcf_yield",
+        "share_change_3y",
+        "return_1d",
+        "return_1w",
+        "return_1m",
+        "return_3m",
+        "return_6m",
+        "return_1y",
+        "drawdown",
+        "volatility",
+    }
+)
+
+
+@dataclass(frozen=True)
+class FactProvenance:
+    """Trace for one SecurityFacts field. Does not store raw provider payloads."""
+
+    field: str
+    value: Optional[float]
+    source: str
+    source_as_of: Optional[str] = None
+    retrieved_at: Optional[str] = None
+    unit: str = ""
+    currency: str = ""
+    period_kind: str = PERIOD_UNKNOWN
+    normalization: str = ""
+    stale: bool = False
+    confidence: str = ""
+    authority: str = AUTHORITY_UNKNOWN
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "field": self.field,
+            "value": self.value,
+            "source": self.source,
+            "source_as_of": self.source_as_of,
+            "retrieved_at": self.retrieved_at,
+            "unit": self.unit,
+            "currency": self.currency,
+            "period_kind": self.period_kind,
+            "normalization": self.normalization,
+            "stale": self.stale,
+            "confidence": self.confidence,
+            "authority": self.authority,
+        }
 
 
 @dataclass(frozen=True)
@@ -174,6 +281,14 @@ class SecurityFacts:
     as_of: Optional[str] = None
     stale: bool = False
     missing_fields: tuple[str, ...] = ()
+    provenance: tuple[FactProvenance, ...] = ()
+    completeness_pct: Optional[float] = None
+    freshness_status: str = FRESHNESS_UNKNOWN
+    authority_status: str = AUTHORITY_UNKNOWN
+    period_compatibility: str = PERIOD_UNKNOWN
+    period_kind: str = PERIOD_UNKNOWN
+    missing_critical_fields: tuple[str, ...] = ()
+    facts_version: str = FACTS_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -235,6 +350,14 @@ class SecurityFacts:
             "as_of": self.as_of,
             "stale": self.stale,
             "missing_fields": list(self.missing_fields),
+            "provenance": [item.to_dict() for item in self.provenance],
+            "completeness_pct": self.completeness_pct,
+            "freshness_status": self.freshness_status,
+            "authority_status": self.authority_status,
+            "period_compatibility": self.period_compatibility,
+            "period_kind": self.period_kind,
+            "missing_critical_fields": list(self.missing_critical_fields),
+            "facts_version": self.facts_version,
         }
 
 
@@ -385,6 +508,12 @@ class SecurityIntelligenceSnapshot:
     dimension_scores: dict[str, Optional[float]] = field(default_factory=dict)
     dimension_statuses: dict[str, str] = field(default_factory=dict)
     change_flags: tuple[str, ...] = ()
+    overall_confidence: Optional[float] = None
+    strengths: tuple[str, ...] = ()
+    weaknesses: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+    data_quality: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -400,6 +529,12 @@ class SecurityIntelligenceSnapshot:
             "dimension_scores": dict(self.dimension_scores),
             "dimension_statuses": dict(self.dimension_statuses),
             "change_flags": list(self.change_flags),
+            "overall_confidence": self.overall_confidence,
+            "strengths": list(self.strengths),
+            "weaknesses": list(self.weaknesses),
+            "risk_flags": list(self.risk_flags),
+            "reason_codes": list(self.reason_codes),
+            "data_quality": dict(self.data_quality),
         }
 
 
@@ -425,16 +560,23 @@ def snapshot_from_view(
             name: view.dimension(name).status for name in SECURITY_INTELLIGENCE_DIMENSIONS
         },
         change_flags=view.change_flags,
+        overall_confidence=view.overall_confidence,
+        strengths=view.strengths,
+        weaknesses=view.weaknesses,
+        risk_flags=view.risk_flags,
+        reason_codes=view.data_quality.reason_codes,
+        data_quality=view.data_quality.to_dict(),
     )
 
 
 def proposed_snapshot_schema() -> dict[str, str]:
-    """Design-only. No production migration in 8A."""
+    """8B snapshot identity. Additive migration lives in database/."""
     return {
-        "table": PROPOSED_SNAPSHOT_TABLE,
+        "table": SNAPSHOT_TABLE,
         "id": "uuid",
         "symbol": "text",
         "as_of": "timestamptz",
+        "as_of_key": "text",
         "facts_version": "text",
         "engine_version": "text",
         "dimension_scores": "jsonb",
@@ -445,6 +587,13 @@ def proposed_snapshot_schema() -> dict[str, str]:
         "investment_state": "text",
         "participation_status": "text",
         "research_allowed": "boolean",
+        "data_quality": "jsonb",
+        "strengths": "jsonb",
+        "weaknesses": "jsonb",
+        "risk_flags": "jsonb",
+        "reason_codes": "jsonb",
         "change_flags": "jsonb",
         "created_at": "timestamptz",
+        "updated_at": "timestamptz",
+        "idempotency": "UPSERT on (symbol, as_of_key, facts_version, engine_version)",
     }

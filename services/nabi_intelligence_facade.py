@@ -7,6 +7,11 @@ from repositories.candidate_repository import CandidateRepository
 from repositories.participation_assessment_repository import (
     ParticipationAssessmentRepository,
 )
+from services.security_facts_service import SecurityFactsService
+from services.security_intelligence_service import (
+    SecurityIntelligenceService,
+    participation_from_sources,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,11 @@ class InvestmentIntelligenceView:
     candidate_id: Optional[str]
     has_candidate: bool
     has_participation_snapshot: bool
+    security_intelligence_overall: Optional[float] = None
+    security_intelligence_status: Optional[str] = None
+    security_intelligence_state: Optional[str] = None
+    security_intelligence_confidence: Optional[float] = None
+    has_security_intelligence: bool = False
 
 
 def get_investment_intelligence(
@@ -56,6 +66,30 @@ def get_investment_intelligence(
     snapshot_status = participation.get("participation_status") if participation else None
     snapshot_score = participation.get("participation_score") if participation else None
 
+    si_overall = None
+    si_status = None
+    si_state = None
+    si_confidence = None
+    has_si = False
+    facts = SecurityFactsService().build(
+        normalized_symbol,
+        candidate=candidate,
+        participation_snapshot=participation,
+        allow_sec_cache_replay=False,
+    )
+    si_view = SecurityIntelligenceService().evaluate(
+        facts,
+        participation_from_sources(
+            queue_or_snapshot=participation,
+            candidate=candidate,
+        ),
+    )
+    si_overall = si_view.overall_score
+    si_status = si_view.overall_status
+    si_state = si_view.investment_state
+    si_confidence = si_view.overall_confidence
+    has_si = True
+
     return InvestmentIntelligenceView(
         symbol=normalized_symbol,
         market=(candidate or {}).get("market") or market,
@@ -71,6 +105,11 @@ def get_investment_intelligence(
         candidate_id=(candidate or {}).get("id"),
         has_candidate=candidate is not None,
         has_participation_snapshot=participation is not None,
+        security_intelligence_overall=si_overall,
+        security_intelligence_status=si_status,
+        security_intelligence_state=si_state,
+        security_intelligence_confidence=si_confidence,
+        has_security_intelligence=has_si,
     )
 
 
@@ -90,4 +129,9 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
         "candidate_id": view.candidate_id,
         "has_candidate": view.has_candidate,
         "has_participation_snapshot": view.has_participation_snapshot,
+        "security_intelligence_overall": view.security_intelligence_overall,
+        "security_intelligence_status": view.security_intelligence_status,
+        "security_intelligence_state": view.security_intelligence_state,
+        "security_intelligence_confidence": view.security_intelligence_confidence,
+        "has_security_intelligence": view.has_security_intelligence,
     }

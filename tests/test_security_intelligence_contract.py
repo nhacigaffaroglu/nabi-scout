@@ -274,6 +274,39 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(view.investment_state, STATE_ATTRACTIVE)
         self.assertTrue(view.investable)
 
+    def test_missing_to_populated_is_data_quality_not_improvement(self) -> None:
+        sparse = evaluate_security_intelligence(
+            SecurityFacts(symbol="TSLA", price=200, market_cap=800_000_000_000),
+            SecurityParticipationContext(
+                status=PARTICIPATION_STATUS_KONTROL_ET, research_allowed=False
+            ),
+        )
+        filled = evaluate_security_intelligence(
+            _rich_facts(symbol="TSLA"),
+            SecurityParticipationContext(
+                status=PARTICIPATION_STATUS_KONTROL_ET, research_allowed=False
+            ),
+            previous=snapshot_from_view(sparse, as_of="2025-12-31"),
+        )
+        self.assertIn("DATA_QUALITY_CHANGED", filled.change_flags)
+        self.assertNotIn("QUALITY_IMPROVING", filled.change_flags)
+        self.assertNotIn("GROWTH_ACCELERATING", filled.change_flags)
+        self.assertNotIn("MARGIN_EXPANDING", filled.change_flags)
+        self.assertFalse(sparse.strengths)
+        self.assertEqual(sparse.quality.status, STATUS_INSUFFICIENT_DATA)
+
+    def test_data_quality_is_not_business_quality(self) -> None:
+        view = evaluate_security_intelligence(
+            _rich_facts(roic=4, roe=4, roa=1, operating_margin=2, net_margin=1, fcf_margin=1),
+            SecurityParticipationContext(status=PARTICIPATION_STATUS_UYGUN, research_allowed=True),
+        )
+        self.assertIsNotNone(view.data_quality.score)
+        self.assertGreater(view.data_quality.score, view.quality.score or 0)
+        self.assertTrue(
+            any(code.startswith("AUTHORITY_") or code.startswith("PERIOD_") or code.startswith("FRESHNESS_")
+                for code in view.data_quality.reason_codes)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

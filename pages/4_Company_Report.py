@@ -67,6 +67,12 @@ from services.research_eligibility_service import (
     evaluate_research_eligibility_from_participation_view,
 )
 from components.research_eligibility_ui import render_research_eligibility_block
+from components.security_intelligence_ui import render_security_intelligence_section
+from services.security_facts_service import SecurityFactsService
+from services.security_intelligence_service import (
+    SecurityIntelligenceService,
+    participation_from_sources,
+)
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
     build_research_workflow,
@@ -648,6 +654,57 @@ if save_clicked:
     st.session_state[save_failed_key] = save_result.persistence_failed
     if save_result.saved or save_result.skipped_duplicate:
         st.rerun()
+
+security_resolution = None
+try:
+    from services.security_master_service import production_security_master
+
+    security_resolution = production_security_master(client).resolve_security(str(symbol))
+except Exception:
+    security_resolution = None
+
+si_facts = SecurityFactsService().build(
+    str(symbol),
+    candidate=candidate,
+    participation_result=participation_view.result,
+    sec_financials=(
+        participation_view.result.sec_financials
+        if participation_view.result is not None
+        else None
+    ),
+    company_intelligence=company_intel_view,
+    security_resolution=security_resolution,
+    stale=str(candidate.get("freshness_status") or "").upper() == "STALE",
+    allow_sec_cache_replay=True,
+)
+si_participation = participation_from_sources(
+    queue_or_snapshot={
+        "status": (
+            participation_view.result.participation_assessment.status
+            if participation_view.result is not None
+            else ""
+        ),
+        "methodology_id": (
+            participation_view.result.methodology_id
+            if participation_view.result is not None
+            else ""
+        ),
+        "assessed_at": (
+            participation_view.result.participation_assessment.as_of_date.isoformat()
+            if participation_view.result is not None
+            and participation_view.result.participation_assessment.as_of_date is not None
+            else None
+        ),
+    },
+    candidate=candidate,
+    research_allowed=research_eligibility.research_allowed,
+)
+si_view = SecurityIntelligenceService().evaluate(si_facts, si_participation)
+render_security_intelligence_section(
+    si_view,
+    si_facts,
+    nabi_score=candidate.get("nabi_score"),
+)
 
 if not research_eligibility.research_allowed:
     render_research_eligibility_block(research_eligibility)

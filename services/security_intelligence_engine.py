@@ -16,6 +16,7 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.security_intelligence_contract import (
+    AUTHORITY_UNKNOWN,
     CHANGE_BALANCE_SHEET_IMPROVING,
     CHANGE_BALANCE_SHEET_WEAKENING,
     CHANGE_DATA_QUALITY_CHANGED,
@@ -32,6 +33,7 @@ from services.security_intelligence_contract import (
     CHANGE_RISK_INCREASING,
     CHANGE_VALUATION_DETERIORATING,
     CHANGE_VALUATION_IMPROVING,
+    CRITICAL_FACT_FIELDS,
     DIM_BALANCE_SHEET,
     DIM_DATA_QUALITY,
     DIM_GROWTH,
@@ -40,6 +42,9 @@ from services.security_intelligence_contract import (
     DIM_QUALITY,
     DIM_RISK,
     DIM_VALUATION,
+    FRESHNESS_STALE,
+    PERIOD_INCOMPATIBLE,
+    PERIOD_MIXED,
     DimensionResult,
     SecurityFacts,
     SecurityIntelligenceSnapshot,
@@ -239,53 +244,55 @@ def _risk(facts: SecurityFacts) -> DimensionResult:
     )
 
 
-_DATA_QUALITY_FIELDS = (
-    "price",
-    "market_cap",
-    "revenue",
-    "free_cash_flow",
-    "gross_margin",
-    "operating_margin",
-    "net_margin",
-    "fcf_margin",
-    "roe",
-    "roa",
-    "roic",
-    "revenue_growth_yoy",
-    "eps_growth_yoy",
-    "pe",
-    "price_to_sales",
-    "price_to_book",
-    "debt_to_equity",
-    "current_ratio",
-    "interest_coverage",
-    "return_3m",
-    "return_1y",
-)
+_DATA_QUALITY_FIELDS = CRITICAL_FACT_FIELDS
 
 
 def _data_quality(facts: SecurityFacts) -> DimensionResult:
-    used = [name for name in _DATA_QUALITY_FIELDS if _present(getattr(facts, name))]
-    missing = [name for name in _DATA_QUALITY_FIELDS if not _present(getattr(facts, name))]
-    completeness = _confidence(len(used), len(_DATA_QUALITY_FIELDS))
+    used = [name for name in _DATA_QUALITY_FIELDS if _present(getattr(facts, name, None))]
+    missing = list(facts.missing_critical_fields) or [
+        name for name in _DATA_QUALITY_FIELDS if not _present(getattr(facts, name, None))
+    ]
+    completeness = (
+        facts.completeness_pct
+        if facts.completeness_pct is not None
+        else _confidence(len(used), len(_DATA_QUALITY_FIELDS))
+    )
     reasons: list[str] = []
-    if facts.stale:
+    if facts.stale or facts.freshness_status == FRESHNESS_STALE:
         reasons.append("STALE_DATA")
+        reasons.append("FRESHNESS_STALE")
+    elif facts.freshness_status:
+        reasons.append(f"FRESHNESS_{facts.freshness_status}")
+    if facts.authority_status and facts.authority_status != AUTHORITY_UNKNOWN:
+        reasons.append(f"AUTHORITY_{facts.authority_status}")
+    if facts.period_compatibility == PERIOD_INCOMPATIBLE:
+        reasons.append("PERIOD_INCOMPATIBLE")
+    elif facts.period_compatibility == PERIOD_MIXED:
+        reasons.append("PERIOD_MIXED")
+    elif facts.period_compatibility:
+        reasons.append(f"PERIOD_{facts.period_compatibility}")
     if not used:
         reasons.append("NO_FACTUAL_INPUTS")
         score = None
     else:
         score = completeness
+        if facts.stale or facts.freshness_status == FRESHNESS_STALE:
+            score = min(score, 50.0)
+        if facts.period_compatibility == PERIOD_INCOMPATIBLE:
+            score = min(score, 40.0)
+        elif facts.period_compatibility == PERIOD_MIXED:
+            score = max(0.0, score - 10.0)
+        score = round(score, 1)
         if completeness < 50:
             reasons.append("LOW_COMPLETENESS")
     return DimensionResult(
         name=DIM_DATA_QUALITY,
         score=score,
         status=status_from_score(score),
-        confidence=completeness,
+        confidence=completeness if completeness is not None else 0.0,
         facts_used=tuple(used),
         missing_facts=tuple(missing),
-        reason_codes=tuple(reasons),
+        reason_codes=tuple(dict.fromkeys(reasons)),
     )
 
 
@@ -386,6 +393,10 @@ def compare_snapshots(
     flags: list[str] = []
 
     def _moved(name: str, up: str, down: str) -> None:
+        before_status = (previous.dimension_statuses or {}).get(name)
+        after_status = (current.dimension_statuses or {}).get(name)
+        if before_status == STATUS_INSUFFICIENT_DATA or after_status == STATUS_INSUFFICIENT_DATA:
+            return
         before = (previous.dimension_scores or {}).get(name)
         after = (current.dimension_scores or {}).get(name)
         if before is None or after is None:
@@ -407,7 +418,31 @@ def compare_snapshots(
         flags.append(CHANGE_PARTICIPATION_CHANGED)
     prev_dq = (previous.dimension_scores or {}).get(DIM_DATA_QUALITY)
     curr_dq = (current.dimension_scores or {}).get(DIM_DATA_QUALITY)
-    if prev_dq is not None and curr_dq is not None and abs(curr_dq - prev_dq) >= _CHANGE_SCORE_DELTA:
+    dq_moved = (
+        prev_dq is not None
+        and curr_dq is not None
+        and abs(curr_dq - prev_dq) >= _CHANGE_SCORE_DELTA
+    )
+    populated = False
+    for name in (
+        DIM_QUALITY,
+        DIM_GROWTH,
+        DIM_PROFITABILITY,
+        DIM_BALANCE_SHEET,
+        DIM_VALUATION,
+        DIM_MOMENTUM,
+        DIM_RISK,
+        DIM_DATA_QUALITY,
+    ):
+        before_status = (previous.dimension_statuses or {}).get(name)
+        after_status = (current.dimension_statuses or {}).get(name)
+        before = (previous.dimension_scores or {}).get(name)
+        after = (current.dimension_scores or {}).get(name)
+        if before is None and after is not None:
+            populated = True
+        if before_status == STATUS_INSUFFICIENT_DATA and after_status != STATUS_INSUFFICIENT_DATA:
+            populated = True
+    if dq_moved or populated:
         flags.append(CHANGE_DATA_QUALITY_CHANGED)
     return tuple(flags)
 
@@ -460,6 +495,7 @@ def evaluate_security_intelligence(
         research_allowed=participation.research_allowed,
         investment_state=state,
         investable=investable,
+        facts_version=facts.facts_version,
     )
     if previous is None:
         return draft
