@@ -34,3 +34,12 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
         run: python scripts/run_daily_scan.py
+
+      - name: Signal ingestion
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+          NABI_ENABLE_SEC_SIGNAL_INGESTION: ${{ vars.ENABLE_SEC_SIGNAL_INGESTION }}
+        run: python scripts/run_signal_ingestion.py --persist-production

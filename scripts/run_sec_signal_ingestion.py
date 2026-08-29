@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Bounded SEC 8-K Signal Intelligence ingest entry point.
 
-Future orchestration hook:
-  existing daily job (scripts/run_daily_scan.py or run_daily_monitor_refresh.py)
-  may call run_sec_signal_ingestion(...) later.
-
-This sprint does not activate a schedule.
+Daily hook: scripts/run_signal_ingestion.py after scripts/run_daily_scan.py.
+Schedule is not activated. Feature flag default OFF.
 """
 
 from __future__ import annotations
@@ -33,8 +30,8 @@ from services.signal_sec_ingest_service import (
 
 
 FUTURE_ORCHESTRATION_HOOK = (
-    "scripts/run_sec_signal_ingestion.py "
-    "via existing daily orchestration (run_daily_scan / run_daily_monitor_refresh). "
+    "scripts/run_signal_ingestion.py after scripts/run_daily_scan.py "
+    "in .github/workflows/daily_scan.yml. Feature flag default OFF. "
     "Schedule is not activated."
 )
 
