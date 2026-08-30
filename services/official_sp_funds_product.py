@@ -525,6 +525,16 @@ class OfficialSpFundsProductProvider:
     def holdings(self, symbol: str) -> Optional[OfficialHoldingsFile]:
         return self._holdings_files.get(_norm_symbol(symbol))
 
+    def fixed_income_risk(self, symbol: str):
+        fund = _norm_symbol(symbol)
+        if fund != "SPSK":
+            return None
+        from services.official_fund_nport_fixed_income_evidence import (
+            load_spsk_nport_fixed_income,
+        )
+
+        return load_spsk_nport_fixed_income()
+
 
 class TefasFundProductProvider:
     """Architecture stub. Same contract, no SP-Funds-only engine."""

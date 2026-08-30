@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Official SEC N-PORT fundInfo excerpt for SPSK. Accession 0002000324-26-003239. No CCC. -->
+<fundInfo xmlns="http://www.sec.gov/edgar/nport">
+  <totAssets>533011694.4</totAssets>
+  <netAssets>530824412.05</netAssets>
+  <curMetrics>
+    <curMetric>
+      <curCd>USD</curCd>
+      <intrstRtRiskdv01 period10Yr="-77996.74" period1Yr="-22274.1" period30Yr="-16701.4" period3Mon="49.23" period5Yr="-120601.58"/>
+      <intrstRtRiskdv100 period10Yr="-7447209.597" period1Yr="-2193909.804" period30Yr="-1518289.142" period3Mon="4850.58208" period5Yr="-11764164.85"/>
+    </curMetric>
+  </curMetrics>
+  <creditSprdRiskInvstGrade period10Yr="-74399.26" period1Yr="-6131.97" period30Yr="-27957.8" period3Mon="0" period5Yr="-95318.17"/>
+  <creditSprdRiskNonInvstGrade period10Yr="-13450.47" period1Yr="-1596.7" period30Yr="0" period3Mon="0" period5Yr="-12982.13"/>
+</fundInfo>

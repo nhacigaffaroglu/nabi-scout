@@ -125,8 +125,8 @@ class IssuerCountryCurrencyFirewallTests(unittest.TestCase):
         file = load_official_holdings_file("SPSK")
         self.assertFalse(official_issuer_field_present(file))
         self.assertTrue(all(official_issuer_value(row) is None for row in file.holdings))
-        view = evaluate_official_fund_intelligence("SPSK")
-        self.assertEqual(view.evidence_map()[DIM_ISSUER_CONCENTRATION], DIM_STATUS_MISSING)
+        csv_only = evaluate_official_fund_intelligence("SPSK", use_official_fixed_income=False)
+        self.assertEqual(csv_only.evidence_map()[DIM_ISSUER_CONCENTRATION], DIM_STATUS_MISSING)
 
     def test_no_issuer_name_guessing(self) -> None:
         parsed = parse_official_holdings_csv(
@@ -141,7 +141,9 @@ class IssuerCountryCurrencyFirewallTests(unittest.TestCase):
         )
         self.assertFalse(official_issuer_field_present(parsed))
         view = evaluate_official_fund_intelligence(
-            "SPSK", lookthrough=build_fund_lookthrough_summary(parsed)
+            "SPSK",
+            lookthrough=build_fund_lookthrough_summary(parsed),
+            use_official_fixed_income=False,
         )
         self.assertEqual(view.evidence_map()[DIM_ISSUER_CONCENTRATION], DIM_STATUS_MISSING)
 

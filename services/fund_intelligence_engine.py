@@ -21,6 +21,7 @@ from services.fund_product_contract import (
     DIM_COST_EVAL,
     DIM_COUNTRY_CONCENTRATION,
     DIM_CREDIT_QUALITY,
+    DIM_CREDIT_RISK,
     DIM_CURRENCY_EXPOSURE,
     DIM_DIVERSIFICATION_EVAL,
     DIM_DURATION,
@@ -30,6 +31,7 @@ from services.fund_product_contract import (
     DIM_PARTICIPATION_MANDATE,
     DIM_PERFORMANCE_EVAL,
     DIM_PORTFOLIO_FIT_EVAL,
+    DIM_RATE_RISK,
     DIM_REAL_ESTATE_CONCENTRATION,
     DIM_RISK_EVAL,
     DIM_STATUS_MISSING,
@@ -42,6 +44,7 @@ from services.fund_product_contract import (
     FUND_EVAL_FACTS_VERSION,
     FundDimensionResult,
     FundFacts,
+    FundFixedIncomeRiskEvidence,
     FundIntelligenceEvaluation,
     FundLookthroughSummary,
     FundParticipationGate,
@@ -250,6 +253,8 @@ def evaluate_official_fund_intelligence(
     official_yield: Optional[OfficialFundYield] = None,
     historical_performance_present: bool = False,
     official_risk_series_present: bool = False,
+    fixed_income: Optional[FundFixedIncomeRiskEvidence] = None,
+    use_official_fixed_income: bool = True,
 ) -> FundIntelligenceEvaluation:
     from services.official_sp_funds_product import default_official_sp_funds_provider
 
@@ -270,6 +275,11 @@ def evaluate_official_fund_intelligence(
             from services.fund_lookthrough_summary import official_issuer_field_present
 
             official_issuer_present = official_issuer_field_present(holdings_file)
+    fi_view = fixed_income
+    if fi_view is None and use_official_fixed_income and hasattr(resolved, "fixed_income_risk"):
+        fi_view = resolved.fixed_income_risk(fund)
+    if fi_view is not None and fi_view.official_issuer_field_present:
+        official_issuer_present = True
     return evaluate_fund_intelligence(
         facts=resolved.facts(fund),
         mandate=resolved.mandate(fund),
@@ -281,6 +291,7 @@ def evaluate_official_fund_intelligence(
         historical_performance_present=historical_performance_present,
         official_risk_series_present=official_risk_series_present,
         official_issuer_present=official_issuer_present,
+        fixed_income=fi_view,
     )
 
 
@@ -302,6 +313,7 @@ def evaluate_fund_intelligence(
     performance: Optional[OfficialFundPerformance] = None,
     official_yield: Optional[OfficialFundYield] = None,
     official_issuer_present: bool = False,
+    fixed_income: Optional[FundFixedIncomeRiskEvidence] = None,
 ) -> FundIntelligenceEvaluation:
     if official_yield is not None and official_yield.sec_yield_30d is not None:
         official_yield_present = True
@@ -407,17 +419,26 @@ def evaluate_fund_intelligence(
         dimensions.append(_na(DIM_YIELD, "NOT_SUKUK"))
         dimensions.append(_na(DIM_CREDIT_QUALITY, "NOT_SUKUK"))
         dimensions.append(_na(DIM_ISSUER_CONCENTRATION, "NOT_SUKUK"))
+        dimensions.append(_na(DIM_RATE_RISK, "NOT_SUKUK"))
+        dimensions.append(_na(DIM_CREDIT_RISK, "NOT_SUKUK"))
         dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
     elif profile == PROFILE_SUKUK_ETF:
         dimensions.append(tracking if tracking.status != DIM_STATUS_MISSING else _na(DIM_TRACKING_EVAL, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
-        dimensions.append(
-            _ready(DIM_DURATION, None, "official_duration")
-            if official_duration_present
-            else _missing(DIM_DURATION, "official_duration")
-        )
+        if official_duration_present:
+            dimensions.append(_ready(DIM_DURATION, None, "official_duration"))
+        else:
+            dimensions.append(_missing(DIM_DURATION, "official_duration"))
+        if fixed_income is not None and fixed_income.rate_risk_present:
+            dimensions.append(_ready(DIM_RATE_RISK, None, "nport_dv01_dv100", "dv01_is_not_duration"))
+        else:
+            dimensions.append(_missing(DIM_RATE_RISK, "official_interest_rate_risk"))
+        if fixed_income is not None and fixed_income.credit_spread_present:
+            dimensions.append(_ready(DIM_CREDIT_RISK, None, "nport_credit_spread", "spread_is_not_rating"))
+        else:
+            dimensions.append(_missing(DIM_CREDIT_RISK, "official_credit_spread"))
         yield_score = None
         if official_yield is not None and official_yield.sec_yield_30d is not None:
             yield_score = scale(official_yield.sec_yield_30d, 1.0, 6.0)
@@ -431,7 +452,21 @@ def evaluate_fund_intelligence(
             if official_credit_present
             else _missing(DIM_CREDIT_QUALITY, "official_credit")
         )
-        if official_issuer_present and _lookthrough_ready(lookthrough) and holdings_reliable(lookthrough):
+        if fixed_income is not None:
+            if fixed_income.issuer_reliable:
+                dimensions.append(
+                    _ready(
+                        DIM_ISSUER_CONCENTRATION,
+                        _concentration_score(
+                            fixed_income.largest_issuer_weight,
+                            fixed_income.top10_issuer_weight,
+                        ),
+                        "nport_issuer_name",
+                    )
+                )
+            else:
+                dimensions.append(_missing(DIM_ISSUER_CONCENTRATION, "nport_issuer_name"))
+        elif official_issuer_present and _lookthrough_ready(lookthrough) and holdings_reliable(lookthrough):
             dimensions.append(
                 _ready(
                     DIM_ISSUER_CONCENTRATION,
@@ -447,6 +482,8 @@ def evaluate_fund_intelligence(
         dimensions.append(_na(DIM_YIELD, "NOT_SUKUK"))
         dimensions.append(_na(DIM_CREDIT_QUALITY, "NOT_SUKUK"))
         dimensions.append(_na(DIM_ISSUER_CONCENTRATION, "NOT_SUKUK"))
+        dimensions.append(_na(DIM_RATE_RISK, "NOT_SUKUK"))
+        dimensions.append(_na(DIM_CREDIT_RISK, "NOT_SUKUK"))
         if official_real_estate_weights:
             dimensions.append(_ready(DIM_REAL_ESTATE_CONCENTRATION, None, "official_re_weights"))
         else:
@@ -529,6 +566,7 @@ def evaluate_fund_intelligence(
     provenance = (
         "official_sp_funds_product",
         "official_fund_holdings" if lookthrough is not None else "product_facts_only",
+        "official_nport_fixed_income" if fixed_income is not None else "nport_fixed_income_absent",
         "purification_metadata_only",
     )
     return FundIntelligenceEvaluation(

@@ -296,6 +296,89 @@ class FundHoldingsIntelligenceEvidence:
 
 
 @dataclass(frozen=True)
+class NportTenorRisk:
+    """SEC N-PORT tenor bucket. Values are official portfolio value changes."""
+
+    period: str
+    value: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class NportDebtHolding:
+    """Official N-PORT security row. name is the SEC issuer field, not a guessed label."""
+
+    issuer_name: str
+    lei: Optional[str]
+    title: str
+    cusip: Optional[str]
+    isin: Optional[str]
+    maturity_date: Optional[str]
+    weight_pct: float
+    value_usd: Optional[float]
+    currency: Optional[str]
+    issuer_category: Optional[str]
+    asset_category: Optional[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class FundFixedIncomeRiskEvidence:
+    """Official fixed-income facts only. DV01 is not duration. Spread is not a rating."""
+
+    fund_symbol: str
+    as_of: Optional[str]
+    period_ended: Optional[str]
+    interest_rate_risk_dv01: tuple[NportTenorRisk, ...]
+    interest_rate_risk_dv100: tuple[NportTenorRisk, ...]
+    credit_spread_risk_ig: tuple[NportTenorRisk, ...]
+    credit_spread_risk_non_ig: tuple[NportTenorRisk, ...]
+    holdings: tuple[NportDebtHolding, ...]
+    holding_count: int
+    dated_weight_pct: float
+    residual_weight_pct: float
+    unknown_maturity_weight_pct: float
+    weighted_average_maturity_years: Optional[float]
+    duration: Optional[float]
+    credit_quality: Optional[str]
+    official_issuer_field: str
+    official_issuer_field_present: bool
+    unknown_issuer_weight_pct: float
+    largest_issuer_weight: Optional[float]
+    top10_issuer_weight: Optional[float]
+    issuer_count: int
+    currency_weights: tuple[tuple[str, float], ...]
+    source: str
+    source_url: str
+    provenance: tuple[str, ...]
+    reliability: str
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @property
+    def rate_risk_present(self) -> bool:
+        return bool(self.interest_rate_risk_dv01 or self.interest_rate_risk_dv100)
+
+    @property
+    def credit_spread_present(self) -> bool:
+        return bool(self.credit_spread_risk_ig or self.credit_spread_risk_non_ig)
+
+    @property
+    def issuer_reliable(self) -> bool:
+        return (
+            self.official_issuer_field_present
+            and self.unknown_issuer_weight_pct <= 10.0
+            and self.largest_issuer_weight is not None
+        )
+
+
+@dataclass(frozen=True)
 class OverlapRow:
     underlying_symbol: str
     direct_weight_pct: float
@@ -370,8 +453,10 @@ DIM_ISSUER_CONCENTRATION = "ISSUER_CONCENTRATION"
 DIM_REAL_ESTATE_CONCENTRATION = "REAL_ESTATE_CONCENTRATION"
 DIM_COUNTRY_CONCENTRATION = "COUNTRY_CONCENTRATION"
 DIM_CURRENCY_EXPOSURE = "CURRENCY_EXPOSURE"
+DIM_RATE_RISK = "RATE_RISK"
+DIM_CREDIT_RISK = "CREDIT_RISK"
 
-FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1e.1"
+FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1f.1"
 FUND_EVAL_FACTS_VERSION = "fund_facts_1d.1"
 PERFORMANCE_BASIS_NAV = "NAV"
 PERFORMANCE_BASIS_MARKET_PRICE = "MARKET_PRICE"
