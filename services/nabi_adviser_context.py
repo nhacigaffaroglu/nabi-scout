@@ -213,6 +213,35 @@ def _apply_8e_security_authority(
     return overlaid
 
 
+def overlay_recommendation_with_8e(
+    rec: Any,
+    decisions: Sequence[PortfolioSecurityDecision],
+) -> Any:
+    """Reuse 8F.1 overlay on a frozen NABIRecommendation. No new decision math."""
+    from dataclasses import replace
+
+    rec_dict = _apply_8e_security_authority(
+        {
+            "action_code": rec.action_code,
+            "primary_action": rec.primary_action,
+            "final_action": rec.action_code,
+            "deployment_symbol": rec.symbol,
+            "why_now": rec.why_now,
+        },
+        rec,
+        _index_security_decisions(decisions),
+    )
+    if rec_dict["action_code"] == rec.action_code:
+        return rec
+    return replace(
+        rec,
+        action_code=rec_dict["action_code"],
+        primary_action=rec_dict["primary_action"],
+        summary=rec_dict["primary_action"],
+        why_now=rec_dict.get("why_now") or rec.why_now,
+    )
+
+
 def _new_money_eight_e_conflicts(
     *,
     allocation: Optional[AllocationPlan],

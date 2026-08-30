@@ -33,6 +33,8 @@ from services.nabi_today_presentation import (
     WEALTH_PAGE,
     NabiTodayExecutive,
     build_nabi_today_executive,
+    today_displayed_security_action,
+    today_security_action,
 )
 from services.nabi_recommendation import present_recommendation_card
 from services.opportunity_center_presentation import FIRSATLAR_PAGE
@@ -89,8 +91,15 @@ def render_nabi_today(today: NabiTodayExecutive) -> None:
             st.caption(card.existing_vs_new)
         st.caption(f"Risk: {card.risk}")
         st.caption(f"Güven: {card.confidence}")
+        st.caption(f"Final action: {today_displayed_security_action(today)}")
+        security = today_security_action(today)
+        if security is not None:
+            st.caption(
+                "Artırım uygun: evet"
+                if security.exposure_increase_allowed
+                else "Artırım uygun: hayır"
+            )
         if today.decision_v3 is not None:
-            st.caption(f"Final action: {today.decision_v3.final_action}")
             st.caption(f"Timing: {today.decision_v3.timing_state}")
             st.caption(
                 "Portfolio fit: "
@@ -235,5 +244,7 @@ def render_nabi_home_executive(client) -> None:
         decision=operating.decision,
         allocation=operating.allocation,
         portfolio_view=base_view,
+        portfolio_security_client=client,
+        user_id=user_id,
     )
     render_nabi_today(today)

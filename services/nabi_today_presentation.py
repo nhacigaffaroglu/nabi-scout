@@ -46,12 +46,21 @@ from services.wealth_command_center_presentation import (
     build_portfolio_commentary,
     build_performance_strip,
 )
+from services.nabi_adviser_context import (
+    overlay_recommendation_with_8e,
+    resolve_adviser_security_decisions,
+)
 from services.nabi_recommendation import (
     NABIRecommendation,
     build_nabi_recommendation,
 )
 from services.nabi_decision_orchestrator import build_nabi_decision_v3
 from services.nabi_decision_contract import NabiDecisionV3
+from services.portfolio_security_decision_contract import (
+    DECISION_INSUFFICIENT_DATA,
+    PortfolioSecurityDecision,
+)
+from services.wealth_contract import normalize_symbol
 from services.nabi_recommendation_history_presentation import present_tracking_status
 from services.wealth_goal_center_presentation import GoalCenterDashboard
 from services.wealth_performance_center_presentation import PerformanceCenterView
@@ -168,6 +177,29 @@ class NabiTodayExecutive:
     recommendation: NABIRecommendation
     decision_v3: Optional[NabiDecisionV3] = None
     tracking_status: str = ""
+    security_decisions: Tuple[PortfolioSecurityDecision, ...] = ()
+
+
+def today_security_action(
+    today: NabiTodayExecutive,
+    symbol: Optional[str] = None,
+) -> Optional[PortfolioSecurityDecision]:
+    """Canonical 8E action displayed by Today. Never a v3/Recommendation action."""
+    needle = normalize_symbol(symbol or getattr(today.recommendation, "symbol", None))
+    if needle:
+        for item in today.security_decisions:
+            if item.symbol == needle:
+                return item
+    if today.security_decisions:
+        return today.security_decisions[0]
+    return None
+
+
+def today_displayed_security_action(today: NabiTodayExecutive) -> str:
+    action = today_security_action(today)
+    if action is not None:
+        return action.decision
+    return DECISION_INSUFFICIENT_DATA
 
 
 def count_qualified_opportunities(candidates: Sequence[Mapping[str, Any]]) -> int:
@@ -355,6 +387,9 @@ def build_nabi_today_executive(
     decision: Optional[PortfolioDecisionView] = None,
     allocation: Optional[AllocationPlan] = None,
     portfolio_view: Any = None,
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
+    portfolio_security_client: Any = None,
+    user_id: Optional[str] = None,
 ) -> NabiTodayExecutive:
     journey = _journey(goal_dashboard)
     full_priority = present_priority_section(presented_actions)
@@ -467,6 +502,30 @@ def build_nabi_today_executive(
         valuation_complete=wealth.valuation_complete,
         recommendation=recommendation,
     )
+    symbols: list[str] = []
+    for value in (
+        recommendation.symbol,
+        decision_v3.deployment_symbol,
+        decision_v3.opportunity_leader,
+    ):
+        if value:
+            symbols.append(str(value))
+    for item in recommendation.comparisons:
+        if item.symbol:
+            symbols.append(item.symbol)
+    for row in candidates:
+        symbol = row.get("symbol") if isinstance(row, Mapping) else None
+        if symbol:
+            symbols.append(str(symbol))
+    if allocation is not None:
+        symbols.extend(item.symbol for item in allocation.recommendations)
+    resolved = resolve_adviser_security_decisions(
+        symbols,
+        provided=security_decisions,
+        client=portfolio_security_client,
+        user_id=user_id,
+    )
+    recommendation = overlay_recommendation_with_8e(recommendation, resolved)
     details = tuple(
         item
         for item in (
@@ -496,4 +555,5 @@ def build_nabi_today_executive(
         recommendation=recommendation,
         decision_v3=decision_v3,
         tracking_status=present_tracking_status(None),
+        security_decisions=resolved,
     )
