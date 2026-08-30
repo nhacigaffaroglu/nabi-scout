@@ -32,6 +32,7 @@ from services.portfolio_security_decision_contract import (
     REASON_PARTICIPATION_NOT_UYGUN,
     REASON_SI_MISSING,
     REASON_SI_STALE,
+    REASON_FUND_INTELLIGENCE_MISSING,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -334,13 +335,14 @@ class FailureMatrixTests(unittest.TestCase):
                 symbol="SPUS",
                 participation_status=PARTICIPATION_STATUS_UYGUN,
                 research_allowed=True,
-                si_state=STATE_ATTRACTIVE,
+                si_state=None,
                 instrument_type=INSTRUMENT_ETF,
                 market="US",
                 economic_exposure_status=HybridPortfolioMode.STRICT.value,
             )
         )
-        self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, etf.blocking_reasons)
+        self.assertIn(REASON_FUND_INTELLIGENCE_MISSING, etf.blocking_reasons)
+        self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, etf.blocking_reasons)
 
     def test_missing_momentum_and_unresolved_ca_do_not_increase(self) -> None:
         facts, history = _compose("TUPRS", with_momentum=False)
