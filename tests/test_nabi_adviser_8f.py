@@ -216,6 +216,25 @@ class EightFNewMoneyConflictTests(unittest.TestCase):
             ACTION_CONSIDER_NEW_POSITION,
         )
 
+    def test_gated_plan_does_not_emit_conflict(self) -> None:
+        eight_e = _psd("CRM", DECISION_WATCH, increase=False, reasons=("SI_WATCH",))
+        context = build_nabi_adviser_context(
+            "100.000 TL nereye koyayım?",
+            candidates=[_candidate("CRM")],
+            portfolio_view=_view([]),
+            policy=_policy(equity=70, etf=30),
+            security_decisions=(eight_e,),
+        )
+        self.assertNotIn(REASON_8E_VS_NEW_MONEY_CONFLICT, context.blockers)
+        self.assertNotIn(REASON_8E_VS_NEW_MONEY_CONFLICT, context.limitations)
+        self.assertNotIn(
+            "CRM",
+            [
+                item.get("symbol")
+                for item in (context.new_money_context.get("recommendations") or [])
+            ],
+        )
+
 
 class EightFLlmBoundaryTests(unittest.TestCase):
     def test_llm_cannot_alter_deterministic_8e_fields(self) -> None:

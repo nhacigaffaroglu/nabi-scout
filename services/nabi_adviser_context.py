@@ -177,6 +177,31 @@ def _collect_adviser_symbols(
     return symbols
 
 
+def _collect_new_money_universe_symbols(
+    parsed: ParsedAdviserQuestion,
+    rec: Any,
+    view: Any,
+    candidates: Sequence[Mapping[str, Any]],
+    portfolio_view: Any,
+) -> list[str]:
+    symbols = _collect_adviser_symbols(parsed, rec, view, None, {})
+    for row in candidates:
+        symbol = row.get("symbol") if isinstance(row, Mapping) else None
+        if symbol:
+            symbols.append(str(symbol))
+    if portfolio_view is not None:
+        for bucket in (
+            getattr(portfolio_view, "priced_positions", ()) or (),
+            getattr(portfolio_view, "unpriced_positions", ()) or (),
+            getattr(portfolio_view, "foreign_currency_positions", ()) or (),
+        ):
+            for item in bucket:
+                symbol = getattr(item, "symbol", None)
+                if symbol:
+                    symbols.append(str(symbol))
+    return symbols
+
+
 def _apply_8e_security_authority(
     rec_dict: dict[str, Any],
     rec: Any,
@@ -1195,6 +1220,14 @@ def build_nabi_adviser_context(
                 enable_hybrid_exposure_allocation,
                 policy=hybrid_policy,
             )
+            gate_decisions = resolve_adviser_security_decisions(
+                _collect_new_money_universe_symbols(
+                    parsed, rec, view, candidates, portfolio_view
+                ),
+                provided=security_decisions,
+                client=portfolio_security_client,
+                user_id=user_id,
+            )
             scenario_plan = allocate_new_money(
                 available_amount=Decimal(str(amount)),
                 amount_currency=str(currency),
@@ -1208,6 +1241,7 @@ def build_nabi_adviser_context(
                 security_master=security_master,
                 identity_service=identity_service,
                 hybrid_policy=resolved_hybrid,
+                security_decisions=gate_decisions,
             )
             new_money = _allocation_dict(scenario_plan)
     else:

@@ -56,6 +56,7 @@ from services.portfolio_intelligence_contract import (
 from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
+from services.portfolio_security_decision_contract import PortfolioSecurityDecision
 from services.wealth_contract import ASSET_CLASS_EQUITY, ASSET_CLASS_ETF, ASSET_CLASS_FUND
 from services.wealth_goal_models import ConversionAssumption
 from services.wealth_price_service import normalize_currency
@@ -88,6 +89,7 @@ REASON_MIX_MAINTENANCE = "MIX_MAINTENANCE"
 REASON_RESIDUAL_CASH = "RESIDUAL_CASH"
 REASON_NO_ELIGIBLE_SECURITY = "NO_ELIGIBLE_SECURITY"
 REASON_RESEARCH_NOT_ALLOWED = "RESEARCH_NOT_ALLOWED"
+REASON_EXPOSURE_INCREASE_NOT_ALLOWED = "EXPOSURE_INCREASE_NOT_ALLOWED"
 LIVE_BLOCKER_INCOMPLETE = "EXPOSURE_CLASSIFICATION_INCOMPLETE"
 
 CANDIDATE_CLASS_ALIASES = {
@@ -238,6 +240,55 @@ def _resolve_participation(
 
 def is_actionable_new_decision(decision: Any) -> bool:
     return _norm_decision(decision) in ACTIONABLE_NEW_DECISIONS
+
+
+def _index_exposure_decisions(
+    decisions: Optional[Sequence[PortfolioSecurityDecision]],
+) -> Optional[Dict[str, PortfolioSecurityDecision]]:
+    if decisions is None:
+        return None
+    return {
+        str(item.symbol or "").strip().upper(): item
+        for item in decisions
+        if str(item.symbol or "").strip()
+    }
+
+
+def _exposure_increase_permitted(
+    symbol: str,
+    by_symbol: Optional[Mapping[str, PortfolioSecurityDecision]],
+) -> bool:
+    """None map = gate off. Missing/false/unavailable = fail closed."""
+    if by_symbol is None:
+        return True
+    item = by_symbol.get(str(symbol or "").strip().upper())
+    if item is None:
+        return False
+    return item.exposure_increase_allowed is True
+
+
+def _skip_exposure_blocked(
+    symbol: str,
+    by_symbol: Optional[Mapping[str, PortfolioSecurityDecision]],
+    skipped: list[AllocationSkip],
+) -> bool:
+    if _exposure_increase_permitted(symbol, by_symbol):
+        return False
+    item = by_symbol.get(str(symbol or "").strip().upper()) if by_symbol else None
+    evidence: list[str] = []
+    if item is not None:
+        if item.decision:
+            evidence.append(item.decision)
+        evidence.extend(item.primary_reasons or item.blocking_reasons or ())
+    suffix = f" {' '.join(evidence)}" if evidence else ""
+    skipped.append(
+        AllocationSkip(
+            symbol,
+            REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
+            "8E bu sembol için exposure artışına izin vermiyor." + suffix,
+        )
+    )
+    return True
 
 
 def _candidate_asset_class(raw: Any) -> str:
@@ -440,10 +491,14 @@ def allocate_new_money(
     identity_service: Optional[Any] = None,
     hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
     enable_hybrid_exposure_allocation: Optional[bool] = None,
+    security_decisions: Optional[Sequence[PortfolioSecurityDecision]] = None,
 ) -> AllocationPlan:
     """Return a proposed plan only. Never writes or fetches.
 
     Hybrid layer selection is resolved once here. Missing flag is OFF.
+    When security_decisions is provided, 8E exposure_increase_allowed is
+    fail-closed for every exposure-increasing allocation. None leaves the
+    gate off so existing allocation-math tests stay deterministic.
     """
     amount = Decimal(str(available_amount))
     currency = normalize_currency(amount_currency)
@@ -451,6 +506,7 @@ def allocate_new_money(
     fee = Decimal(str(commission or 0))
     limitations: list[str] = []
     skipped: list[AllocationSkip] = []
+    exposure_by_symbol = _index_exposure_decisions(security_decisions)
 
     if amount <= 0:
         return AllocationPlan(
@@ -618,6 +674,8 @@ def allocate_new_money(
         symbol = str(row.symbol or "").strip().upper()
         if not symbol or row.is_cash:
             continue
+        if _skip_exposure_blocked(symbol, exposure_by_symbol, skipped):
+            continue
         status = _resolve_participation(
             symbol,
             position=row,
@@ -716,6 +774,8 @@ def allocate_new_money(
     for raw in candidates:
         symbol = str(raw.get("symbol") or "").strip().upper()
         if not symbol or symbol in held:
+            continue
+        if _skip_exposure_blocked(symbol, exposure_by_symbol, skipped):
             continue
         status = _resolve_participation(symbol, candidate=raw)
         if not _participation_is_uygun(status):

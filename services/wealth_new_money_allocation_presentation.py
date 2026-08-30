@@ -20,6 +20,7 @@ from services.wealth_new_money_allocation import (
     REASON_MIX_MAINTENANCE,
     REASON_NOT_ACTIONABLE,
     REASON_OVERWEIGHT_LAYER,
+    REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
     REASON_PARTICIPATION_BLOCKED,
     REASON_STRONG_CANDIDATE,
 )
@@ -61,6 +62,7 @@ SKIP_REASON_LABELS = {
     REASON_NOT_ACTIONABLE: "İşlem yapılabilir karar yok.",
     REASON_INSUFFICIENT_CASH: "Tek lot için nakit yetersiz.",
     REASON_PARTICIPATION_BLOCKED: "Katılım uygun olmadığı için eklenmez.",
+    REASON_EXPOSURE_INCREASE_NOT_ALLOWED: "8E exposure artışına izin vermiyor.",
     REASON_CONCENTRATION_LIMIT: "Tek pozisyon yoğunluk eşiği aşılır.",
     REASON_FX_REQUIRED: "Gerekli kur dönüşümü yok.",
 }

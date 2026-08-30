@@ -220,6 +220,27 @@ def compose_wealth_operating_views(
             from services.security_identity_service import try_identity_service_from_wealth
 
             identity_service = try_identity_service_from_wealth(wealth)
+        from services.nabi_adviser_context import resolve_adviser_security_decisions
+
+        gate_symbols: list[str] = []
+        for bucket in (
+            getattr(portfolio_view, "priced_positions", ()) or (),
+            getattr(portfolio_view, "unpriced_positions", ()) or (),
+            getattr(portfolio_view, "foreign_currency_positions", ()) or (),
+        ):
+            for item in bucket:
+                symbol = getattr(item, "symbol", None)
+                if symbol:
+                    gate_symbols.append(str(symbol))
+        for row in loaded_candidates:
+            symbol = row.get("symbol") if isinstance(row, dict) else None
+            if symbol:
+                gate_symbols.append(str(symbol))
+        gate_decisions = resolve_adviser_security_decisions(
+            gate_symbols,
+            client=getattr(wealth, "client", None),
+            user_id=getattr(wealth, "user_id", None),
+        )
         allocation_plan = allocate_new_money(
             available_amount=plan.starting_monthly,
             amount_currency=plan.currency,
@@ -232,6 +253,7 @@ def compose_wealth_operating_views(
             fund_snapshots=load_persisted_fund_snapshots(wealth, fund_symbols),
             security_master=security_master,
             identity_service=identity_service,
+            security_decisions=gate_decisions,
         )
     snaps = snapshots if snapshots is not None else _load_snapshots(wealth, portfolio_id)
     performance = build_performance_center(
