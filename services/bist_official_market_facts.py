@@ -1,10 +1,11 @@
 """Official Borsa Istanbul market facts for existing SecurityFacts.
 
-Public unauthenticated Borsa files only. No paid DataStore. No invented
-share counts. No issued-capital-as-shares assumption.
+Public unauthenticated Borsa files only. No paid DataStore.
 
-Company-level market cap is not present in the public consolidated files
-audited in BIST-1K. Official THB EOD exposes per-security close price.
+THB EOD exposes per-security close price. Company market cap is derived
+only from official KAP issued/paid capital × THB close using the Borsa
+Pay Piyasası 1.00 TRY nominal quote basis. Raw legal share count is never
+the multiplier.
 """
 
 from __future__ import annotations
@@ -25,6 +26,13 @@ from services.bist_eod_bulletin import (
     official_equity_series,
 )
 from services.bist_symbol_mapping import normalize_bist_symbol
+from services.borsa_quotation_basis import (
+    CALCULATION_BASIS,
+    STATUS_DERIVED,
+    derive_market_cap_from_official_nominal_capital_and_price,
+    quote_equivalent_units_from_structure,
+)
+from services.kap_capital_structure import KapCapitalStructure
 
 
 SOURCE_IDENTITY = "BORSA_ISTANBUL"
@@ -304,7 +312,11 @@ def derive_market_cap_from_official_components(
     shares_source: str,
     share_classification: str,
 ) -> dict[str, object]:
-    """price × shares only after both components are official and explicit."""
+    """Legacy helper: price × explicit official share quantity only.
+
+    Do not pass KAP legal share count here. Quote-equivalent units come from
+    attach_official_nominal_market_cap / the 1.00 TRY Borsa basis.
+    """
     allowed = {CLASS_DIRECT_OFFICIAL, CLASS_DERIVED_FROM_OFFICIAL_COMPONENTS}
     if share_classification not in allowed:
         return {
@@ -405,6 +417,72 @@ def market_facts_from_thb_bulletin(
             notes=("symbol_not_in_official_thb_equity_series",),
         )
     return market_facts_from_thb_quote(quote, as_of=as_of, observed_at=observed_at)
+
+
+def attach_official_nominal_market_cap(
+    facts: BistOfficialMarketFacts,
+    structure: KapCapitalStructure,
+) -> BistOfficialMarketFacts:
+    """Add market cap from official issued capital and official THB close.
+
+    Does not persist. Does not fetch. Does not use legal share count.
+    """
+    if facts.symbol != structure.symbol:
+        raise ValueError(
+            f"bist_market_facts_symbol_mismatch:{facts.symbol}:{structure.symbol}"
+        )
+    derived = derive_market_cap_from_official_nominal_capital_and_price(
+        official_price=facts.price,
+        issued_capital_try=structure.issued_capital,
+        price_source=facts.source_dataset or SOURCE_DATASET_THB,
+        capital_source=structure.source_url or "kap_company_general",
+        price_currency=facts.currency or CURRENCY_TRY,
+    )
+    units = quote_equivalent_units_from_structure(structure)
+    notes = list(facts.notes) + list(structure.notes)
+    if derived["classification"] != STATUS_DERIVED:
+        notes.append("MARKET_CAP_DERIVATION_UNRESOLVED")
+        return BistOfficialMarketFacts(
+            symbol=facts.symbol,
+            price=facts.price,
+            market_cap=None,
+            shares_outstanding=None,
+            currency=facts.currency,
+            market_date=facts.market_date,
+            source=facts.source,
+            source_dataset=facts.source_dataset,
+            source_url=facts.source_url,
+            source_file=facts.source_file,
+            observed_at=facts.observed_at,
+            calculation_basis="",
+            price_classification=facts.price_classification,
+            market_cap_classification=CLASS_NOT_AVAILABLE,
+            share_count_classification=SHARE_COUNT_METHODOLOGY_UNRESOLVED,
+            stale=facts.stale,
+            official_field=facts.official_field,
+            notes=tuple(notes),
+        )
+    notes.append(CALCULATION_BASIS)
+    return BistOfficialMarketFacts(
+        symbol=facts.symbol,
+        price=facts.price,
+        market_cap=derived["market_cap"] if isinstance(derived["market_cap"], float) else None,
+        shares_outstanding=float(units) if units is not None else None,
+        currency=facts.currency,
+        market_date=facts.market_date,
+        source=facts.source,
+        source_dataset=facts.source_dataset,
+        source_url=facts.source_url,
+        source_file=facts.source_file,
+        observed_at=facts.observed_at,
+        calculation_basis=CALCULATION_BASIS,
+        price_classification=facts.price_classification,
+        market_cap_classification=CLASS_DERIVED_FROM_OFFICIAL_COMPONENTS,
+        share_count_classification=CLASS_DERIVED_FROM_OFFICIAL_COMPONENTS,
+        stale=facts.stale,
+        official_field=facts.official_field,
+        notes=tuple(notes),
+    )
 
 
 def share_count_decision(*, market_cap_classification: str, share_count_classification: str) -> str:
