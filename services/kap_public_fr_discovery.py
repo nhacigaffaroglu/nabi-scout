@@ -7,9 +7,10 @@ Does not fetch paid KAP APIs.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from services.kap_financial_contract import PERIOD_FY, PERIOD_Q, PERIOD_YTD
 from services.kap_financial_normalization import normalize_reporting_period
@@ -22,6 +23,18 @@ from services.kap_public_contract import (
     KapFrDiscovery,
     public_bildirim_url,
 )
+
+# Official KAP Detaylı Sorgulama / disclosureBasic period codes.
+PERIOD_CODE_Q = "1"
+PERIOD_CODE_6M = "2"
+PERIOD_CODE_9M = "3"
+PERIOD_CODE_FY = "4"
+PERIOD_CODE_LABELS = {
+    PERIOD_CODE_Q: PERIOD_LABEL_3M,
+    PERIOD_CODE_6M: PERIOD_LABEL_6M,
+    PERIOD_CODE_9M: PERIOD_LABEL_9M,
+    PERIOD_CODE_FY: PERIOD_LABEL_ANNUAL,
+}
 
 
 _WS_RE = re.compile(r"\s+")
@@ -56,6 +69,8 @@ def _json_field(chunk: str, name: str) -> str:
 
 def classify_kap_period_label(label: object) -> str:
     text = _text(label)
+    if text in PERIOD_CODE_LABELS:
+        text = PERIOD_CODE_LABELS[text]
     folded = text.casefold()
     if text in {PERIOD_LABEL_ANNUAL, "Yillik"} or folded in {"annual", "yearly"}:
         return PERIOD_FY
@@ -148,6 +163,70 @@ def _from_checkbox_chunk(
 def _normalize_search_html(html: str) -> str:
     """KAP search pages embed disclosureBasic JSON inside an escaped JS string."""
     return str(html or "").replace('\\"', '"').replace("\\/", "/")
+
+
+def _period_label_from_row(row: dict[str, Any]) -> str:
+    donem = _text(row.get("donem") or row.get("periodLabel"))
+    if donem:
+        return donem
+    code = _text(row.get("period"))
+    return PERIOD_CODE_LABELS.get(code, code)
+
+
+def _symbol_from_row(row: dict[str, Any]) -> str:
+    for key in ("stockCode", "stockCodes", "relatedStocks"):
+        text = _text(row.get(key)).upper()
+        if text and text != "-" and "," not in text:
+            return text
+        if "," in text:
+            return text.split(",")[0].strip()
+    return ""
+
+
+def parse_detailed_search_payload(
+    payload: object,
+    *,
+    observed_at: str = "",
+) -> tuple[KapFrDiscovery, ...]:
+    """Parse official KAP Detaylı Sorgulama JSON (byCriteria). Not paid VYS."""
+    if isinstance(payload, (bytes, bytearray)):
+        payload = payload.decode("utf-8")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if not isinstance(payload, list):
+        return ()
+    observed = observed_at or _today()
+    found: dict[str, KapFrDiscovery] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        title = _text(row.get("title") or row.get("subject"))
+        if title != TITLE_FINANCIAL_REPORT:
+            continue
+        klass = _text(row.get("disclosureClass") or "FR") or "FR"
+        if klass != "FR":
+            continue
+        notification_id = _text(row.get("disclosureIndex") or row.get("notification_id"))
+        if not notification_id:
+            continue
+        period_label = _period_label_from_row(row)
+        year = _text(row.get("year"))
+        found[notification_id] = KapFrDiscovery(
+            symbol=_symbol_from_row(row),
+            notification_id=notification_id,
+            submission_date=_iso_submission(_text(row.get("publishDate"))),
+            year=year,
+            period=classify_kap_period_label(period_label or _text(row.get("period"))),
+            period_label=period_label,
+            title=title,
+            source_url=public_bildirim_url(notification_id),
+            disclosure_class=klass,
+            observed_at=observed,
+        )
+    return tuple(
+        found[key]
+        for key in sorted(found, key=lambda item: found[item].submission_date, reverse=True)
+    )
 
 
 def parse_fr_disclosure_index(html: str, *, observed_at: str = "") -> tuple[KapFrDiscovery, ...]:

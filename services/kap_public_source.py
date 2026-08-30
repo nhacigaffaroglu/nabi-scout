@@ -6,6 +6,7 @@ locally. Does not normalize facts or produce Participation verdicts.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,7 @@ from services.kap_public_contract import (
     KapPublicFinancialDocument,
     KapPublicSourceError,
     public_bildirim_url,
+    public_detailed_search_url,
 )
 from services.kap_public_parser import parse_public_kap_html
 
@@ -49,6 +51,63 @@ def resolve_public_kap_access() -> KapPublicAccessStatus:
             "Paid KAP Veri Yayın Servisi is not used."
         ),
     )
+
+
+def _detailed_cache_name(member_id: str, from_date: str, to_date: str) -> str:
+    safe_member = "".join(ch for ch in str(member_id) if ch.isalnum())
+    safe_from = "".join(ch for ch in str(from_date) if ch.isdigit() or ch == "-")
+    safe_to = "".join(ch for ch in str(to_date) if ch.isdigit() or ch == "-")
+    return f"bycriteria_{safe_member}_{safe_from}_{safe_to}.json"
+
+
+def _post_detailed_search(
+    *,
+    member_id: str,
+    from_date: str,
+    to_date: str,
+    timeout: int,
+) -> str:
+    url = public_detailed_search_url()
+    if not url.startswith(KAP_PUBLIC_HOST + "/tr/api/disclosure/"):
+        raise KapPublicSourceError(LIMITATION_STRUCTURE)
+    body = json.dumps(
+        {
+            "fromDate": from_date,
+            "toDate": to_date,
+            "mkkMemberOidList": [str(member_id)],
+            "subjectList": [],
+        }
+    ).encode("utf-8")
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Referer": f"{KAP_PUBLIC_HOST}/tr/bildirim-sorgu",
+            "Origin": KAP_PUBLIC_HOST,
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status >= 400:
+                raise KapPublicSourceError(f"{LIMITATION_HTTP}:{status}")
+            raw = response.read()
+    except HTTPError as exc:
+        raise KapPublicSourceError(f"{LIMITATION_HTTP}:{exc.code}") from exc
+    except URLError as exc:
+        raise KapPublicSourceError(LIMITATION_NETWORK) from exc
+    except TimeoutError as exc:
+        raise KapPublicSourceError(LIMITATION_NETWORK) from exc
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    json.loads(text)
+    return text
 
 
 def _cache_path(disclosure_id: str, cache_dir: Path) -> Path:
@@ -171,3 +230,47 @@ class KapPublicFinancialSource:
 
         rows = parse_fr_disclosure_index(html)
         return annual_fr_discoveries(rows) if annual_only else rows
+
+    def discover_from_detailed_search(
+        self,
+        payload: object,
+        *,
+        annual_only: bool = True,
+    ):
+        """Parse official KAP Detaylı Sorgulama JSON. Caller-supplied. No live fetch."""
+        from services.kap_public_fr_discovery import (
+            annual_fr_discoveries,
+            parse_detailed_search_payload,
+        )
+
+        rows = parse_detailed_search_payload(payload)
+        return annual_fr_discoveries(rows) if annual_only else rows
+
+    def fetch_detailed_search(
+        self,
+        *,
+        member_id: str,
+        from_date: str,
+        to_date: str,
+        payload: object = None,
+    ):
+        """Historical FR index via official public Detaylı Sorgulama.
+
+        Default is cache/caller JSON only. Live POST requires allow_live.
+        """
+        if payload is not None:
+            return self.discover_from_detailed_search(payload, annual_only=False)
+        cache_path = self.cache_dir / "discovery" / _detailed_cache_name(member_id, from_date, to_date)
+        cached = _read_cache(cache_path)
+        if cached:
+            return self.discover_from_detailed_search(cached, annual_only=False)
+        if not self.allow_live:
+            raise KapPublicSourceError(SOURCE_UNAVAILABLE)
+        fetched = _post_detailed_search(
+            member_id=member_id,
+            from_date=from_date,
+            to_date=to_date,
+            timeout=self.timeout_sec,
+        )
+        _write_cache(cache_path, fetched)
+        return self.discover_from_detailed_search(fetched, annual_only=False)

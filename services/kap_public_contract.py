@@ -14,6 +14,9 @@ KAP_PUBLIC_HOST = "https://kap.org.tr"
 KAP_PUBLIC_BILDIRIM_PATH = "/tr/Bildirim/{disclosure_id}"
 KAP_PUBLIC_FR_SEARCH_PATH = "/tr/bildirim-sorgu-sonuc?disclosureClass=FR&member={member_id}"
 KAP_PUBLIC_EXCEL_EXPORT_PATH = "/tr/api/notification/export/excel/{disclosure_id}"
+# Official public Detaylı Sorgulama backend used by kap.org.tr/tr/bildirim-sorgu.
+# Not the paid Veri Yayın Servisi. No API key.
+KAP_PUBLIC_DETAILED_SEARCH_PATH = "/tr/api/disclosure/members/byCriteria"
 
 SOURCE_PUBLIC_KAP = "PUBLIC_KAP"
 
@@ -40,6 +43,10 @@ def public_bildirim_url(disclosure_id: str) -> str:
 def public_fr_search_url(member_id: str) -> str:
     safe = "".join(ch for ch in str(member_id) if ch.isalnum())
     return f"{KAP_PUBLIC_HOST}{KAP_PUBLIC_FR_SEARCH_PATH.format(member_id=safe)}"
+
+
+def public_detailed_search_url() -> str:
+    return f"{KAP_PUBLIC_HOST}{KAP_PUBLIC_DETAILED_SEARCH_PATH}"
 
 
 TITLE_FINANCIAL_REPORT = "Finansal Rapor"
