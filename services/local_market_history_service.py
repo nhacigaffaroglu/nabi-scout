@@ -55,6 +55,7 @@ class LocalMomentumFacts:
     span_days: Optional[float]
     source: str = SOURCE
     usable: bool = False
+    authority: str = AUTHORITY
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +66,7 @@ class LocalMomentumFacts:
             "span_days": self.span_days,
             "source": self.source,
             "usable": self.usable,
+            "authority": self.authority,
         }
 
 
@@ -120,13 +122,14 @@ def _days(later: datetime, earlier: datetime) -> float:
     return (later - earlier).total_seconds() / 86400.0
 
 
-def _horizon_return(
+def select_horizon_anchor(
     series: Sequence[PriceObservation],
     *,
     target_days: float,
     min_days: float,
     max_days: float,
-) -> Optional[float]:
+) -> Optional[tuple[PriceObservation, PriceObservation]]:
+    """Nearest observation to target_days among those inside [min_days, max_days]."""
     if len(series) < 2:
         return None
     end = series[-1]
@@ -138,8 +141,27 @@ def _horizon_return(
     if not candidates:
         return None
     start = min(candidates, key=lambda item: abs(_days(end.as_of, item.as_of) - target_days))
-    if start.price <= 0:
+    if start.price <= 0 or end.price <= 0:
         return None
+    return start, end
+
+
+def _horizon_return(
+    series: Sequence[PriceObservation],
+    *,
+    target_days: float,
+    min_days: float,
+    max_days: float,
+) -> Optional[float]:
+    pair = select_horizon_anchor(
+        series,
+        target_days=target_days,
+        min_days=min_days,
+        max_days=max_days,
+    )
+    if pair is None:
+        return None
+    start, end = pair
     return (end.price / start.price - 1.0) * 100.0
 
 
@@ -153,7 +175,15 @@ def _median(values: Sequence[float]) -> Optional[float]:
     return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
-def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumFacts:
+def compute_local_momentum(
+    series: Sequence[PriceObservation],
+    *,
+    source: str = SOURCE,
+    authority: str = AUTHORITY,
+    return_normalization: str = "LOCAL_MARK_RETURN",
+    extreme_normalization: str = "LOCAL_WINDOW_EXTREME",
+    require_unique_prices: bool = True,
+) -> LocalMomentumFacts:
     values: dict[str, Optional[float]] = {
         name: None
         for name in (
@@ -167,14 +197,16 @@ def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumF
     provenance: list[FactProvenance] = []
     span = _days(series[-1].as_of, series[0].as_of) if len(series) >= 2 else None
     unique_prices = len({round(item.price, 6) for item in series})
-    if len(series) < 2 or unique_prices < 2:
+    if len(series) < 2 or (require_unique_prices and unique_prices < 2):
         return LocalMomentumFacts(
             values=values,
             provenance=(),
             observations=len(series),
             unique_prices=unique_prices,
             span_days=span,
+            source=source,
             usable=False,
+            authority=authority,
         )
 
     end = series[-1]
@@ -192,13 +224,13 @@ def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumF
             FactProvenance(
                 field=field,
                 value=values[field],
-                source=SOURCE,
+                source=source,
                 source_as_of=end.as_of.isoformat(),
                 unit="percent",
                 period_kind=PERIOD_UNKNOWN,
-                normalization="LOCAL_MARK_RETURN",
+                normalization=return_normalization,
                 confidence="MEDIUM",
-                authority=AUTHORITY,
+                authority=authority,
             )
         )
 
@@ -225,13 +257,13 @@ def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumF
                 FactProvenance(
                     field=field,
                     value=value,
-                    source=SOURCE,
+                    source=source,
                     source_as_of=end.as_of.isoformat(),
                     unit="price" if field != "drawdown" else "percent",
                     period_kind=PERIOD_UNKNOWN,
-                    normalization="LOCAL_WINDOW_EXTREME",
+                    normalization=extreme_normalization,
                     confidence="LOW",
-                    authority=AUTHORITY,
+                    authority=authority,
                 )
             )
         del peak, trough_after_peak
@@ -262,13 +294,13 @@ def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumF
                 FactProvenance(
                     field="volatility",
                     value=values["volatility"],
-                    source=SOURCE,
+                    source=source,
                     source_as_of=end.as_of.isoformat(),
                     unit="percent",
                     period_kind=PERIOD_UNKNOWN,
                     normalization="LOCAL_LOG_RETURN_ANN",
                     confidence="LOW",
-                    authority=AUTHORITY,
+                    authority=authority,
                 )
             )
 
@@ -278,7 +310,9 @@ def compute_local_momentum(series: Sequence[PriceObservation]) -> LocalMomentumF
         observations=len(series),
         unique_prices=unique_prices,
         span_days=span,
+        source=source,
         usable=any(value is not None for value in values.values()),
+        authority=authority,
     )
 
 

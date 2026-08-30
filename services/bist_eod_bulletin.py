@@ -36,6 +36,8 @@ _EN_ALIASES = {
     "VWAP": "vwap",
     "CLOSING SESSION PRICE": "closing_session_price",
     "MARKET": "market",
+    "CORPORATE ACTION": "corporate_action",
+    "REFERENCE PRICE": "reference_price",
 }
 _TR_ALIASES = {
     "TARIH": "trade_date",
@@ -47,6 +49,8 @@ _TR_ALIASES = {
     "A.O.F": "vwap",
     "KAPANIS SEANSI FIYATI": "closing_session_price",
     "YAPISAL BAZDA PIYASA ALT BOLUMU": "market",
+    "OZSERMAYE HALI": "corporate_action",
+    "REFERANS FIYAT": "reference_price",
 }
 
 
@@ -63,6 +67,8 @@ class BistEodQuote:
     previous_close: Optional[float] = None
     volume: Optional[float] = None
     vwap: Optional[float] = None
+    corporate_action: str = ""
+    reference_price: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -392,4 +398,6 @@ def _quote_from_row(
         previous_close=_optional_float(row.get("previous_close")),
         volume=_optional_float(row.get("volume")),
         vwap=_optional_float(row.get("vwap")),
+        corporate_action=str(row.get("corporate_action") or "").strip(),
+        reference_price=_optional_float(row.get("reference_price")),
     )

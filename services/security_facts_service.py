@@ -28,9 +28,11 @@ Participation:
   canonical snapshot / queue only (not built here)
 
 Momentum:
-  local wealth_portfolio_snapshots marks (if sufficient distinct observations)
+  official Borsa THB history when the caller supplies cached/parsed series
+  → local wealth_portfolio_snapshots marks (if sufficient distinct observations)
   → persisted candidate returns
   → unavailable (FMP historical-price-eod/light is plan-restricted)
+  Default build does not download historical THB.
 
 No live FMP calls. No SEC network unless a caller already extracted
 financials or local SecCompanyFactsCache can replay.
@@ -679,18 +681,23 @@ def _ingest_local_momentum(
     values = getattr(payload, "values", None)
     if not isinstance(values, Mapping):
         return
+    source = _text(getattr(payload, "source", "")) or "wealth_portfolio_snapshots"
+    authority = _text(getattr(payload, "authority", "")) or AUTHORITY_CANDIDATE
     as_of = None
-    if getattr(payload, "provenance", None):
-        as_of = payload.provenance[0].source_as_of
+    provenances = getattr(payload, "provenance", None) or ()
+    if provenances:
+        as_of = provenances[0].source_as_of
+    by_field = {item.field: item for item in provenances if getattr(item, "field", None)}
     for field, raw in values.items():
+        item = by_field.get(field)
         slots.set(
             field,
             raw,
-            source="wealth_portfolio_snapshots",
-            authority=AUTHORITY_CANDIDATE,
-            source_as_of=as_of,
+            source=_text(getattr(item, "source", "")) or source,
+            authority=_text(getattr(item, "authority", "")) or authority,
+            source_as_of=_text(getattr(item, "source_as_of", None)) or as_of,
             period_kind=PERIOD_UNKNOWN,
-            normalization="LOCAL_MARK_RETURN",
+            normalization=_text(getattr(item, "normalization", "")) or "LOCAL_MARK_RETURN",
             confidence="MEDIUM",
         )
 
@@ -902,6 +909,8 @@ class SecurityFactsService:
         allow_sec_cache_replay: bool = True,
         client: Any = None,
         local_momentum: Any = None,
+        bist_price_history: Any = None,
+        bist_corporate_actions: Any = None,
     ) -> SecurityFacts:
         return self.build_detailed(
             symbol,
@@ -919,6 +928,8 @@ class SecurityFactsService:
             allow_sec_cache_replay=allow_sec_cache_replay,
             client=client,
             local_momentum=local_momentum,
+            bist_price_history=bist_price_history,
+            bist_corporate_actions=bist_corporate_actions,
         ).facts
 
     def build_detailed(
@@ -939,6 +950,8 @@ class SecurityFactsService:
         allow_sec_cache_replay: bool = True,
         client: Any = None,
         local_momentum: Any = None,
+        bist_price_history: Any = None,
+        bist_corporate_actions: Any = None,
     ) -> SecurityFactsBuildResult:
         ticker = normalize_bist_symbol(symbol) or _text(symbol).upper()
         cand = dict(candidate or {})
@@ -973,6 +986,14 @@ class SecurityFactsService:
             company_intelligence,
             skip_market_fields=skip_unofficial_market,
         )
+        if is_bist and local_momentum is None and bist_price_history is not None:
+            from services.bist_momentum_facts import momentum_from_bist_history
+
+            local_momentum = momentum_from_bist_history(
+                tuple(bist_price_history),
+                symbol=ticker,
+                official_events=tuple(bist_corporate_actions or ()),
+            ).momentum
         _ingest_local_momentum(slots, local_momentum, client=client, symbol=ticker)
 
         kap_payload = _kap_facts_payload(kap_financials) if is_bist else {}
