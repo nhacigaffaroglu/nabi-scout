@@ -311,14 +311,15 @@ class ReadinessAndSafetyTests(unittest.TestCase):
         self.assertEqual(plan.recommendations, ())
         self.assertFalse(any("HYBRID ON" in item for item in plan.limitations))
 
-    def test_tefas_provider_shares_surface_without_implementation(self) -> None:
+    def test_tefas_provider_shares_surface_without_sp_funds_overlap(self) -> None:
         tefas = TefasFundProductProvider()
         self.assertEqual(
             assert_provider_surface(tefas),
             assert_provider_surface(_provider()),
         )
         self.assertFalse(tefas.supports("SPUS"))
-        with self.assertRaises(NotImplementedError):
+        self.assertTrue(tefas.supports("AIS"))
+        with self.assertRaises(ValueError):
             tefas.facts("TVF")
 
     def test_no_production_writes_or_paid_api(self) -> None:

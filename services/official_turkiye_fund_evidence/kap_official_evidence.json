@@ -1,0 +1,106 @@
+{
+  "source": "kap.org.tr",
+  "funds": {
+    "AIS": {
+      "fund_code": "AIS",
+      "kap_slug": "ais-ak-portfoy-para-piyasasi-katilim-fonu",
+      "ozet_url": "https://www.kap.org.tr/tr/fon-bilgileri/ozet/ais-ak-portfoy-para-piyasasi-katilim-fonu",
+      "genel_url": "https://www.kap.org.tr/tr/fon-bilgileri/genel/ais-ak-portfoy-para-piyasasi-katilim-fonu",
+      "ybf_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9b82727b019bb660fbe80032",
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9b82727b019bb660fb5d0028",
+      "ozet_fields": {
+        "Kurucunun Ünvanı": "AK PORTFÖY YÖNETİMİ A.Ş.",
+        "Fonun Süresi": "SÜRESİZ",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Ünvanı": "AK PORTFÖY YÖNETİMİ A.Ş. KATILIM ŞEMSİYE FONU",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Türü": "Katılım"
+      },
+      "ybf": {
+        "official_name": "Ak Portföy Para Piyasası Katılım Fonu",
+        "isin": "TRYAKBK00847",
+        "as_of": "2026-01-13",
+        "status_sentence": "Bu fon, katılım fonu statüsündedir",
+        "currency_sentence": "Fon katılma payı alım satımının yapılacağı para birimi TL’dir.",
+        "strategy": "Fon toplam değerinin tamamı faizsiz/katılım finans ilkelerine uygun şekilde, devamlı olarak vadesine en fazla 184 gün kalmış, likiditesi yüksek, faize dayalı olmayan para ve sermaye piyasası araçlarına yatırılır. Fon portföyünün günlük olarak hesaplanan ağırlıklı ortalama vadesi 45 günü aşamaz.",
+        "benchmark": "BIST-KYD 1 Aylık Kar Payı TL Endeksi",
+        "management_fee_annual_pct": 0.85,
+        "risk_value": "1",
+        "portfolio_manager": "Ak Portföy Yönetimi A.Ş."
+      },
+      "portfolio_report": {
+        "title": "Portföy Dağılım Raporu - 2026 Haziran Aylık Rapor",
+        "period": "2026-06",
+        "disclosure_url": "https://www.kap.org.tr/tr/Bildirim/1625691",
+        "file_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9f0a0859019f3b4b3ccf6c33",
+        "file_name": "AIS_2026.06.pdf"
+      }
+    },
+    "ZPE": {
+      "fund_code": "ZPE",
+      "kap_slug": "zpe-ziraat-portfoy-katilim-hisse-senedi-fonu-hisse-senedi-yogun-fon",
+      "ozet_url": "https://www.kap.org.tr/tr/fon-bilgileri/ozet/zpe-ziraat-portfoy-katilim-hisse-senedi-fonu-hisse-senedi-yogun-fon",
+      "genel_url": "https://www.kap.org.tr/tr/fon-bilgileri/genel/zpe-ziraat-portfoy-katilim-hisse-senedi-fonu-hisse-senedi-yogun-fon",
+      "ybf_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f0a0a58019f47458be60986",
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f0a0a58019f477f884711be",
+      "ozet_fields": {
+        "Kurucunun Ünvanı": "ZİRAAT PORTFÖY YÖNETİMİ A.Ş.",
+        "Fonun Süresi": "SÜRESİZ",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Ünvanı": "Ziraat Portföy Yönetimi A.Ş. Hisse Senedi Şemsiye Fonu",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Türü": "Hisse Senedi Şemsiye Fonu"
+      },
+      "ybf": {
+        "official_name": "Ziraat Portföy Katılım Hisse Senedi Fonu (Hisse Senedi Yoğun Fon)",
+        "isin": "TRYZIPO00055",
+        "as_of": "2026-07-09",
+        "status_sentence": "Bu fon, Portföy yönetiminde katılım prensiplerine uygunluğu esas almış hisse senedi fonu statüsündedir",
+        "currency_sentence": "Fon katılma payı alım satımının yapılacağı para birimi TL’dir.",
+        "strategy": "Fon toplam değerinin en az %80’i devamlı olarak menkul kıymet yatırım ortaklıkları payları hariç olmak üzere, BIST Katılım 100 Endeksine (XK100) dahil yerli ortaklık payları ve BIST Katılım 30 Endeksini (XK030) veya XK100 endeksini takip etmek üzere kurulan borsa yatırım fonları arasından fon portföy yöneticileri tarafından temel ve faktör analizleri kullanılarak risk/getiri değerlendirmeleri sonucunda belirlenenlere yatırılır.",
+        "benchmark": "%90 BIST Katılım 100 Getiri Endeksi (XK100) + %10 BIST-KYD 1 Aylık Kar Payı TL Endeksi",
+        "management_fee_annual_pct": 2.75,
+        "risk_value": "6",
+        "portfolio_manager": "Ziraat Portföy Yönetimi A.Ş."
+      },
+      "portfolio_report": {
+        "title": null,
+        "period": null,
+        "disclosure_url": null,
+        "file_url": null,
+        "file_name": null,
+        "note": "KAP publishes Portföy Dağılım Raporu for this fund type; latest disclosure id was not statically listed."
+      }
+    },
+    "IAT": {
+      "fund_code": "IAT",
+      "kap_slug": "iat-is-portfoy-kira-sertifikalari-katilim-tl-fonu",
+      "ozet_url": "https://www.kap.org.tr/tr/fon-bilgileri/ozet/iat-is-portfoy-kira-sertifikalari-katilim-tl-fonu",
+      "genel_url": "https://www.kap.org.tr/tr/fon-bilgileri/genel/iat-is-portfoy-kira-sertifikalari-katilim-tl-fonu",
+      "ybf_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9c81f416019c9ea78d875404",
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9cc9d32c019d47e757080f9d",
+      "ozet_fields": {
+        "Kurucunun Ünvanı": "İŞ PORTFÖY YÖNETİMİ A.Ş.",
+        "Fonun Süresi": "SÜRESİZDİR.",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Ünvanı": "İş Portföy Yönetimi A.Ş. Katılım Şemsiye Fonu",
+        "Fonun Bağlı Olduğu Şemsiye Fonun Türü": "KATILIM ŞEMSİYE FONU"
+      },
+      "ybf": {
+        "official_name": "İŞ PORTFÖY KİRA SERTİFİKALARI KATILIM (TL) FONU",
+        "isin": "TRYISMD00027",
+        "as_of": "2027-02-27",
+        "status_sentence": "Bu fon, katılım fonu statüsündedir",
+        "currency_sentence": "Fon katılma payı alım satımının yapılacağı para birimi TL’dir.",
+        "strategy": "Fon portföyünün en az %80’i devamlı olarak T.C. Hazine ve Maliye Bakanlığı tarafından ihraç edilen kira sertifikaları ve özel sektör kira sertifikalarına yatırılır. Fon portföyüne sadece TL cinsi varlıklar ve işlemler dahil edilecek olup, yabancı para birimi cinsinden varlık ve altın ile diğer kıymetli madenler ve bunlara dayalı sermaye piyasası araçları dahil edilmeyecektir.",
+        "benchmark": "%50 BİST-KYD Kamu Kira Sertifikaları Endeksi + %45 BIST-KYD Özel Sektör Kira Sertifikaları Endeksi +%5 BIST- KYD 1 Aylık Kar Payı Endeksi TL",
+        "management_fee_annual_pct": 1.75,
+        "risk_value": "1",
+        "portfolio_manager": "İş Portföy Yönetimi A.Ş."
+      },
+      "portfolio_report": {
+        "title": null,
+        "period": null,
+        "disclosure_url": null,
+        "file_url": null,
+        "file_name": null,
+        "note": "KAP publishes Portföy Dağılım Raporu for this fund type; latest disclosure id was not statically listed."
+      }
+    }
+  }
+}

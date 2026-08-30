@@ -1,0 +1,96 @@
+{
+  "source": "tefas.gov.tr",
+  "endpoints": {
+    "snapshot": "/api/funds/fonBilgiGetir",
+    "returns": "/api/funds/fonGetiriBazliBilgiGetir",
+    "prices": "/api/funds/fonFiyatBilgiGetir"
+  },
+  "snapshot": {
+    "AIS": {
+      "fonKodu": "AIS",
+      "fonUnvan": "AK PORTFÖY PARA PİYASASI KATILIM FONU",
+      "sonFiyat": 0.108262,
+      "gunlukGetiri": 0.1452,
+      "payAdet": 137464579910,
+      "portBuyukluk": 14882213853.66,
+      "fonKategori": "Katılım Fonu",
+      "kategoriDerece": 23,
+      "kategoriFonSay": 116,
+      "yatirimciSayi": 21763,
+      "pazarPayi": 3.35
+    },
+    "ZPE": {
+      "fonKodu": "ZPE",
+      "fonUnvan": "ZİRAAT PORTFÖY KATILIM HİSSE SENEDİ FONU (HİSSE SENEDİ YOĞUN FON)",
+      "sonFiyat": 36.063247,
+      "gunlukGetiri": 0.2995,
+      "payAdet": 35978964,
+      "portBuyukluk": 1297518260.26,
+      "fonKategori": "Hisse Senedi Fonu",
+      "kategoriDerece": 51,
+      "kategoriFonSay": 199,
+      "yatirimciSayi": 7211,
+      "pazarPayi": 0.48
+    },
+    "IAT": {
+      "fonKodu": "IAT",
+      "fonUnvan": "İŞ PORTFÖY KİRA SERTİFİKALARI KATILIM (TL) FONU",
+      "sonFiyat": 0.197873,
+      "gunlukGetiri": 0.124,
+      "payAdet": 9420238449,
+      "portBuyukluk": 1864013792.83,
+      "fonKategori": "Katılım Fonu",
+      "kategoriDerece": 61,
+      "kategoriFonSay": 116,
+      "yatirimciSayi": 8933,
+      "pazarPayi": 0.42
+    }
+  },
+  "returns": {
+    "AIS": {
+      "fonKodu": "AIS",
+      "fonUnvan": "AK PORTFÖY PARA PİYASASI KATILIM FONU",
+      "fonTurAciklama": "Katılım Şemsiye Fonu",
+      "tefasDurum": true,
+      "getiri1a": 3.3488,
+      "getiri3a": 9.8504,
+      "getiri6a": 20.9577,
+      "getiri1y": 47.3514,
+      "getiriyb": 28.4582,
+      "getiri3y": 217.3443,
+      "getiri5y": 375.1251,
+      "getiriOrani": null,
+      "riskDegeri": "1"
+    },
+    "ZPE": {
+      "fonKodu": "ZPE",
+      "fonUnvan": "ZİRAAT PORTFÖY KATILIM HİSSE SENEDİ FONU (HİSSE SENEDİ YOĞUN FON)",
+      "fonTurAciklama": "Hisse Senedi Şemsiye Fonu",
+      "tefasDurum": true,
+      "getiri1a": 7.9809,
+      "getiri3a": 11.5131,
+      "getiri6a": 17.991,
+      "getiri1y": 38.0941,
+      "getiriyb": 34.5716,
+      "getiri3y": 127.0293,
+      "getiri5y": 1049.2394,
+      "getiriOrani": null,
+      "riskDegeri": "6"
+    },
+    "IAT": {
+      "fonKodu": "IAT",
+      "fonUnvan": "İŞ PORTFÖY KİRA SERTİFİKALARI KATILIM (TL) FONU",
+      "fonTurAciklama": "Katılım Şemsiye Fonu",
+      "tefasDurum": true,
+      "getiri1a": 2.9446,
+      "getiri3a": 8.138,
+      "getiri6a": 17.2817,
+      "getiri1y": 40.7637,
+      "getiriyb": 23.6505,
+      "getiri3y": 193.1886,
+      "getiri5y": 358.9637,
+      "getiriOrani": null,
+      "riskDegeri": "1"
+    }
+  }
+}

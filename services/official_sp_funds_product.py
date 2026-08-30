@@ -16,6 +16,7 @@ from services.official_fund_performance import (
     select_market_performance,
     select_nav_performance,
 )
+from services.official_tefas_product import TefasFundProductProvider
 from services.fund_product_contract import (
     DIM_CONCENTRATION,
     DIM_COST,
@@ -32,7 +33,6 @@ from services.fund_product_contract import (
     FUND_TYPE_ETF,
     PILOT_FUND_SYMBOLS,
     PROVIDER_SP_FUNDS_OFFICIAL,
-    PROVIDER_TEFAS,
     READINESS_NEEDS_MORE_DATA,
     READINESS_NOT_APPLICABLE,
     READINESS_READY_NOW,
@@ -542,28 +542,6 @@ class OfficialSpFundsProductProvider:
         from services.official_fund_nport_exposure_evidence import load_official_nport_exposure
 
         return load_official_nport_exposure(fund)
-
-
-class TefasFundProductProvider:
-    """Architecture stub. Same contract, no SP-Funds-only engine."""
-
-    provider_id = PROVIDER_TEFAS
-
-    def supports(self, symbol: str) -> bool:
-        _ = symbol
-        return False
-
-    def identity(self, symbol: str) -> FundIdentity:
-        raise NotImplementedError("TEFAS identity is not implemented this sprint")
-
-    def facts(self, symbol: str) -> FundFacts:
-        raise NotImplementedError("TEFAS facts are not implemented this sprint")
-
-    def sharia_evidence(self, symbol: str) -> FundShariaEvidence:
-        raise NotImplementedError("TEFAS sharia evidence is not implemented this sprint")
-
-    def purification_evidence(self, symbol: str) -> FundPurificationEvidence:
-        raise NotImplementedError("TEFAS purification is not implemented this sprint")
 
 
 def assert_provider_surface(provider: FundProductProvider) -> tuple[str, ...]:

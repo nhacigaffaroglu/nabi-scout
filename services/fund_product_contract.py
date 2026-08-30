@@ -740,6 +740,135 @@ class FundIntelligenceEvaluation:
         return payload
 
 
+PILOT_TEFAS_FUND_CODES = ("AIS", "ZPE", "IAT")
+
+IDENTITY_RESOLVED = "RESOLVED"
+IDENTITY_UNRESOLVED = "UNRESOLVED"
+TURKIYE_IDENTITY_STATES = (IDENTITY_RESOLVED, IDENTITY_UNRESOLVED)
+
+PROFILE_SHORT_TERM_PARTICIPATION = "short_term_liquidity_participation"
+PROFILE_PARTICIPATION_EQUITY = "participation_equity"
+PROFILE_SUKUK_LEASE_CERTIFICATE = "sukuk_lease_certificate_participation"
+
+TEFAS_PRICE_FIELD = "fiyat"
+TEFAS_PRICE_SEMANTICS = "TEFAS_UNIT_PRICE"
+TEFAS_ENDPOINT_SNAPSHOT = "/api/funds/fonBilgiGetir"
+TEFAS_ENDPOINT_RETURNS = "/api/funds/fonGetiriBazliBilgiGetir"
+TEFAS_ENDPOINT_PRICES = "/api/funds/fonFiyatBilgiGetir"
+
+PDR_FIELD_ASSET_WEIGHTS = "Aylık Ortalama Portföydeki Menkul Kıymetler Yüzdesi"
+PDR_FIELD_HOLDINGS = "III-FON PORTFÖY DEĞERİ TABLOSU"
+PDR_FIELD_ISSUER = "İHRAÇCI KURUM"
+PDR_FIELD_ISIN = "ISIN KODU"
+PDR_FIELD_MATURITY = "VADE TARİHİ"
+PDR_FIELD_CURRENCY = "DÖVİZ CİNSİ"
+
+
+@dataclass(frozen=True)
+class TurkiyeFundIdentity:
+    fund_code: str
+    official_name: Optional[str]
+    fund_type: Optional[str]
+    currency: Optional[str]
+    founder: Optional[str]
+    portfolio_manager: Optional[str]
+    tefas_source: str
+    tefas_source_url: str
+    kap_source: str
+    kap_source_url: str
+    identity_status: str
+    as_of: Optional[str]
+    isin: Optional[str] = None
+    umbrella_type: Optional[str] = None
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TefasPriceObservation:
+    date: str
+    price: float
+    fund_code: str
+    official_name: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TefasPriceSeries:
+    fund_code: str
+    first_date: Optional[str]
+    last_date: Optional[str]
+    observation_count: int
+    duplicate_dates: tuple[str, ...]
+    missing_dates: tuple[str, ...]
+    weekday_gaps: tuple[str, ...]
+    price_field: str
+    price_semantics: str
+    source: str
+    source_url: str
+    period_months: Optional[int] = None
+    observations: tuple[TefasPriceObservation, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["observations"] = [row.to_dict() if hasattr(row, "to_dict") else row for row in self.observations]
+        return payload
+
+
+@dataclass(frozen=True)
+class KapFundMandateEvidence:
+    fund_code: str
+    official_name: Optional[str]
+    umbrella_name: Optional[str]
+    umbrella_type: Optional[str]
+    founder: Optional[str]
+    portfolio_manager: Optional[str]
+    strategy_text: Optional[str]
+    participation_wording: tuple[str, ...]
+    allowed_asset_classes: tuple[str, ...]
+    currency_restriction: Optional[str]
+    maturity_restriction: Optional[str]
+    minimum_equity_allocation: Optional[str]
+    sukuk_mandate: Optional[str]
+    benchmark: Optional[str]
+    management_fee_annual_pct: Optional[float]
+    official_profile: Optional[str]
+    source: str
+    source_url: str
+    as_of: Optional[str]
+    excerpts: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPortfolioReportAudit:
+    fund_code: str
+    latest_report_title: Optional[str]
+    latest_report_url: Optional[str]
+    period: Optional[str]
+    asset_weights: bool
+    holdings: bool
+    issuer: bool
+    maturity: bool
+    currency: bool
+    country: bool
+    lookthrough: bool
+    exact_fields: tuple[str, ...]
+    source: str
+    source_url: str
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class FundProductProvider(Protocol):
     """Official product provider. TEFAS later implements the same surface."""
 
