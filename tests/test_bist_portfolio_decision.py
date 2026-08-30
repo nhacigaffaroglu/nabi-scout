@@ -427,11 +427,8 @@ class UsParityAndUnsupportedTests(unittest.TestCase):
 
     def test_unsupported_non_equity_unchanged(self) -> None:
         cases = (
-            _us(symbol="SPUS", instrument_type=INSTRUMENT_ETF),
             _ctx(symbol=CASH_SYMBOL, instrument_type=INSTRUMENT_CASH, market="TR"),
             _ctx(symbol="TF_KATILIM", instrument_type=INSTRUMENT_SUKUK, market="TR"),
-            _ctx(symbol="TEFAS1", instrument_type=ASSET_CLASS_FUND.upper(), market="TR"),
-            _ctx(symbol="SPRE", instrument_type=INSTRUMENT_ETF, market="US"),
         )
         for ctx in cases:
             result = evaluate_portfolio_security_decision(ctx)

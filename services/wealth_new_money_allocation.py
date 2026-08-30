@@ -56,7 +56,12 @@ from services.portfolio_intelligence_contract import (
 from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
-from services.portfolio_security_decision_contract import PortfolioSecurityDecision
+from services.portfolio_security_decision_contract import (
+    DECISION_INSUFFICIENT_DATA,
+    REASON_FUND_8E_DECISION_MISSING,
+    REASON_FUND_INTELLIGENCE_MISSING,
+    PortfolioSecurityDecision,
+)
 from services.official_sp_funds_product import resolve_official_fund_mandates
 from services.wealth_contract import ASSET_CLASS_EQUITY, ASSET_CLASS_ETF, ASSET_CLASS_FUND
 from services.wealth_goal_models import ConversionAssumption
@@ -255,11 +260,32 @@ def _index_exposure_decisions(
     }
 
 
+def _fund_decision_blocks_increase(
+    item: Optional[PortfolioSecurityDecision],
+) -> bool:
+    if item is None:
+        return True
+    if item.decision == DECISION_INSUFFICIENT_DATA:
+        return True
+    blocking = item.blocking_reasons or item.reason_codes or ()
+    if REASON_FUND_INTELLIGENCE_MISSING in blocking:
+        return True
+    return item.exposure_increase_allowed is not True
+
+
 def _exposure_increase_permitted(
     symbol: str,
     by_symbol: Optional[Mapping[str, PortfolioSecurityDecision]],
+    *,
+    asset_class: Optional[str] = None,
 ) -> bool:
-    """None map = gate off. Missing/false/unavailable = fail closed."""
+    """EQUITY: None map = gate off. ETF/FUND: missing 8E always fail-closed."""
+    if _is_fund_asset_class(asset_class or ""):
+        if by_symbol is None:
+            return False
+        return not _fund_decision_blocks_increase(
+            by_symbol.get(str(symbol or "").strip().upper())
+        )
     if by_symbol is None:
         return True
     item = by_symbol.get(str(symbol or "").strip().upper())
@@ -272,8 +298,10 @@ def _skip_exposure_blocked(
     symbol: str,
     by_symbol: Optional[Mapping[str, PortfolioSecurityDecision]],
     skipped: list[AllocationSkip],
+    *,
+    asset_class: Optional[str] = None,
 ) -> bool:
-    if _exposure_increase_permitted(symbol, by_symbol):
+    if _exposure_increase_permitted(symbol, by_symbol, asset_class=asset_class):
         return False
     item = by_symbol.get(str(symbol or "").strip().upper()) if by_symbol else None
     evidence: list[str] = []
@@ -281,6 +309,8 @@ def _skip_exposure_blocked(
         if item.decision:
             evidence.append(item.decision)
         evidence.extend(item.primary_reasons or item.blocking_reasons or ())
+    elif _is_fund_asset_class(asset_class or ""):
+        evidence.append(REASON_FUND_8E_DECISION_MISSING)
     suffix = f" {' '.join(evidence)}" if evidence else ""
     skipped.append(
         AllocationSkip(
@@ -526,7 +556,8 @@ def allocate_new_money(
     Hybrid layer selection is resolved once here. Missing flag is OFF.
     When security_decisions is provided, 8E exposure_increase_allowed is
     fail-closed for every exposure-increasing allocation. None leaves the
-    gate off so existing allocation-math tests stay deterministic.
+    EQUITY gate off so existing allocation-math tests stay deterministic.
+    ETF/FUND always require an applicable increase-eligible 8E decision.
     """
     amount = Decimal(str(available_amount))
     currency = normalize_currency(amount_currency)
@@ -709,8 +740,6 @@ def allocate_new_money(
         symbol = str(row.symbol or "").strip().upper()
         if not symbol or row.is_cash:
             continue
-        if _skip_exposure_blocked(symbol, exposure_by_symbol, skipped):
-            continue
         status = _resolve_participation(
             symbol,
             position=row,
@@ -761,6 +790,10 @@ def allocate_new_money(
                 AllocationSkip(symbol, REASON_DATA_INCOMPLETE, "Katman sınıflandırılamadı.")
             )
             continue
+        if _skip_exposure_blocked(
+            symbol, exposure_by_symbol, skipped, asset_class=asset_class
+        ):
+            continue
         price = _valid_price(row.price) if row.price_available else None
         if price is None:
             skipped.append(
@@ -810,8 +843,6 @@ def allocate_new_money(
     for raw in candidates:
         symbol = str(raw.get("symbol") or "").strip().upper()
         if not symbol or symbol in held:
-            continue
-        if _skip_exposure_blocked(symbol, exposure_by_symbol, skipped):
             continue
         status = _resolve_participation(symbol, candidate=raw)
         if not _participation_is_uygun(status):
@@ -866,6 +897,10 @@ def allocate_new_money(
             skipped.append(
                 AllocationSkip(symbol, REASON_DATA_INCOMPLETE, "Yeni fırsat katmanı belirsiz.")
             )
+            continue
+        if _skip_exposure_blocked(
+            symbol, exposure_by_symbol, skipped, asset_class=asset_class
+        ):
             continue
         mapped = False
         for layer in layers:

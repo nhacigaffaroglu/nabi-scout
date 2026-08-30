@@ -36,6 +36,7 @@ from services.portfolio_security_decision_contract import (
     REASON_PARTICIPATION_NOT_UYGUN,
     REASON_POSITIVE_SIGNAL_NOT_AUTHORITY,
     REASON_RESEARCH_NOT_ALLOWED,
+    REASON_FUND_INTELLIGENCE_MISSING,
     REASON_SI_INSUFFICIENT,
     REASON_SI_MISSING,
     REASON_SI_STALE,
@@ -249,7 +250,7 @@ class PortfolioSecurityDecisionMatrixTests(unittest.TestCase):
 
     def test_o_unsupported_etf_lookthrough_bist_equity_supported(self) -> None:
         etf = evaluate_portfolio_security_decision(
-            _healthy(symbol="SPUS", instrument_type=INSTRUMENT_ETF)
+            _healthy(symbol="SPUS", instrument_type=INSTRUMENT_ETF, si_state=None)
         )
         bist = evaluate_portfolio_security_decision(
             _healthy(symbol="BIMAS", market="TR")
@@ -259,7 +260,7 @@ class PortfolioSecurityDecisionMatrixTests(unittest.TestCase):
         )
         self.assertFalse(etf.exposure_increase_allowed)
         self.assertEqual(etf.decision, DECISION_INSUFFICIENT_DATA)
-        self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, etf.blocking_reasons)
+        self.assertIn(REASON_FUND_INTELLIGENCE_MISSING, etf.blocking_reasons)
         self.assertTrue(bist.exposure_increase_allowed)
         self.assertEqual(bist.decision, DECISION_CONSIDER_TOP_UP)
         self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, bist.blocking_reasons)

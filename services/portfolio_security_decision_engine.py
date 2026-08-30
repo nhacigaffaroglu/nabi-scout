@@ -37,12 +37,14 @@ from services.portfolio_security_decision_contract import (
     DECISION_WATCH,
     ENGINE_VERSION,
     INCREASE_DECISIONS,
+    REASON_FUND_INTELLIGENCE_MISSING,
     PortfolioSecurityContext,
     PortfolioSecurityDecision,
     REASON_CONCENTRATION_LIMIT,
     REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_ECONOMIC_EXPOSURE_UNSAFE,
     REASON_ELIGIBLE_TO_INCREASE,
+    REASON_FUND_INTELLIGENCE_MISSING,
     REASON_HOLDING_CONTEXT,
     REASON_LAYER_UNDERWEIGHT_NOT_AUTHORITY,
     REASON_LOOKTHROUGH_NOT_IN_SCOPE,
@@ -82,9 +84,14 @@ from services.wealth_contract import ASSET_CLASS_ETF, ASSET_CLASS_FUND, normaliz
 assert DECISION_CONSIDER_NEW_POSITION == ACTION_CONSIDER_NEW_POSITION
 assert DECISION_CONSIDER_TOP_UP == ACTION_CONSIDER_TOP_UP
 
-_UNSUPPORTED_TYPES = frozenset(
-    {INSTRUMENT_ETF, "FUND", ASSET_CLASS_ETF.upper(), ASSET_CLASS_FUND.upper(), "REIT"}
+_FUND_TYPES = frozenset(
+    {INSTRUMENT_ETF, "FUND", ASSET_CLASS_ETF.upper(), ASSET_CLASS_FUND.upper()}
 )
+_UNSUPPORTED_TYPES = frozenset({"REIT"})
+
+
+def is_fund_instrument(instrument_type: Optional[str] = None) -> bool:
+    return _text(instrument_type).upper() in _FUND_TYPES
 
 
 def _text(value: Optional[str]) -> str:
@@ -123,14 +130,16 @@ def supports_portfolio_decision(
 ) -> bool:
     """US EQUITY stays supported. Canonical BIST EQUITY is supported.
 
-    No symbol allowlist. Other instruments and markets keep existing
-    fail-closed UNSUPPORTED_INSTRUMENT behavior.
+    ETF/FUND is supported by instrument type, not ticker allowlist.
+    Equity path still rejects known ETF tickers when not typed as funds.
     """
     if lookthrough_only:
         return False
     symbol_n = normalize_symbol(symbol)
     instrument = _text(instrument_type).upper()
     market_n = _text(market).upper()
+    if is_fund_instrument(instrument):
+        return True
     if symbol_n in KNOWN_ETF_SYMBOLS:
         return False
     if instrument in _UNSUPPORTED_TYPES:
@@ -142,6 +151,173 @@ def supports_portfolio_decision(
     if market_n and market_n not in US_MARKETS:
         return False
     return True
+
+
+def supports_fund_portfolio_decision(instrument_type: Optional[str] = None) -> bool:
+    return is_fund_instrument(instrument_type)
+
+
+def _map_intelligence_state(
+    ctx: PortfolioSecurityContext,
+    *,
+    si_state: str,
+    reasons: list[str],
+    blocking: list[str],
+    flags: list[str],
+    missing: list[str],
+    participation: Optional[str],
+    workflow: Optional[str],
+):
+    """Shared ATTRACTIVE/WATCH/CAUTION/AVOID mapping for equity SI and Fund Intelligence."""
+    symbol = normalize_symbol(ctx.symbol)
+
+    def blocked(code: str, decision: str, extra: Optional[str] = None):
+        blocking.append(code)
+        reasons.append(code)
+        if extra:
+            reasons.append(extra)
+        return _finish(
+            ctx,
+            symbol=symbol,
+            decision=decision,
+            reasons=reasons,
+            blocking=blocking,
+            flags=flags,
+            missing=missing,
+            participation=participation,
+            si_state=si_state,
+            workflow=workflow,
+        )
+
+    if si_state == STATE_AVOID:
+        return blocked(
+            REASON_SI_AVOID,
+            DECISION_HOLD if ctx.is_holding else DECISION_AVOID,
+        )
+    if si_state == STATE_CAUTION:
+        return blocked(
+            REASON_SI_CAUTION,
+            DECISION_REVIEW if is_fund_instrument(ctx.instrument_type) or ctx.is_holding else DECISION_WATCH,
+        )
+    if si_state in {STATE_WATCH, STATE_NEUTRAL}:
+        if ctx.verified_material_positive:
+            reasons.append(REASON_POSITIVE_SIGNAL_NOT_AUTHORITY)
+        if _layer_underweight(ctx):
+            reasons.append(REASON_LAYER_UNDERWEIGHT_NOT_AUTHORITY)
+        return blocked(
+            REASON_SI_WATCH if si_state == STATE_WATCH else REASON_SI_NOT_ATTRACTIVE,
+            DECISION_WATCH,
+        )
+    if si_state != STATE_ATTRACTIVE:
+        return blocked(REASON_SI_NOT_ATTRACTIVE, DECISION_WATCH)
+    if ctx.verified_material_positive:
+        reasons.append(REASON_POSITIVE_SIGNAL_NOT_AUTHORITY)
+    if _layer_underweight(ctx):
+        reasons.append(REASON_LAYER_UNDERWEIGHT_NOT_AUTHORITY)
+    reasons.append(REASON_ELIGIBLE_TO_INCREASE)
+    if ctx.is_holding:
+        reasons.append(REASON_HOLDING_CONTEXT)
+    decision = (
+        DECISION_CONSIDER_TOP_UP if ctx.is_holding else DECISION_CONSIDER_NEW_POSITION
+    )
+    return _finish(
+        ctx,
+        symbol=symbol,
+        decision=decision,
+        reasons=reasons,
+        blocking=blocking,
+        flags=flags,
+        missing=missing,
+        participation=participation,
+        si_state=si_state,
+        workflow=workflow,
+    )
+
+
+def _evaluate_fund_decision(context: PortfolioSecurityContext) -> PortfolioSecurityDecision:
+    """ETF/FUND path. Missing Fund Intelligence cannot increase exposure."""
+    symbol = normalize_symbol(context.symbol)
+    participation = _text(context.participation_status) or None
+    si_state = _text(context.si_state) or None
+    workflow = _workflow(context)
+    reasons: list[str] = []
+    blocking: list[str] = []
+    flags: list[str] = []
+    missing = list(context.missing_inputs)
+
+    def blocked(code: str, decision: str) -> PortfolioSecurityDecision:
+        blocking.append(code)
+        reasons.append(code)
+        return _finish(
+            context,
+            symbol=symbol,
+            decision=decision,
+            reasons=reasons,
+            blocking=blocking,
+            flags=flags,
+            missing=missing,
+            participation=participation,
+            si_state=si_state,
+            workflow=workflow,
+        )
+
+    if si_state is None:
+        missing.append("fund_intelligence")
+        return blocked(REASON_FUND_INTELLIGENCE_MISSING, DECISION_INSUFFICIENT_DATA)
+    if si_state == STATE_INSUFFICIENT_DATA:
+        return blocked(REASON_SI_INSUFFICIENT, DECISION_INSUFFICIENT_DATA)
+    if participation is None:
+        missing.append("participation_status")
+        return blocked(REASON_PARTICIPATION_MISSING, DECISION_INSUFFICIENT_DATA)
+    if participation != PARTICIPATION_STATUS_UYGUN:
+        if context.is_holding:
+            held = (
+                DECISION_REVIEW
+                if participation == PARTICIPATION_STATUS_KONTROL_ET
+                else DECISION_HOLD
+            )
+            return blocked(REASON_PARTICIPATION_NOT_UYGUN, held)
+        if participation == PARTICIPATION_STATUS_UYGUN_DEGIL:
+            return blocked(REASON_PARTICIPATION_NOT_UYGUN, DECISION_AVOID)
+        return blocked(REASON_PARTICIPATION_NOT_UYGUN, DECISION_REVIEW)
+
+    exposure = _text(context.economic_exposure_status).upper()
+    allowed_exposure = {
+        HybridPortfolioMode.STRICT.value,
+        HybridPortfolioMode.COMPLETE.value,
+        HybridPortfolioMode.BOUNDED.value,
+    }
+    if exposure == HybridPortfolioMode.UNSAFE.value:
+        return blocked(
+            REASON_ECONOMIC_EXPOSURE_UNSAFE,
+            DECISION_REVIEW if context.is_holding else DECISION_INSUFFICIENT_DATA,
+        )
+    if not exposure or exposure == HybridPortfolioMode.UNAVAILABLE.value or exposure not in allowed_exposure:
+        return blocked(
+            REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
+            DECISION_REVIEW if context.is_holding else DECISION_INSUFFICIENT_DATA,
+        )
+
+    concentrated = _concentration_breached(context)
+    if concentrated is None:
+        missing.append("portfolio_weight")
+        return blocked(REASON_PORTFOLIO_CONTEXT_MISSING, DECISION_INSUFFICIENT_DATA)
+    if concentrated:
+        flags.append(REASON_CONCENTRATION_LIMIT)
+        return blocked(
+            REASON_CONCENTRATION_LIMIT,
+            DECISION_REDUCE if context.is_holding else DECISION_WATCH,
+        )
+    return _map_intelligence_state(
+        context,
+        si_state=si_state,
+        reasons=reasons,
+        blocking=blocking,
+        flags=flags,
+        missing=missing,
+        participation=participation,
+        workflow=workflow,
+    )
 
 
 def _scope_block(ctx: PortfolioSecurityContext) -> Optional[str]:
@@ -221,6 +397,8 @@ def evaluate_portfolio_security_decision(
     context: PortfolioSecurityContext,
 ) -> PortfolioSecurityDecision:
     """Evaluate one explicit context. Never loads facade SI or writes."""
+    if is_fund_instrument(context.instrument_type):
+        return _evaluate_fund_decision(context)
     symbol = normalize_symbol(context.symbol)
     participation = _text(context.participation_status) or None
     si_state = _text(context.si_state) or None

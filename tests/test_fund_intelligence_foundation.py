@@ -270,8 +270,8 @@ class ReadinessAndSafetyTests(unittest.TestCase):
         self.assertEqual(fund["decision"], DECISION_INSUFFICIENT_DATA)
         self.assertFalse(fund["exposure_increase_allowed"])
         self.assertIn(REASON_FUND_INTELLIGENCE_MISSING, fund["blocking_reasons"])
-        self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, fund["blocking_reasons"])
-        self.assertFalse(supports_portfolio_decision(instrument_type="ETF", market="US", symbol="SPUS"))
+        self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, fund["blocking_reasons"])
+        self.assertTrue(supports_portfolio_decision(instrument_type="ETF", market="US", symbol="SPUS"))
         equity = evaluate_portfolio_security_decision(
             PortfolioSecurityContext(
                 symbol="AAPL",
@@ -285,8 +285,9 @@ class ReadinessAndSafetyTests(unittest.TestCase):
             )
         )
         self.assertNotEqual(equity.decision, DECISION_INSUFFICIENT_DATA)
-        self.assertFalse(supports_portfolio_decision(symbol="CRM", instrument_type="ETF"))
+        self.assertTrue(supports_portfolio_decision(symbol="CRM", instrument_type="ETF"))
         self.assertTrue(supports_portfolio_decision(symbol="CRM", instrument_type="EQUITY", market="US"))
+        self.assertFalse(supports_portfolio_decision(symbol="SPUS"))
 
     def test_new_money_fail_closed_and_hybrid_off(self) -> None:
         provider = _provider()

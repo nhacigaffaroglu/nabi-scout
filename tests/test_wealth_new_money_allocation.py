@@ -18,6 +18,10 @@ from services.portfolio_intelligence_contract import (
     PositionValuationRow,
 )
 from services.wealth_goal_models import ConversionAssumption
+from services.portfolio_security_decision_contract import (
+    DECISION_CONSIDER_TOP_UP,
+    PortfolioSecurityDecision,
+)
 from services.wealth_new_money_allocation import (
     ACTIONABLE_NEW_DECISIONS,
     REASON_BELOW_MIN_TRADE,
@@ -34,6 +38,21 @@ from services.wealth_new_money_allocation import (
     allocate_new_money,
     is_actionable_new_decision,
 )
+
+
+def _psd(symbol: str, decision: str, *, increase: bool = False) -> PortfolioSecurityDecision:
+    return PortfolioSecurityDecision(
+        symbol=symbol,
+        decision=decision,
+        confidence="MEDIUM",
+        exposure_increase_allowed=increase,
+        participation_status=None,
+        research_allowed=None,
+        security_intelligence_state=None,
+        primary_reasons=(),
+        blocking_reasons=(),
+        reason_codes=(),
+    )
 
 ENGINE = Path("services/wealth_new_money_allocation.py")
 PROVIDER_TOKENS = (
@@ -173,20 +192,32 @@ class EligibilityTests(unittest.TestCase):
         self.assertTrue(is_actionable_new_decision("ADAY"))
 
     def test_izle_excluded(self) -> None:
-        plan = _plan(candidates=[_candidate("WATCH", "İZLE", asset_type="ETF")])
+        plan = _plan(
+            candidates=[_candidate("WATCH", "İZLE", asset_type="ETF")],
+            security_decisions=(_psd("WATCH", DECISION_CONSIDER_TOP_UP, increase=True),),
+        )
         self.assertTrue(any(row.reason_code == REASON_NOT_ACTIONABLE and row.symbol == "WATCH" for row in plan.skipped))
         self.assertNotIn("WATCH", [row.symbol for row in plan.recommendations])
 
     def test_arastir_excluded(self) -> None:
-        plan = _plan(candidates=[_candidate("RESEARCH", "ARAŞTIR", asset_type="ETF")])
+        plan = _plan(
+            candidates=[_candidate("RESEARCH", "ARAŞTIR", asset_type="ETF")],
+            security_decisions=(_psd("RESEARCH", DECISION_CONSIDER_TOP_UP, increase=True),),
+        )
         self.assertTrue(any(row.symbol == "RESEARCH" and row.reason_code == REASON_NOT_ACTIONABLE for row in plan.skipped))
 
     def test_veri_eksik_excluded(self) -> None:
-        plan = _plan(candidates=[_candidate("THIN", "VERİ EKSİK", asset_type="ETF")])
+        plan = _plan(
+            candidates=[_candidate("THIN", "VERİ EKSİK", asset_type="ETF")],
+            security_decisions=(_psd("THIN", DECISION_CONSIDER_TOP_UP, increase=True),),
+        )
         self.assertTrue(any(row.symbol == "THIN" and row.reason_code == REASON_NOT_ACTIONABLE for row in plan.skipped))
 
     def test_null_decision_excluded(self) -> None:
-        plan = _plan(candidates=[_candidate("BLANK", None, asset_type="ETF")])
+        plan = _plan(
+            candidates=[_candidate("BLANK", None, asset_type="ETF")],
+            security_decisions=(_psd("BLANK", DECISION_CONSIDER_TOP_UP, increase=True),),
+        )
         self.assertTrue(any(row.symbol == "BLANK" and row.reason_code == REASON_NOT_ACTIONABLE for row in plan.skipped))
 
     def test_valuation_only_bist_row_not_auto_eligible(self) -> None:
@@ -242,6 +273,7 @@ class HoldingAndLayerTests(unittest.TestCase):
             view=view,
             policy=_policy(equity=40, etf=60),
             candidates=[_candidate("SPUS", "ADAY", asset_type="ETF")],
+            security_decisions=(_psd("SPUS", DECISION_CONSIDER_TOP_UP, increase=True),),
         )
         self.assertEqual([row.symbol for row in plan.recommendations], ["SPUS"])
         self.assertEqual(plan.recommendations[0].layer, "etf")
@@ -417,6 +449,15 @@ class NewMoneyEngineV2Tests(unittest.TestCase):
             policy=_policy(equity=70, etf=30),
             candidates=[],
             amount="100000",
+            security_decisions=(
+                _psd("AAPL", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("MSFT", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("NVDA", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("GOOG", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("AMZN", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("SPUS", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("HLAL", DECISION_CONSIDER_TOP_UP, increase=True),
+            ),
         )
         self.assertTrue(plan.recommendations)
         layers = {row.layer for row in plan.recommendations}
@@ -438,7 +479,16 @@ class NewMoneyEngineV2Tests(unittest.TestCase):
                 _row("HLAL", market_value=1500, weight_pct=15, price=100, asset_class="etf"),
             ]
         )
-        plan = _plan(view=view, policy=_policy(equity=70, etf=30), candidates=[], amount="100000")
+        plan = _plan(
+            view=view,
+            policy=_policy(equity=70, etf=30),
+            candidates=[],
+            amount="100000",
+            security_decisions=(
+                _psd("SPUS", DECISION_CONSIDER_TOP_UP, increase=True),
+                _psd("HLAL", DECISION_CONSIDER_TOP_UP, increase=True),
+            ),
+        )
         self.assertTrue(plan.recommendations)
         self.assertTrue(all(row.layer == "etf" for row in plan.recommendations))
         self.assertGreater(plan.residual_cash, Decimal("0"))
@@ -566,6 +616,7 @@ class EconomicExposureMappingTests(unittest.TestCase):
             candidates=[],
             amount="100000",
             canonical_mappings={"SPUS": (_exposure_slice("equity", 100.0),)},
+            security_decisions=(_psd("SPUS", DECISION_CONSIDER_TOP_UP, increase=True),),
         )
         rec = next(row for row in plan.recommendations if row.symbol == "SPUS")
         self.assertEqual(rec.layer, "equity")
@@ -592,6 +643,7 @@ class EconomicExposureMappingTests(unittest.TestCase):
             policy=_exposure_policy(equity=80, cash=20),
             candidates=[],
             amount="100000",
+            security_decisions=(_psd("HLAL", DECISION_CONSIDER_TOP_UP, increase=True),),
         )
         self.assertTrue(
             any(row.symbol == "HLAL" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped)
@@ -622,6 +674,7 @@ class EconomicExposureMappingTests(unittest.TestCase):
             canonical_mappings={
                 "SPUS": (_exposure_slice("equity", 70.0), _exposure_slice("cash", 30.0)),
             },
+            security_decisions=(_psd("SPUS", DECISION_CONSIDER_TOP_UP, increase=True),),
         )
         rec = next(row for row in plan.recommendations if row.symbol == "SPUS")
         self.assertEqual(rec.layer, "equity")
