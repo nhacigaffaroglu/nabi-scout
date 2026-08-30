@@ -102,6 +102,14 @@ class ScheduledJobInventoryTests(unittest.TestCase):
         self.assertTrue(callable(publish_canonical_security_intelligence))
         self.assertNotIn("cron", PUBLISH.read_text(encoding="utf-8"))
 
+    def test_bist_refresh_cli_exists_without_production_cron(self) -> None:
+        cli = (SCRIPTS / "run_bist_refresh.py").read_text(encoding="utf-8")
+        self.assertIn("run_bist_refresh", cli)
+        self.assertIn("dry_run=True", cli)
+        self.assertIn("persist_si=False", cli)
+        for path in WORKFLOWS.glob("*.yml"):
+            self.assertNotIn("run_bist_refresh.py", path.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

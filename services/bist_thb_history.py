@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Sequence
 
@@ -154,6 +154,38 @@ def mark_known_date(cache: ThbHistoryCache, trading_date: date, status: str) -> 
 
 def date_is_cached(cache: ThbHistoryCache, trading_date: date) -> bool:
     return trading_date.isoformat() in cache.known_dates
+
+
+def last_cached_ok_date(cache: ThbHistoryCache) -> Optional[date]:
+    ok = [
+        date.fromisoformat(key)
+        for key, status in cache.known_dates.items()
+        if status == STATUS_OK
+    ]
+    return max(ok) if ok else None
+
+
+def missing_weekday_dates(
+    cache: ThbHistoryCache,
+    *,
+    as_of: date,
+    lookback_days: int = 14,
+) -> tuple[date, ...]:
+    """Weekdays after the last OK cache date that have no index entry.
+
+    Weekends are excluded. Holidays remain until fetch marks http_404.
+    Does not download.
+    """
+    last = last_cached_ok_date(cache)
+    start = last + timedelta(days=1) if last else as_of - timedelta(days=lookback_days)
+    missing: list[date] = []
+    cursor = start
+    step = timedelta(days=1)
+    while cursor <= as_of:
+        if not is_weekend(cursor) and not date_is_cached(cache, cursor):
+            missing.append(cursor)
+        cursor += step
+    return tuple(missing)
 
 
 def load_cached_bulletin(cache: ThbHistoryCache, trading_date: date) -> Optional[BistThbBulletin]:
