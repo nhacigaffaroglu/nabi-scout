@@ -14,7 +14,7 @@ from services.kap_financial_bridge import (
 )
 from services.kap_financial_contract import (
     ACCOUNT_REVENUE,
-    KAP_FINANCIAL_ENDPOINT_UNKNOWN,
+    KAP_ACCESS_CREDENTIAL_BLOCKED,
     KapFinancialAccessError,
     KapRawFinancialLine,
     NATURE_FLOW,
@@ -71,11 +71,11 @@ def _bundle(symbol: str):
 class KapAccessTests(unittest.TestCase):
     def test_financial_endpoint_unknown_and_fetch_closed(self) -> None:
         status = resolve_kap_financial_access()
-        self.assertEqual(status.status, KAP_FINANCIAL_ENDPOINT_UNKNOWN)
+        self.assertEqual(status.status, KAP_ACCESS_CREDENTIAL_BLOCKED)
         self.assertFalse(status.live_calls_allowed)
         self.assertFalse(status.credentials_configured)
         self.assertIsNone(status.financial_endpoint)
-        self.assertIsNone(status.official_client)
+        self.assertEqual(status.official_client, "KapRestClient")
         self.assertIn("KapDisclosureAdapter", status.existing_adapter)
         with self.assertRaises(KapFinancialAccessError):
             fetch_official_kap_financials("ASELS")

@@ -96,19 +96,27 @@ class KapFinancialAccessError(RuntimeError):
 
 
 def resolve_kap_financial_access() -> KapFinancialAccessStatus:
-    """Inspect existing KAP wiring. Does not call KAP or invent endpoints."""
+    """Inspect KAP wiring. Does not call KAP or invent endpoints."""
+    from services.kap_rest_client import KapRestClient
+    from services.kap_rest_config import load_kap_rest_config
+
     adapter = KapDisclosureAdapter
+    config = load_kap_rest_config()
     return KapFinancialAccessStatus(
-        status=KAP_FINANCIAL_ENDPOINT_UNKNOWN,
+        status=KAP_ACCESS_CREDENTIAL_BLOCKED
+        if not config.available
+        else KAP_ACCESS_UNAVAILABLE,
         existing_adapter=f"{adapter.__name__} available={adapter.available}",
-        official_client=None,
-        credentials_configured=False,
+        official_client=KapRestClient.__name__,
+        credentials_configured=config.available,
         financial_endpoint=None,
         live_calls_allowed=False,
         limitation=(
-            "KapDisclosureAdapter is a disclosure/signal contract only "
-            f"({adapter.limitation}) No official KAP financial-statement "
-            "client, credential, or documented endpoint exists in the repository."
+            "Official KAP access uses documented disclosure services "
+            "(disclosures → disclosureDetail → downloadAttachment). "
+            "No dedicated financial-statements endpoint is documented. "
+            "Live HTTP is unbound; missing base URL/API key fail-closes. "
+            f"Signal adapter remains {adapter.__name__} available={adapter.available}."
         ),
     )
 
