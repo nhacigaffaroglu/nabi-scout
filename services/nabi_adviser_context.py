@@ -75,6 +75,7 @@ from services.portfolio_allocation_intelligence import (
     AllocationDimension,
     build_allocation_intelligence,
 )
+from services.official_sp_funds_product import resolve_official_fund_mandates
 from services.portfolio_economic_exposure import build_economic_exposure
 from services.wealth_goal_planning import planning_conversion
 from services.hybrid_exposure_allocation_policy import (
@@ -103,6 +104,7 @@ from services.wealth_new_money_allocation import (
     AllocationPlan,
     _allocation_buckets_from_exposure,
     allocate_new_money,
+    fund_symbols_for_mandate_resolution,
     REASON_DATA_INCOMPLETE,
     REASON_FX_REQUIRED,
     REASON_NO_ELIGIBLE_SECURITY,
@@ -398,6 +400,9 @@ def _economic_exposure_context(
     exposure = build_economic_exposure(
         portfolio_view,
         fund_snapshots=fund_snapshots,
+        fund_mandates=resolve_official_fund_mandates(
+            fund_symbols_for_mandate_resolution(portfolio_view, candidates=candidates)
+        ),
         assets=assets,
         positions=positions,
         security_master=security_master,

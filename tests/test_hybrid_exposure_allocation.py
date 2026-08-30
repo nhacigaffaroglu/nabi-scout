@@ -191,7 +191,7 @@ def _current_book() -> PortfolioIntelligenceView:
     return _view(
         [
             _row("CRM", market_value=96683.4, weight_pct=96.6834),
-            _row("SPSK", market_value=3316.6, weight_pct=3.3166, asset_class="etf"),
+            _row("HLAL", market_value=3316.6, weight_pct=3.3166, asset_class="etf"),
         ]
     )
 
@@ -200,7 +200,7 @@ def _post_spsk_book() -> PortfolioIntelligenceView:
     return _view(
         [
             _row("CRM", market_value=9974.06, weight_pct=99.7406),
-            _row("SPSK", market_value=25.94, weight_pct=0.2594, asset_class="etf"),
+            _row("HLAL", market_value=25.94, weight_pct=0.2594, asset_class="etf"),
         ]
     )
 
@@ -389,7 +389,7 @@ class LayerContractTests(unittest.TestCase):
         view = _view(
             [
                 _row("CRM", market_value=7650, weight_pct=76.5),
-                _row("SPSK", market_value=100, weight_pct=1.0, asset_class="etf"),
+                _row("HLAL", market_value=100, weight_pct=1.0, asset_class="etf"),
                 _row("SUKUK1", market_value=2250, weight_pct=22.5, asset_class="sukuk"),
             ]
         )
@@ -404,7 +404,7 @@ class FillabilityTests(unittest.TestCase):
         view = _view(
             [
                 _row("CRM", market_value=9000, weight_pct=90),
-                _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                 _row("SUKUK1", market_value=950, weight_pct=9.5, asset_class="sukuk"),
             ]
         )
@@ -412,7 +412,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("CRM", market_value=9950, weight_pct=99.5),
-                    _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                    _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                 ]
             ),
             policy=_ee_policy(equity=70, sukuk=30),
@@ -432,7 +432,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("CRM", market_value=9950, weight_pct=99.5),
-                    _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                    _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                 ]
             ),
             policy=_ee_policy(equity=70, sukuk=30),
@@ -450,7 +450,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("CRM", market_value=9950, weight_pct=99.5),
-                    _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                    _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                 ]
             ),
             policy=_ee_policy(equity=70, sukuk=30),
@@ -464,7 +464,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("CRM", market_value=9000, weight_pct=90),
-                    _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                    _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                     _row("TESTSUK", market_value=950, weight_pct=9.5, asset_class="sukuk"),
                 ]
             ),
@@ -483,7 +483,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("SUKUK1", market_value=9950, weight_pct=99.5, asset_class="sukuk"),
-                    _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                    _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
                 ]
             ),
             policy=_ee_policy(equity=70, sukuk=30),
@@ -500,7 +500,7 @@ class FillabilityTests(unittest.TestCase):
             view=_view(
                 [
                     _row("CRM", market_value=7650, weight_pct=76.5),
-                    _row("SPSK", market_value=100, weight_pct=1.0, asset_class="etf"),
+                    _row("HLAL", market_value=100, weight_pct=1.0, asset_class="etf"),
                     _row("SUKUK1", market_value=2250, weight_pct=22.5, asset_class="sukuk"),
                 ]
             ),
@@ -517,7 +517,7 @@ class FillabilityTests(unittest.TestCase):
                 [
                     _row("AAPL", market_value=6980, weight_pct=69.8),
                     _row("SUKUK1", market_value=2980, weight_pct=29.8, asset_class="sukuk"),
-                    _row("SPSK", market_value=40, weight_pct=0.4, asset_class="etf"),
+                    _row("HLAL", market_value=40, weight_pct=0.4, asset_class="etf"),
                 ]
             ),
             policy=_ee_policy(equity=70, sukuk=30),
@@ -541,7 +541,7 @@ class ParticipationFirewallTests(unittest.TestCase):
         return _view(
             [
                 _row("SUKUK1", market_value=9950, weight_pct=99.5, asset_class="sukuk"),
-                _row("SPSK", market_value=50, weight_pct=0.5, asset_class="etf"),
+                _row("HLAL", market_value=50, weight_pct=0.5, asset_class="etf"),
             ]
         ), [_candidate("CRM", participation_status=participation, research_allowed=research_allowed)]
 
@@ -581,7 +581,7 @@ class ParticipationFirewallTests(unittest.TestCase):
 class InferenceAndInvariantTests(unittest.TestCase):
     def test_20_spsk_remains_unknown(self) -> None:
         instrument = classify_instrument_exposure(
-            _row("SPSK", market_value=331.66, weight_pct=3.3166, asset_class="etf")
+            _row("HLAL", market_value=331.66, weight_pct=3.3166, asset_class="etf")
         )
         buckets = {row.exposure_bucket for row in instrument.economic_exposures}
         self.assertIn("unknown", buckets)
@@ -617,7 +617,7 @@ class InferenceAndInvariantTests(unittest.TestCase):
             [
                 _row("CRM", market_value=4800, weight_pct=48, position_id="p-crm-a", account_id="a"),
                 _row("CRM", market_value=4800, weight_pct=48, position_id="p-crm-b", account_id="b"),
-                _row("SPSK", market_value=400, weight_pct=4, asset_class="etf"),
+                _row("HLAL", market_value=400, weight_pct=4, asset_class="etf"),
             ]
         )
         off = _plan(view=view, hybrid=False)

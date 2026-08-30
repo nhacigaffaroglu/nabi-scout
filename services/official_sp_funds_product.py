@@ -6,7 +6,7 @@ Classification uses official mandate text, never ticker-name shortcuts.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from services.fund_product_contract import (
     DIM_CONCENTRATION,
@@ -507,3 +507,65 @@ class TefasFundProductProvider:
 
 def assert_provider_surface(provider: FundProductProvider) -> tuple[str, ...]:
     return ("supports", "identity", "facts", "sharia_evidence", "purification_evidence")
+
+
+def default_official_sp_funds_provider() -> OfficialSpFundsProductProvider:
+    from services.official_sp_funds_evidence import PRODUCT_HTML, PURIFICATION_HTML
+
+    return OfficialSpFundsProductProvider(
+        product_html=PRODUCT_HTML,
+        purification_html=PURIFICATION_HTML,
+    )
+
+
+def validate_canonical_mandate(mandate: Any) -> Optional[OfficialFundMandate]:
+    """Accept only a validated OfficialFundMandate. Strings and invalid layers fail closed."""
+    if not isinstance(mandate, OfficialFundMandate):
+        return None
+    try:
+        mandate.validate()
+    except ValueError:
+        return None
+    if mandate.primary_layer not in ECONOMIC_LAYERS:
+        return None
+    return mandate
+
+
+def resolve_official_fund_mandates(
+    symbols: Sequence[str],
+    *,
+    explicit: Optional[Mapping[str, Any]] = None,
+    provider: Optional[Any] = None,
+) -> dict[str, OfficialFundMandate]:
+    """Resolve official mandates. Precedence: valid explicit → canonical → omit (unknown).
+
+    Invalid explicit overrides fail closed and do not fall through.
+    Provider/source failure and unsupported symbols are omitted.
+    """
+    resolved_provider = provider
+    if resolved_provider is None:
+        try:
+            resolved_provider = default_official_sp_funds_provider()
+        except Exception:
+            resolved_provider = None
+    out: dict[str, OfficialFundMandate] = {}
+    for raw in symbols:
+        symbol = _norm_symbol(raw)
+        if not symbol:
+            continue
+        if explicit is not None and symbol in explicit:
+            validated = validate_canonical_mandate(explicit[symbol])
+            if validated is not None:
+                out[symbol] = validated
+            continue
+        if resolved_provider is None:
+            continue
+        try:
+            if not resolved_provider.supports(symbol):
+                continue
+            validated = validate_canonical_mandate(resolved_provider.mandate(symbol))
+        except Exception:
+            continue
+        if validated is not None:
+            out[symbol] = validated
+    return out

@@ -57,6 +57,7 @@ from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
 from services.portfolio_security_decision_contract import PortfolioSecurityDecision
+from services.official_sp_funds_product import resolve_official_fund_mandates
 from services.wealth_contract import ASSET_CLASS_EQUITY, ASSET_CLASS_ETF, ASSET_CLASS_FUND
 from services.wealth_goal_models import ConversionAssumption
 from services.wealth_price_service import normalize_currency
@@ -473,6 +474,29 @@ def _held_symbols(view: PortfolioIntelligenceView) -> set[str]:
     }
 
 
+def _is_fund_asset_class(asset_class: str) -> bool:
+    return str(asset_class or "").strip().lower() in {ASSET_CLASS_ETF, ASSET_CLASS_FUND}
+
+
+def fund_symbols_for_mandate_resolution(
+    portfolio_view: PortfolioIntelligenceView,
+    *,
+    candidates: Sequence[Mapping[str, Any]] = (),
+) -> tuple[str, ...]:
+    """ETF/FUND symbols from the book and candidates. No ticker allowlist."""
+    symbols: list[str] = []
+    for row in _existing_positions(portfolio_view):
+        symbol = str(row.symbol or "").strip().upper()
+        if symbol and _is_fund_asset_class(row.asset_class):
+            symbols.append(symbol)
+    for raw in candidates:
+        symbol = str(raw.get("symbol") or "").strip().upper()
+        asset_class = _candidate_asset_class(raw.get("asset_type") or raw.get("asset_class"))
+        if symbol and _is_fund_asset_class(asset_class):
+            symbols.append(symbol)
+    return tuple(dict.fromkeys(symbols))
+
+
 def allocate_new_money(
     *,
     available_amount: Decimal | float | int | str,
@@ -488,6 +512,7 @@ def allocate_new_money(
     allocation: Optional[AllocationIntelligenceView] = None,
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     fund_mandates: Optional[Mapping[str, Any]] = None,
+    fund_mandate_provider: Optional[Any] = None,
     canonical_mappings: Optional[Mapping[str, Any]] = None,
     exposure_overrides: Optional[Mapping[str, Any]] = None,
     security_master: Optional[SecurityMasterService] = None,
@@ -521,6 +546,12 @@ def allocate_new_money(
             skipped=(),
             limitations=("NON_POSITIVE_AMOUNT",),
         )
+
+    fund_mandates = resolve_official_fund_mandates(
+        fund_symbols_for_mandate_resolution(portfolio_view, candidates=candidates),
+        explicit=fund_mandates,
+        provider=fund_mandate_provider,
+    )
 
     exposure_view: Optional[PortfolioEconomicExposureView] = None
     if allocation is not None:

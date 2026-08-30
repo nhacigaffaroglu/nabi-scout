@@ -256,7 +256,7 @@ class ConfigAndStateMachineTests(unittest.TestCase):
 
     def test_unsafe_does_not_fall_back_to_strict(self) -> None:
         plan = _plan(
-            view=_view([_row("CRM", market_value=9000, weight_pct=90), _row("SPSK", market_value=1000, weight_pct=10, asset_class="etf")]),
+            view=_view([_row("CRM", market_value=9000, weight_pct=90), _row("HLAL", market_value=1000, weight_pct=10, asset_class="etf")]),
             hybrid=True,
         )
         self.assertEqual(plan.hybrid_portfolio_mode, "UNSAFE")

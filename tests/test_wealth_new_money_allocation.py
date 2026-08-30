@@ -588,15 +588,15 @@ class EconomicExposureMappingTests(unittest.TestCase):
 
     def test_d_etf_without_evidence_is_not_guessed(self) -> None:
         plan = _plan(
-            view=_view([_row("SPUS", market_value=10000, weight_pct=100, asset_class="etf")]),
+            view=_view([_row("HLAL", market_value=10000, weight_pct=100, asset_class="etf")]),
             policy=_exposure_policy(equity=80, cash=20),
             candidates=[],
             amount="100000",
         )
         self.assertTrue(
-            any(row.symbol == "SPUS" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped)
+            any(row.symbol == "HLAL" and row.reason_code == REASON_DATA_INCOMPLETE for row in plan.skipped)
         )
-        self.assertNotIn("SPUS", [row.symbol for row in plan.recommendations])
+        self.assertNotIn("HLAL", [row.symbol for row in plan.recommendations])
 
     def test_e_multi_exposure_is_not_collapsed(self) -> None:
         from services.portfolio_economic_exposure import classify_instrument_exposure

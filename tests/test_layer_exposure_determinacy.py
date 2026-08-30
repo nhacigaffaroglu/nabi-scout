@@ -373,7 +373,7 @@ class IntegrationTests(unittest.TestCase):
             amount_currency="TRY",
             portfolio_view=_view(
                 [
-                    _row("SPUS", market_value=5633, weight_pct=85, asset_class="etf"),
+                    _row("HLAL", market_value=5633, weight_pct=85, asset_class="etf"),
                     _row("AAPL", market_value=1000, weight_pct=15, participation="Uygun Değil"),
                 ]
             ),
@@ -465,7 +465,7 @@ class IntegrationTests(unittest.TestCase):
 
         context = build_nabi_adviser_context(
             "100.000 TL ek param var",
-            portfolio_view=_view([_row("SPUS", market_value=1000, weight_pct=100, asset_class="etf")]),
+            portfolio_view=_view([_row("HLAL", market_value=1000, weight_pct=100, asset_class="etf")]),
             policy=_ee_policy(),
             fund_snapshots=_spus_snapshot(),
             security_master=_sm_aapl(),
@@ -491,7 +491,7 @@ class IntegrationTests(unittest.TestCase):
             available_amount=Decimal("100000"),
             amount_currency="TRY",
             portfolio_view=_view(
-                [_row("SPUS", market_value=5633, weight_pct=100, asset_class="etf")]
+                [_row("HLAL", market_value=5633, weight_pct=100, asset_class="etf")]
             ),
             policy=_ee_policy(),
             conversion=_fx(),
