@@ -247,7 +247,7 @@ class PortfolioSecurityDecisionMatrixTests(unittest.TestCase):
         self.assertIn(REASON_YENI_NOT_ACTIVE_RESEARCH, result.blocking_reasons)
         self.assertNotIn(result.decision, INCREASE_DECISIONS)
 
-    def test_o_unsupported_etf_bist_lookthrough_fail_closed(self) -> None:
+    def test_o_unsupported_etf_lookthrough_bist_equity_supported(self) -> None:
         etf = evaluate_portfolio_security_decision(
             _healthy(symbol="SPUS", instrument_type=INSTRUMENT_ETF)
         )
@@ -257,14 +257,15 @@ class PortfolioSecurityDecisionMatrixTests(unittest.TestCase):
         lookthrough = evaluate_portfolio_security_decision(
             _healthy(lookthrough_only=True)
         )
-        for result, code in (
-            (etf, REASON_UNSUPPORTED_INSTRUMENT),
-            (bist, REASON_UNSUPPORTED_INSTRUMENT),
-            (lookthrough, REASON_LOOKTHROUGH_NOT_IN_SCOPE),
-        ):
-            self.assertFalse(result.exposure_increase_allowed)
-            self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(code, result.blocking_reasons)
+        self.assertFalse(etf.exposure_increase_allowed)
+        self.assertEqual(etf.decision, DECISION_INSUFFICIENT_DATA)
+        self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, etf.blocking_reasons)
+        self.assertTrue(bist.exposure_increase_allowed)
+        self.assertEqual(bist.decision, DECISION_CONSIDER_TOP_UP)
+        self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, bist.blocking_reasons)
+        self.assertFalse(lookthrough.exposure_increase_allowed)
+        self.assertEqual(lookthrough.decision, DECISION_INSUFFICIENT_DATA)
+        self.assertIn(REASON_LOOKTHROUGH_NOT_IN_SCOPE, lookthrough.blocking_reasons)
 
     def test_p_underweight_alone_does_not_create_increase(self) -> None:
         result = evaluate_portfolio_security_decision(

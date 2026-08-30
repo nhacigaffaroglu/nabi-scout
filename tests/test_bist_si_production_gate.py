@@ -41,6 +41,7 @@ from services.participation_intelligence_contract import (
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_SI_MISSING,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -351,7 +352,8 @@ class IsolationTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_SI_MISSING, result.blocking_reasons)
         self.assertNotIn("8e_enabled", DECISION.read_text(encoding="utf-8"))
         facts, _ = _compose("BIMAS")
         audit = audit_bist_si_readiness(facts)

@@ -35,6 +35,7 @@ from services.participation_intelligence_contract import PARTICIPATION_STATUS_UY
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -289,8 +290,10 @@ class IsolationAndSafetyTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
-        self.assertIn("BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, result.blocking_reasons)
+        self.assertIn("supports_portfolio_decision", ENGINE.read_text(encoding="utf-8"))
+        self.assertNotIn("if symbol in BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
         self.assertIn("TEST-ONLY", FIXTURE_DISCLAIMER)
         self.assertIn("ifrs-full_CurrentTradeReceivables", compact_public_html(current_receivables="1"))
         self.assertNotIn("ifrs-full_CurrentTradeReceivables", fy_public_html())

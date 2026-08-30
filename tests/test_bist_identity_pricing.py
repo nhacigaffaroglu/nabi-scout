@@ -10,13 +10,16 @@ from services.bist_symbol_mapping import (
     normalize_bist_symbol,
 )
 from services.candidate_price_service import CandidatePriceService
-from services.hybrid_exposure_allocation_policy import resolve_hybrid_allocation_policy
+from services.hybrid_exposure_allocation_policy import (
+    HybridPortfolioMode,
+    resolve_hybrid_allocation_policy,
+)
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
 from services.portfolio_security_decision_contract import (
-    DECISION_INSUFFICIENT_DATA,
+    DECISION_CONSIDER_TOP_UP,
     PortfolioSecurityContext,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
@@ -269,20 +272,26 @@ class SecurityFactsIdentityBridgeTests(unittest.TestCase):
         self.assertIsNone(facts.market_cap)
 
 
-class EightEStillUnsupportedTests(unittest.TestCase):
-    def test_pilot_symbols_remain_scope_blocked(self) -> None:
+class EightEBistEquitySupportedTests(unittest.TestCase):
+    def test_pilot_symbols_are_no_longer_scope_blocked(self) -> None:
         for symbol in PILOT:
             with self.subTest(symbol=symbol):
                 result = evaluate_portfolio_security_decision(
-                    _healthy_8e(symbol=symbol, market="TR", instrument_type=INSTRUMENT_EQUITY)
+                    _healthy_8e(
+                        symbol=symbol,
+                        market="TR",
+                        instrument_type=INSTRUMENT_EQUITY,
+                        economic_exposure_status=HybridPortfolioMode.STRICT.value,
+                    )
                 )
-                self.assertFalse(result.exposure_increase_allowed)
-                self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-                self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+                self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+                self.assertEqual(result.decision, DECISION_CONSIDER_TOP_UP)
+                self.assertTrue(result.exposure_increase_allowed)
 
-    def test_scope_block_source_unchanged(self) -> None:
+    def test_scope_uses_generic_equity_predicate(self) -> None:
         source = DECISION_ENGINE.read_text(encoding="utf-8")
-        self.assertIn("BIST_PORTFOLIO_SYMBOLS", source)
+        self.assertIn("supports_portfolio_decision", source)
+        self.assertNotIn("if symbol in BIST_PORTFOLIO_SYMBOLS", source)
         self.assertIn("REASON_UNSUPPORTED_INSTRUMENT", source)
         self.assertEqual(BIST_PORTFOLIO_SYMBOLS, frozenset(PILOT))
 

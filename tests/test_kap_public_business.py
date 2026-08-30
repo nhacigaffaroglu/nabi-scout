@@ -42,6 +42,7 @@ from services.participation_intelligence_contract import PARTICIPATION_STATUS_UY
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -346,8 +347,10 @@ class BridgeShadowAndSafetyTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
-        self.assertIn("BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, result.blocking_reasons)
+        self.assertIn("supports_portfolio_decision", ENGINE.read_text(encoding="utf-8"))
+        self.assertNotIn("if symbol in BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
         self.assertNotIn("NABI_TEST.BIZ", PARSER.read_text(encoding="utf-8"))
         self.assertNotIn("NABI_TEST.BIZ", SOURCE.read_text(encoding="utf-8"))
 

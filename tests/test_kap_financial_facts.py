@@ -36,8 +36,9 @@ from services.portfolio_intelligence_enrichment_contract import (
     CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT,
 )
 from services.portfolio_security_decision_contract import (
-    DECISION_INSUFFICIENT_DATA,
+    DECISION_REVIEW,
     PortfolioSecurityContext,
+    REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -292,9 +293,12 @@ class DownstreamAndRegressionTests(unittest.TestCase):
                     market="TR",
                 )
             )
-            self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
-        self.assertIn("BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
+            self.assertEqual(result.decision, DECISION_REVIEW)
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, result.blocking_reasons)
+            self.assertFalse(result.exposure_increase_allowed)
+        self.assertIn("supports_portfolio_decision", ENGINE.read_text(encoding="utf-8"))
+        self.assertNotIn("if symbol in BIST_PORTFOLIO_SYMBOLS", ENGINE.read_text(encoding="utf-8"))
 
     def test_pilot_identity_remains_bist_listing(self) -> None:
         master = SecurityMasterService()

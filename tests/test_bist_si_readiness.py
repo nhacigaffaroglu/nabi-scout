@@ -21,6 +21,7 @@ from services.participation_intelligence_contract import PARTICIPATION_STATUS_UY
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_SI_MISSING,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -126,7 +127,8 @@ class DownstreamSafetyTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_SI_MISSING, result.blocking_reasons)
         self.assertNotIn("8e_enabled", ENGINE.read_text(encoding="utf-8"))
 
     def test_us_symbols_do_not_use_kap_readiness(self) -> None:

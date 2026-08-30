@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from services.bist_symbol_mapping import BIST_PORTFOLIO_SYMBOLS, US_MARKETS
+from services.bist_symbol_mapping import BIST_EXCHANGES, US_MARKETS
 from services.hybrid_exposure_allocation_policy import HybridPortfolioMode
 from services.nabi_decision_contract import (
     ACTION_CONSIDER_NEW_POSITION,
@@ -110,19 +110,51 @@ def _concentration_breached(ctx: PortfolioSecurityContext) -> Optional[bool]:
     return ctx.portfolio_weight >= ceiling
 
 
+def _is_bist_portfolio_market(market: str) -> bool:
+    return bool(market) and (market in TR_MARKETS or market in BIST_EXCHANGES)
+
+
+def supports_portfolio_decision(
+    *,
+    instrument_type: Optional[str] = None,
+    market: Optional[str] = None,
+    symbol: Optional[str] = None,
+    lookthrough_only: bool = False,
+) -> bool:
+    """US EQUITY stays supported. Canonical BIST EQUITY is supported.
+
+    No symbol allowlist. Other instruments and markets keep existing
+    fail-closed UNSUPPORTED_INSTRUMENT behavior.
+    """
+    if lookthrough_only:
+        return False
+    symbol_n = normalize_symbol(symbol)
+    instrument = _text(instrument_type).upper()
+    market_n = _text(market).upper()
+    if symbol_n in KNOWN_ETF_SYMBOLS:
+        return False
+    if instrument in _UNSUPPORTED_TYPES:
+        return False
+    if instrument and instrument != INSTRUMENT_EQUITY:
+        return False
+    if _is_bist_portfolio_market(market_n):
+        return instrument == INSTRUMENT_EQUITY
+    if market_n and market_n not in US_MARKETS:
+        return False
+    return True
+
+
 def _scope_block(ctx: PortfolioSecurityContext) -> Optional[str]:
     if ctx.lookthrough_only:
         return REASON_LOOKTHROUGH_NOT_IN_SCOPE
-    symbol = normalize_symbol(ctx.symbol)
-    instrument = _text(ctx.instrument_type).upper()
-    market = _text(ctx.market).upper()
-    if symbol in BIST_PORTFOLIO_SYMBOLS or symbol in KNOWN_ETF_SYMBOLS:
-        return REASON_UNSUPPORTED_INSTRUMENT
-    if market and (market in TR_MARKETS or market not in US_MARKETS):
-        return REASON_UNSUPPORTED_INSTRUMENT
-    if instrument and (instrument in _UNSUPPORTED_TYPES or instrument != INSTRUMENT_EQUITY):
-        return REASON_UNSUPPORTED_INSTRUMENT
-    return None
+    if supports_portfolio_decision(
+        instrument_type=ctx.instrument_type,
+        market=ctx.market,
+        symbol=ctx.symbol,
+        lookthrough_only=ctx.lookthrough_only,
+    ):
+        return None
+    return REASON_UNSUPPORTED_INSTRUMENT
 
 
 def _workflow(ctx: PortfolioSecurityContext) -> Optional[str]:

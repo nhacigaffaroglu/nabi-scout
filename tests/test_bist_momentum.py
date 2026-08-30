@@ -31,6 +31,7 @@ from services.participation_intelligence_contract import PARTICIPATION_STATUS_UY
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_SI_MISSING,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -299,7 +300,8 @@ class SecurityFactsAndIsolationTests(unittest.TestCase):
                 )
             )
             self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+            self.assertIn(REASON_SI_MISSING, result.blocking_reasons)
         view = evaluate_security_intelligence(
             SecurityFactsService().build(
                 "BIMAS",

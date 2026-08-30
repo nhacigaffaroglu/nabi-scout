@@ -47,6 +47,7 @@ from services.participation_intelligence_contract import (
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
+    REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_UNSUPPORTED_INSTRUMENT,
 )
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
@@ -216,5 +217,6 @@ class MappingAndResolverTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.decision, DECISION_INSUFFICIENT_DATA)
-        self.assertIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+        self.assertNotIn(REASON_UNSUPPORTED_INSTRUMENT, result.blocking_reasons)
+        self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, result.blocking_reasons)
         self.assertNotIn("8e_enabled", ENGINE.read_text(encoding="utf-8"))
