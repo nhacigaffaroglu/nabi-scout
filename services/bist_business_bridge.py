@@ -29,7 +29,7 @@ from services.security_master_contract import RESOLUTION_RESOLVED, SOURCE_BIST
 from services.security_master_service import SecurityMasterService
 
 
-FINAL_PARTICIPATION_DISABLED = "FINAL_PARTICIPATION_DISABLED_NO_LIVE_OFFICIAL_EVIDENCE"
+FINAL_PARTICIPATION_DISABLED = "FINAL_PARTICIPATION_DISABLED"
 
 
 class BistBusinessIdentityError(ValueError):
