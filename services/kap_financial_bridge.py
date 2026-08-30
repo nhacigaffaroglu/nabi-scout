@@ -74,7 +74,11 @@ def build_kap_normalized_bundle(
     )
 
 
-def kap_security_facts_payload(bundle: KapNormalizedBundle) -> dict[str, Any]:
+def kap_security_facts_payload(
+    bundle: KapNormalizedBundle,
+    *,
+    annual_history: Any = None,
+) -> dict[str, Any]:
     """FY-only payload for SecurityFacts. YTD/Q stay on the KAP bundle."""
     payload: dict[str, Any] = {
         "symbol": bundle.symbol,
@@ -84,7 +88,9 @@ def kap_security_facts_payload(bundle: KapNormalizedBundle) -> dict[str, Any]:
         "source": "kap_normalized",
     }
     for fact in fy_facts_only(bundle.mapped):
-        payload[fact.field] = fact.normalized_value
+        current = payload.get(fact.field)
+        if current is None or (current == 0 and fact.normalized_value != 0):
+            payload[fact.field] = fact.normalized_value
         payload["currency"] = payload["currency"] or fact.currency
         payload["financial_period_end"] = payload["financial_period_end"] or fact.period_end
     for derived in bundle.derived:
@@ -92,6 +98,10 @@ def kap_security_facts_payload(bundle: KapNormalizedBundle) -> dict[str, Any]:
             continue
         if derived.field not in payload:
             payload[derived.field] = derived.value
+    if annual_history is not None:
+        from services.kap_annual_history import safe_growth_fields
+
+        payload.update(safe_growth_fields(annual_history))
     return payload
 
 

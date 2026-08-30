@@ -108,6 +108,8 @@ KAP_FIELD_MAP = {
     "roe": "roe",
     "debt_to_equity": "debt_to_equity",
     "current_ratio": "current_ratio",
+    "revenue_growth_yoy": "revenue_growth_yoy",
+    "revenue_cagr_3y": "revenue_cagr_3y",
 }
 
 SEC_FIELD_MAP = {

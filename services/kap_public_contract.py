@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 KAP_PUBLIC_HOST = "https://kap.org.tr"
 KAP_PUBLIC_BILDIRIM_PATH = "/tr/Bildirim/{disclosure_id}"
+KAP_PUBLIC_FR_SEARCH_PATH = "/tr/bildirim-sorgu-sonuc?disclosureClass=FR&member={member_id}"
 KAP_PUBLIC_EXCEL_EXPORT_PATH = "/tr/api/notification/export/excel/{disclosure_id}"
 
 SOURCE_PUBLIC_KAP = "PUBLIC_KAP"
@@ -34,6 +35,60 @@ LIMITATION_US_SYMBOL = "PUBLIC_KAP_US_SYMBOL_BLOCKED"
 
 def public_bildirim_url(disclosure_id: str) -> str:
     return f"{KAP_PUBLIC_HOST}{KAP_PUBLIC_BILDIRIM_PATH.format(disclosure_id=disclosure_id)}"
+
+
+def public_fr_search_url(member_id: str) -> str:
+    safe = "".join(ch for ch in str(member_id) if ch.isalnum())
+    return f"{KAP_PUBLIC_HOST}{KAP_PUBLIC_FR_SEARCH_PATH.format(member_id=safe)}"
+
+
+TITLE_FINANCIAL_REPORT = "Finansal Rapor"
+
+PERIOD_LABEL_ANNUAL = "Yıllık"
+PERIOD_LABEL_3M = "3 Aylık"
+PERIOD_LABEL_6M = "6 Aylık"
+PERIOD_LABEL_9M = "9 Aylık"
+
+COLUMN_CURRENT = "CURRENT"
+COLUMN_COMPARATIVE = "COMPARATIVE"
+
+REFRESH_KEY_KNOWN_NOTIFICATION = "notification_id"
+DEDUP_KEY_FIELDS = (
+    "symbol",
+    "fiscal_year",
+    "reporting_basis",
+    "notification_id",
+)
+
+
+@dataclass(frozen=True)
+class KapFrDiscovery:
+    """One public KAP financial-report notification. Not ingested facts."""
+
+    symbol: str
+    notification_id: str
+    submission_date: str
+    year: str
+    period: str
+    period_label: str
+    title: str
+    source_url: str
+    disclosure_class: str = "FR"
+    observed_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "notification_id": self.notification_id,
+            "submission_date": self.submission_date,
+            "year": self.year,
+            "period": self.period,
+            "period_label": self.period_label,
+            "title": self.title,
+            "source_url": self.source_url,
+            "disclosure_class": self.disclosure_class,
+            "observed_at": self.observed_at,
+        }
 
 
 @dataclass(frozen=True)

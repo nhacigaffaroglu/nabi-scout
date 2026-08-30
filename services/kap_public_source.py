@@ -118,6 +118,7 @@ class KapPublicFinancialSource:
         *,
         symbol: str,
         html: Optional[str] = None,
+        include_comparative: bool = False,
     ) -> KapPublicFinancialDocument:
         if html is not None:
             return parse_public_kap_html(
@@ -126,6 +127,7 @@ class KapPublicFinancialSource:
                 disclosure_id=disclosure_id,
                 source_url=public_bildirim_url(disclosure_id),
                 cached=False,
+                include_comparative=include_comparative,
             )
         cache_path = _cache_path(disclosure_id, self.cache_dir)
         cached = _read_cache(cache_path)
@@ -136,6 +138,7 @@ class KapPublicFinancialSource:
                 disclosure_id=disclosure_id,
                 source_url=public_bildirim_url(disclosure_id),
                 cached=True,
+                include_comparative=include_comparative,
             )
         if not self.allow_live:
             raise KapPublicSourceError(SOURCE_UNAVAILABLE)
@@ -152,4 +155,19 @@ class KapPublicFinancialSource:
             disclosure_id=disclosure_id,
             source_url=url,
             cached=False,
+            include_comparative=include_comparative,
         )
+
+    def discover_from_search_html(
+        self,
+        html: str,
+        *,
+        annual_only: bool = True,
+    ):
+        from services.kap_public_fr_discovery import (
+            annual_fr_discoveries,
+            parse_fr_disclosure_index,
+        )
+
+        rows = parse_fr_disclosure_index(html)
+        return annual_fr_discoveries(rows) if annual_only else rows

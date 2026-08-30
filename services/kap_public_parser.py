@@ -163,6 +163,15 @@ def _published_at(html: str) -> Optional[str]:
         dates = _iso_dates(match.group(1))
         if dates:
             return dates[0]
+    json_date = re.search(
+        r'"publishDate"\\*"\s*:\s*\\*"(\d{4})[.\-](\d{2})[.\-](\d{2})',
+        html,
+    )
+    if json_date:
+        return f"{json_date.group(1)}-{json_date.group(2)}-{json_date.group(3)}"
+    dotted = re.search(r'"publishDate"\\*"\s*:\s*\\*"(\d{2})\.(\d{2})\.(\d{4})', html)
+    if dotted:
+        return f"{dotted.group(3)}-{dotted.group(2)}-{dotted.group(1)}"
     return None
 
 
@@ -175,8 +184,9 @@ def _year_period_meta(html: str) -> tuple[Optional[str], Optional[str]]:
 
 
 class _StackedKapHtmlParser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, include_comparative: bool = False) -> None:
         super().__init__(convert_charrefs=True)
+        self.include_comparative = include_comparative
         self.concepts: list[str] = []
         self.facts: list[KapPublicTaxonomyRow] = []
         self._stack: list[dict[str, object]] = []
@@ -231,7 +241,8 @@ class _StackedKapHtmlParser(HTMLParser):
                 for index, header in enumerate(self._headers):
                     if index >= len(values):
                         break
-                    if not _is_current(header):
+                    current_period = _is_current(header)
+                    if not current_period and not self.include_comparative:
                         continue
                     value = values[index]
                     if value is None:
@@ -242,18 +253,22 @@ class _StackedKapHtmlParser(HTMLParser):
                     period_kind = _period_kind(header, dates)
                     if period_kind == PERIOD_UNKNOWN:
                         continue
+                    if current_period:
+                        identity = "QUARTER" if _is_quarter_header(header) else "CURRENT"
+                    else:
+                        identity = "COMPARATIVE"
                     self.facts.append(
                         KapPublicTaxonomyRow(
                             concept=concept,
                             raw_label=str(frame["label"] or ""),
                             values=(value,),
-                            current_period=True,
+                            current_period=current_period,
                             period_kind=period_kind,
                             period_start=start,
                             period_end=end,
                             fact_nature=nature,
                             statement_type=statement,
-                            period_identity="QUARTER" if _is_quarter_header(header) else "CURRENT",
+                            period_identity=identity,
                         )
                     )
             self._cell_kind = ""
@@ -291,12 +306,13 @@ def parse_public_kap_html(
     disclosure_id: str,
     source_url: str = "",
     cached: bool = False,
+    include_comparative: bool = False,
 ) -> KapPublicFinancialDocument:
     """Parse a public KAP Bildirim HTML document into taxonomy rows."""
     if not html or not _text(html):
         raise ValueError(LIMITATION_STRUCTURE)
     currency, unit_label, consolidation = _presentation(html)
-    parser = _StackedKapHtmlParser()
+    parser = _StackedKapHtmlParser(include_comparative=include_comparative)
     parser.feed(html)
     if not parser.concepts:
         raise ValueError(LIMITATION_TAXONOMY)
