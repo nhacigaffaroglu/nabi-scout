@@ -9,9 +9,9 @@ from services.fund_intelligence_engine import (
     evaluate_official_fund_intelligence,
 )
 from services.fund_product_contract import (
-    PILOT_TEFAS_FUND_CODES,
     READINESS_NEEDS_MORE_DATA,
     READINESS_READY_NOW,
+    TURKISH_FI_PROFILES,
     FundIntelligenceEvaluation,
     OfficialFundMandate,
 )
@@ -35,7 +35,12 @@ from services.portfolio_security_decision_engine import (
 from services.security_master_contract import INSTRUMENT_ETF
 
 REASON_FUND_PARTICIPATION_NOT_ACCEPTABLE = "FUND_PARTICIPATION_NOT_ACCEPTABLE"
-REASON_TURKIYE_FUND_8E_NOT_STARTED = "TURKIYE_FUND_8E_NOT_STARTED"
+TURKIYE_FUND_8E_INSTRUMENT = "FUND"
+TURKIYE_FUND_8E_MARKET = "TR"
+
+
+def _is_turkish_fund_view(view: FundIntelligenceEvaluation) -> bool:
+    return view.fund_type_profile in TURKISH_FI_PROFILES
 
 
 def fund_intelligence_to_context(
@@ -46,7 +51,7 @@ def fund_intelligence_to_context(
     economic_exposure_available: bool = False,
     layer_current_weight: Optional[float] = None,
     layer_target_weight: Optional[float] = None,
-    market: str = "US",
+    market: Optional[str] = None,
     adverse_participation: bool = False,
 ) -> PortfolioSecurityContext:
     """Map Fund Intelligence onto the generic 8E intelligence boundary."""
@@ -62,6 +67,7 @@ def fund_intelligence_to_context(
         if economic_exposure_available
         else HybridPortfolioMode.UNAVAILABLE.value
     )
+    turkish = _is_turkish_fund_view(view)
     return PortfolioSecurityContext(
         symbol=view.symbol,
         participation_status=participation,
@@ -76,8 +82,8 @@ def fund_intelligence_to_context(
         layer_current_weight=layer_current_weight,
         layer_target_weight=layer_target_weight,
         economic_exposure_status=exposure,
-        instrument_type=INSTRUMENT_ETF,
-        market=market,
+        instrument_type=TURKIYE_FUND_8E_INSTRUMENT if turkish else INSTRUMENT_ETF,
+        market=market or (TURKIYE_FUND_8E_MARKET if turkish else "US"),
     )
 
 
@@ -89,14 +95,9 @@ def evaluate_fund_portfolio_decision(
     economic_exposure_available: bool = False,
     layer_current_weight: Optional[float] = None,
     layer_target_weight: Optional[float] = None,
-    market: str = "US",
+    market: Optional[str] = None,
     adverse_participation: bool = False,
 ) -> PortfolioSecurityDecision:
-    if str(view.symbol or "").strip().upper() in PILOT_TEFAS_FUND_CODES:
-        return _turkiye_fund_eight_e_block(
-            str(view.symbol),
-            economic_exposure_available=economic_exposure_available,
-        )
     return evaluate_portfolio_security_decision(
         fund_intelligence_to_context(
             view,
@@ -121,13 +122,8 @@ def evaluate_official_fund_decision(
 ) -> PortfolioSecurityDecision:
     """In-process official evidence only. No holdings fetch. Fail closed."""
     fund = str(symbol or "").strip().upper()
-    if fund in PILOT_TEFAS_FUND_CODES:
-        return _turkiye_fund_eight_e_block(
-            fund,
-            economic_exposure_available=economic_exposure_available,
-        )
     try:
-        resolved = provider or default_official_sp_funds_provider()
+        resolved = provider or _default_official_fund_provider(fund)
         if not resolved.supports(fund):
             return _blocked_fund_decision(
                 fund,
@@ -151,30 +147,13 @@ def evaluate_official_fund_decision(
         )
 
 
-def _turkiye_fund_eight_e_block(
-    symbol: str,
-    *,
-    economic_exposure_available: bool,
-) -> PortfolioSecurityDecision:
-    blocked = _blocked_fund_decision(
-        symbol,
-        fund_intelligence_ready=False,
-        participation_acceptable=False,
-        economic_exposure_available=economic_exposure_available,
-    )
-    reasons = (REASON_TURKIYE_FUND_8E_NOT_STARTED,) + blocked.blocking_reasons
-    return PortfolioSecurityDecision(
-        symbol=blocked.symbol,
-        decision=blocked.decision,
-        confidence=blocked.confidence,
-        exposure_increase_allowed=False,
-        participation_status=None,
-        research_allowed=None,
-        security_intelligence_state=None,
-        primary_reasons=reasons[:3],
-        blocking_reasons=reasons,
-        reason_codes=reasons,
-    )
+def _default_official_fund_provider(symbol: str):
+    from services.official_tefas_product import default_tefas_fund_provider
+
+    tefas = default_tefas_fund_provider()
+    if tefas.supports(symbol):
+        return tefas
+    return default_official_sp_funds_provider()
 
 
 def _blocked_fund_decision(

@@ -4,10 +4,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from services.fund_decision_readiness import (
-    REASON_TURKIYE_FUND_8E_NOT_STARTED,
-    evaluate_official_fund_decision,
-)
+from services.fund_decision_readiness import evaluate_official_fund_decision
 from services.fund_intelligence_engine import evaluate_official_fund_intelligence
 from services.fund_product_contract import (
     AUTHORITY_SPK,
@@ -46,7 +43,10 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
-from services.portfolio_security_decision_contract import DECISION_INSUFFICIENT_DATA
+from services.portfolio_security_decision_contract import (
+    DECISION_INSUFFICIENT_DATA,
+    REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
+)
 from services.wealth_new_money_allocation import allocate_new_money
 
 PARTICIPATION = Path("services/official_turkiye_fund_participation.py")
@@ -322,10 +322,11 @@ class IsolationTests(unittest.TestCase):
             decision = evaluate_official_fund_decision(code)
             self.assertEqual(decision.decision, DECISION_INSUFFICIENT_DATA)
             self.assertFalse(decision.exposure_increase_allowed)
-            self.assertIn(REASON_TURKIYE_FUND_8E_NOT_STARTED, decision.blocking_reasons)
+            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, decision.blocking_reasons)
+            self.assertNotIn("TURKIYE_FUND_8E_NOT_STARTED", decision.reason_codes)
             forced = evaluate_official_fund_decision(code, provider=provider)
             self.assertEqual(forced.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_TURKIYE_FUND_8E_NOT_STARTED, forced.blocking_reasons)
+            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, forced.blocking_reasons)
         self.assertNotIn("evaluate_official_fund_decision", TEFAS.read_text(encoding="utf-8"))
         self.assertNotIn("allocate_new_money", TEFAS.read_text(encoding="utf-8"))
         self.assertNotIn("AIS", NEW_MONEY.read_text(encoding="utf-8"))
