@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Optional, Sequence
 
+from services.official_fund_holdings_client import OfficialHoldingsFile
 from services.official_fund_nport import parse_official_nport_xml
 from services.official_fund_performance import (
     parse_official_performance_html,
@@ -462,10 +463,12 @@ class OfficialSpFundsProductProvider:
         product_html: dict[str, str],
         purification_html: str = "",
         nport_xml: Optional[Mapping[str, str]] = None,
+        holdings_files: Optional[Mapping[str, OfficialHoldingsFile]] = None,
     ) -> None:
         self._product_html = {key.upper(): value for key, value in product_html.items()}
         self._purification = parse_purification_html(purification_html) if purification_html else {}
         self._nport_xml = {key.upper(): value for key, value in (nport_xml or {}).items()}
+        self._holdings_files = {key.upper(): value for key, value in (holdings_files or {}).items()}
 
     def supports(self, symbol: str) -> bool:
         return _norm_symbol(symbol) in PILOT_FUND_SYMBOLS
@@ -519,6 +522,9 @@ class OfficialSpFundsProductProvider:
             return None
         return parse_official_nport_xml(xml_text, symbol=fund)
 
+    def holdings(self, symbol: str) -> Optional[OfficialHoldingsFile]:
+        return self._holdings_files.get(_norm_symbol(symbol))
+
 
 class TefasFundProductProvider:
     """Architecture stub. Same contract, no SP-Funds-only engine."""
@@ -547,6 +553,7 @@ def assert_provider_surface(provider: FundProductProvider) -> tuple[str, ...]:
 
 
 def default_official_sp_funds_provider() -> OfficialSpFundsProductProvider:
+    from services.official_fund_holdings_evidence import default_official_holdings_files
     from services.official_fund_nport_evidence import NPORT_XML
     from services.official_sp_funds_evidence import PRODUCT_HTML, PURIFICATION_HTML
 
@@ -554,6 +561,7 @@ def default_official_sp_funds_provider() -> OfficialSpFundsProductProvider:
         product_html=PRODUCT_HTML,
         purification_html=PURIFICATION_HTML,
         nport_xml=NPORT_XML,
+        holdings_files=default_official_holdings_files(),
     )
 
 

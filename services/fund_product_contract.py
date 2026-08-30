@@ -254,12 +254,45 @@ class FundLookthroughSummary:
     country_allocation: tuple[tuple[str, float], ...]
     known_nabi_overlap: tuple[str, ...]
     limitation: str
+    known_weight_pct: float = 0.0
+    top5_weight_pct: float = 0.0
+    raw_weight_sum_pct: float = 0.0
+    rounding_difference_pct: float = 0.0
+    weight_reconciled: bool = True
+    hhi: Optional[float] = None
+    effective_holdings: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         if self.top_holding is not None:
             payload["top_holding"] = self.top_holding.to_dict()
         return payload
+
+
+@dataclass(frozen=True)
+class FundHoldingsIntelligenceEvidence:
+    """Derived official-weight facts only. No sector/country/currency invention."""
+
+    fund_symbol: str
+    as_of: Optional[str]
+    holding_count: int
+    known_weight: float
+    unknown_weight: float
+    largest_holding_weight: Optional[float]
+    top_5_weight: float
+    top_10_weight: float
+    effective_number_of_holdings: Optional[float]
+    hhi: Optional[float]
+    cash_other_weight: float
+    raw_weight_sum: float
+    rounding_difference: float
+    weight_reconciled: bool
+    source: str
+    provenance: tuple[str, ...]
+    official_issuer_field_present: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -338,7 +371,7 @@ DIM_REAL_ESTATE_CONCENTRATION = "REAL_ESTATE_CONCENTRATION"
 DIM_COUNTRY_CONCENTRATION = "COUNTRY_CONCENTRATION"
 DIM_CURRENCY_EXPOSURE = "CURRENCY_EXPOSURE"
 
-FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1d.1"
+FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1e.1"
 FUND_EVAL_FACTS_VERSION = "fund_facts_1d.1"
 PERFORMANCE_BASIS_NAV = "NAV"
 PERFORMANCE_BASIS_MARKET_PRICE = "MARKET_PRICE"

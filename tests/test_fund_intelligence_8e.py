@@ -151,11 +151,26 @@ class FundIntelligenceEvaluationTests(unittest.TestCase):
         ready = evaluate_official_fund_intelligence("SPUS", lookthrough=_lookthrough())
         self.assertEqual(ready.evidence_map()["CONCENTRATION"], DIM_STATUS_READY)
         self.assertEqual(ready.evidence_map()["DIVERSIFICATION"], DIM_STATUS_READY)
-        unknown = evaluate_official_fund_intelligence(
-            "SPUS", lookthrough=_lookthrough(unknown=True)
+        from services.fund_product_contract import FundLookthroughSummary, LookthroughHolding
+
+        unknown_summary = FundLookthroughSummary(
+            fund_symbol="SPUS",
+            as_of="2026-08-28",
+            holdings_count=2,
+            top_holding=LookthroughHolding("AAPL", "Apple", 60.0, True, False),
+            top_holding_weight_pct=60.0,
+            top10_weight_pct=100.0,
+            single_name_concentration_pct=60.0,
+            cash_other_weight_pct=0.0,
+            unknown_weight_pct=40.0,
+            sector_allocation=(),
+            country_allocation=(),
+            known_nabi_overlap=("AAPL",),
+            limitation="SECTOR_UNKNOWN",
         )
-        self.assertEqual(unknown.evidence_map()["CONCENTRATION"], DIM_STATUS_READY)
-        self.assertEqual(unknown.evidence_map()["DIVERSIFICATION"], DIM_STATUS_READY)
+        unknown = evaluate_official_fund_intelligence("SPUS", lookthrough=unknown_summary)
+        self.assertEqual(unknown.evidence_map()["CONCENTRATION"], DIM_STATUS_MISSING)
+        self.assertEqual(unknown.evidence_map()["DIVERSIFICATION"], DIM_STATUS_MISSING)
 
     def test_purification_does_not_change_score_or_state(self) -> None:
         provider = default_official_sp_funds_provider()

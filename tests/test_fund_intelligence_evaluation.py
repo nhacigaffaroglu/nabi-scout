@@ -168,7 +168,7 @@ class DimensionAndThresholdTests(unittest.TestCase):
         self.assertEqual(spsk[DIM_DURATION], DIM_STATUS_MISSING)
         self.assertEqual(spsk[DIM_YIELD], DIM_STATUS_MISSING)
         self.assertEqual(spsk[DIM_CREDIT_QUALITY], DIM_STATUS_MISSING)
-        self.assertEqual(spsk[DIM_ISSUER_CONCENTRATION], DIM_STATUS_READY)
+        self.assertEqual(spsk[DIM_ISSUER_CONCENTRATION], DIM_STATUS_MISSING)
         self.assertEqual(spsk[DIM_REAL_ESTATE_CONCENTRATION], DIM_STATUS_NOT_APPLICABLE)
         self.assertEqual(spre[DIM_REAL_ESTATE_CONCENTRATION], DIM_STATUS_MISSING)
         self.assertEqual(spre[DIM_DURATION], DIM_STATUS_NOT_APPLICABLE)
@@ -212,8 +212,7 @@ class DimensionAndThresholdTests(unittest.TestCase):
         self.assertGreater(unknown.unknown_weight_pct, 0)
         evaluation = _eval("SPUS", lookthrough=unknown)
         conc = next(row for row in evaluation.dimensions if row.name == "CONCENTRATION")
-        self.assertEqual(conc.status, DIM_STATUS_READY)
-        self.assertIsNotNone(conc.score)
+        self.assertEqual(conc.status, DIM_STATUS_MISSING)
 
     def test_official_sharia_gate_not_ticker(self) -> None:
         provider = _provider()

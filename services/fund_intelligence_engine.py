@@ -8,6 +8,14 @@ from __future__ import annotations
 
 from typing import Optional
 
+from services.fund_lookthrough_summary import (
+    CONCENTRATED_EFFECTIVE_N,
+    DIVERSIFICATION_EFFECTIVE_N_BAD,
+    DIVERSIFICATION_EFFECTIVE_N_GOOD,
+    LARGE_COUNT_FOR_HHI_OVERRIDE,
+    build_fund_lookthrough_summary,
+    holdings_reliable,
+)
 from services.fund_product_contract import (
     DIM_CONCENTRATION_EVAL,
     DIM_COST_EVAL,
@@ -184,10 +192,25 @@ def _concentration_score(top_weight: Optional[float], top10: Optional[float]) ->
     return (single + inverse(top10, 25.0, 90.0)) / 2.0
 
 
-def _diversification_score(count: Optional[int], unknown_pct: Optional[float]) -> Optional[float]:
-    if count is None:
+def _diversification_score(
+    count: Optional[int],
+    unknown_pct: Optional[float],
+    *,
+    effective_holdings: Optional[float] = None,
+) -> Optional[float]:
+    """Score from official weights. Raw count cannot override a concentrated HHI."""
+    if effective_holdings is not None:
+        base = scale(effective_holdings, DIVERSIFICATION_EFFECTIVE_N_BAD, DIVERSIFICATION_EFFECTIVE_N_GOOD)
+        if (
+            count is not None
+            and count >= LARGE_COUNT_FOR_HHI_OVERRIDE
+            and effective_holdings < CONCENTRATED_EFFECTIVE_N
+        ):
+            base = scale(effective_holdings, DIVERSIFICATION_EFFECTIVE_N_BAD, DIVERSIFICATION_EFFECTIVE_N_GOOD)
+    elif count is not None:
+        base = scale(float(count), 15.0, 120.0)
+    else:
         return None
-    base = scale(float(count), 15.0, 120.0)
     if unknown_pct is None:
         return base
     return max(0.0, base - min(unknown_pct, 40.0))
@@ -238,16 +261,26 @@ def evaluate_official_fund_intelligence(
     yield_evidence = official_yield
     if yield_evidence is None and hasattr(resolved, "sec_yield"):
         yield_evidence = resolved.sec_yield(fund)
+    lookthrough_view = lookthrough
+    official_issuer_present = False
+    if lookthrough_view is None and hasattr(resolved, "holdings"):
+        holdings_file = resolved.holdings(fund)
+        if holdings_file is not None:
+            lookthrough_view = build_fund_lookthrough_summary(holdings_file)
+            from services.fund_lookthrough_summary import official_issuer_field_present
+
+            official_issuer_present = official_issuer_field_present(holdings_file)
     return evaluate_fund_intelligence(
         facts=resolved.facts(fund),
         mandate=resolved.mandate(fund),
         sharia=resolved.sharia_evidence(fund),
         purification=resolved.purification_evidence(fund),
-        lookthrough=lookthrough,
+        lookthrough=lookthrough_view,
         performance=nav_performance,
         official_yield=yield_evidence,
         historical_performance_present=historical_performance_present,
         official_risk_series_present=official_risk_series_present,
+        official_issuer_present=official_issuer_present,
     )
 
 
@@ -268,6 +301,7 @@ def evaluate_fund_intelligence(
     official_real_estate_weights: bool = False,
     performance: Optional[OfficialFundPerformance] = None,
     official_yield: Optional[OfficialFundYield] = None,
+    official_issuer_present: bool = False,
 ) -> FundIntelligenceEvaluation:
     if official_yield is not None and official_yield.sec_yield_30d is not None:
         official_yield_present = True
@@ -320,12 +354,16 @@ def evaluate_fund_intelligence(
         dimensions.append(_ready(DIM_COST_EVAL, _cost_score(facts.expense_ratio), "expense_ratio"))
     else:
         dimensions.append(_missing(DIM_COST_EVAL, "expense_ratio"))
-    if _lookthrough_ready(lookthrough):
+    if _lookthrough_ready(lookthrough) and holdings_reliable(lookthrough):
         dimensions.append(
             _ready(
                 DIM_DIVERSIFICATION_EVAL,
-                _diversification_score(lookthrough.holdings_count, lookthrough.unknown_weight_pct),
-                "holdings_count",
+                _diversification_score(
+                    lookthrough.holdings_count,
+                    lookthrough.unknown_weight_pct,
+                    effective_holdings=lookthrough.effective_holdings,
+                ),
+                "effective_holdings" if lookthrough.effective_holdings is not None else "holdings_count",
                 "unknown_weight",
             )
         )
@@ -340,6 +378,9 @@ def evaluate_fund_intelligence(
                 "top10",
             )
         )
+    elif _lookthrough_ready(lookthrough):
+        dimensions.append(_missing(DIM_DIVERSIFICATION_EVAL, "unknown_or_unreconciled_weights"))
+        dimensions.append(_missing(DIM_CONCENTRATION_EVAL, "unknown_or_unreconciled_weights"))
     else:
         dimensions.append(_missing(DIM_DIVERSIFICATION_EVAL, "official_holdings"))
         dimensions.append(_missing(DIM_CONCENTRATION_EVAL, "official_holdings"))
@@ -390,16 +431,16 @@ def evaluate_fund_intelligence(
             if official_credit_present
             else _missing(DIM_CREDIT_QUALITY, "official_credit")
         )
-        if _lookthrough_ready(lookthrough):
+        if official_issuer_present and _lookthrough_ready(lookthrough) and holdings_reliable(lookthrough):
             dimensions.append(
                 _ready(
                     DIM_ISSUER_CONCENTRATION,
                     _concentration_score(lookthrough.single_name_concentration_pct, None),
-                    "top_holding",
+                    "official_issuer",
                 )
             )
         else:
-            dimensions.append(_missing(DIM_ISSUER_CONCENTRATION, "official_holdings"))
+            dimensions.append(_missing(DIM_ISSUER_CONCENTRATION, "official_issuer_field"))
     else:
         dimensions.append(tracking if tracking.status != DIM_STATUS_MISSING else _na(DIM_TRACKING_EVAL, "REIT_PROFILE"))
         dimensions.append(_na(DIM_DURATION, "NOT_SUKUK"))
@@ -409,7 +450,17 @@ def evaluate_fund_intelligence(
         if official_real_estate_weights:
             dimensions.append(_ready(DIM_REAL_ESTATE_CONCENTRATION, None, "official_re_weights"))
         else:
-            dimensions.append(_missing(DIM_REAL_ESTATE_CONCENTRATION, "official_re_classification"))
+            dimensions.append(
+                FundDimensionResult(
+                    name=DIM_REAL_ESTATE_CONCENTRATION,
+                    status=DIM_STATUS_MISSING,
+                    missing_facts=("official_property_sector_or_geo",),
+                    reason_codes=(
+                        "OFFICIAL_EVIDENCE_MISSING",
+                        "SECURITY_LEVEL_USES_CONCENTRATION",
+                    ),
+                )
+            )
         if official_country_weights:
             dimensions.append(_ready(DIM_COUNTRY_CONCENTRATION, None, "official_country"))
         else:
