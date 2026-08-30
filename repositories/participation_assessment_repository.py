@@ -10,8 +10,21 @@ class ParticipationAssessmentRepository:
         self.client = client
 
     def append_snapshot(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        response = self.client.table(self.TABLE).insert(payload).execute()
-        return response.data[0] if response.data else payload
+        from services.participation_assessment_persistence_service import (
+            hydrate_research_allowed_row,
+            research_allowed_column_missing,
+        )
+
+        try:
+            response = self.client.table(self.TABLE).insert(payload).execute()
+        except Exception as exc:
+            if not research_allowed_column_missing(exc):
+                raise
+            fallback = dict(payload)
+            fallback.pop("research_allowed", None)
+            response = self.client.table(self.TABLE).insert(fallback).execute()
+        row = response.data[0] if response.data else payload
+        return hydrate_research_allowed_row(row) or row
 
     def get_latest(self, symbol: str) -> Optional[Dict[str, Any]]:
         normalized = str(symbol or "").strip().upper()
@@ -26,7 +39,13 @@ class ParticipationAssessmentRepository:
             .execute()
         )
         rows = response.data or []
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        from services.participation_assessment_persistence_service import (
+            hydrate_research_allowed_row,
+        )
+
+        return hydrate_research_allowed_row(rows[0])
 
     def list_latest_by_symbol(self) -> Dict[str, Dict[str, Any]]:
         response = (
@@ -39,7 +58,13 @@ class ParticipationAssessmentRepository:
         for row in response.data or []:
             symbol = str(row.get("symbol") or "").strip().upper()
             if symbol and symbol not in latest:
-                latest[symbol] = row
+                from services.participation_assessment_persistence_service import (
+                    hydrate_research_allowed_row,
+                )
+
+                hydrated = hydrate_research_allowed_row(row)
+                if hydrated is not None:
+                    latest[symbol] = hydrated
         return latest
 
     def get_recent_history(
@@ -59,4 +84,10 @@ class ParticipationAssessmentRepository:
             .limit(max(1, int(limit)))
             .execute()
         )
-        return response.data or []
+        from services.participation_assessment_persistence_service import (
+            hydrate_research_allowed_row,
+        )
+
+        return [
+            hydrate_research_allowed_row(row) or row for row in (response.data or [])
+        ]

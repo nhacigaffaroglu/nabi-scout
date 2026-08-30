@@ -1,8 +1,8 @@
 """Change-driven BIST Facts → SI → snapshot orchestration.
 
 Scheduler owns sequencing. Canonical services own calculations.
-Does not run New Money, mutate portfolios, or persist Participation.
-Default is dry-run with persist_si off. No fixture Momentum.
+Does not run New Money or mutate portfolios.
+Default is dry-run with persist_si and persist_participation off.
 """
 
 from __future__ import annotations
@@ -72,6 +72,10 @@ from services.kap_capital_structure import parse_kap_capital_structure_html
 from services.kap_kafif_contract import KapKafifDiscovery
 from services.kap_public_contract import KapFrDiscovery, KapPublicFinancialDocument
 from services.kap_public_fr_discovery import incremental_annual_targets
+from services.participation_assessment_persistence_service import (
+    official_participation_source_unavailable,
+    publish_official_bist_participation,
+)
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.security_facts_service import SecurityFactsService
 from services.security_intelligence_contract import SecurityParticipationContext
@@ -128,6 +132,20 @@ def _json_key(evidence: Any) -> str:
         return ""
     payload = official_decision_compare_key(evidence)
     return "|".join(str(payload.get(key) or "") for key in payload)
+
+
+def _membership_key(membership: Any) -> str:
+    if membership is None:
+        return ""
+    member = getattr(membership, "member", None)
+    as_of = getattr(member, "as_of", "") if member is not None else ""
+    return "|".join(
+        (
+            str(getattr(membership, "status", "") or ""),
+            str(getattr(membership, "membership", "")),
+            str(as_of or ""),
+        )
+    )
 
 
 def _us_isolated(symbol: str, master: Optional[SecurityMasterService]) -> bool:
@@ -195,6 +213,7 @@ def run_bist_refresh(
     *,
     dry_run: bool = True,
     persist_si: bool = False,
+    persist_participation: bool = False,
     allow_live: bool = False,
     allow_broad: bool = False,
     as_of: Optional[date] = None,
@@ -210,6 +229,9 @@ def run_bist_refresh(
     thb_cache: Any = None,
     source_failures: Mapping[str, str] = (),
     snapshot_repo: Any = None,
+    participation_repo: Any = None,
+    memberships: Mapping[str, Any] = (),
+    kafif_documents: Mapping[str, Any] = (),
     security_master: Optional[SecurityMasterService] = None,
     max_symbols: int = MAX_SYMBOLS_DEFAULT,
 ) -> BistRefreshRun:
@@ -227,6 +249,8 @@ def run_bist_refresh(
     capital_versions = dict(capital_versions or {})
     official_events = dict(official_events or {})
     source_failures = dict(source_failures or {})
+    memberships = dict(memberships or {})
+    kafif_documents = dict(kafif_documents or {})
     requested = [normalize_symbol(item) for item in symbols if normalize_symbol(item)]
     errors: list[str] = []
     if len(requested) > max_symbols and not allow_broad:
@@ -237,6 +261,7 @@ def run_bist_refresh(
             status="refused",
             dry_run=dry_run,
             persist_si=False,
+            persist_participation=False,
             symbols_checked=len(requested),
             errors=(REASON_BROAD_UNIVERSE,),
             next_state=prior,
@@ -254,11 +279,17 @@ def run_bist_refresh(
     next_kafif: list[tuple[str, str]] = list(prior.latest_kafif_ids)
     next_kafif_sub: list[tuple[str, str]] = list(prior.latest_kafif_submitted)
     next_part: list[tuple[str, str]] = list(prior.participation_keys)
+    next_membership: list[tuple[str, str]] = list(prior.membership_keys)
     next_cap: list[tuple[str, str]] = list(prior.capital_versions)
     published = 0
     processed = 0
     skipped = 0
     changes_n = 0
+    part_changes = 0
+    part_processed = 0
+    part_published = 0
+    part_skipped = 0
+    part_errors: list[str] = []
 
     for symbol in requested:
         if _us_isolated(symbol, master):
@@ -307,7 +338,11 @@ def run_bist_refresh(
                 events=tuple(official_events.get(symbol, ()) or ()),
                 dry_run=dry_run,
                 persist_si=persist_si,
+                persist_participation=persist_participation,
                 snapshot_repo=snapshot_repo,
+                participation_repo=participation_repo,
+                membership=memberships.get(symbol),
+                kafif_document=kafif_documents.get(symbol),
             )
         except Exception as exc:
             skipped += 1
@@ -327,6 +362,15 @@ def run_bist_refresh(
             processed += 1
         else:
             skipped += 1
+        if CHANGE_PARTICIPATION in row.changes:
+            part_changes += 1
+            part_processed += 1
+        if row.participation_published:
+            part_published += 1
+        elif row.participation_skipped:
+            part_skipped += 1
+        if row.error and CHANGE_PARTICIPATION in row.changes:
+            part_errors.append(f"{row.symbol}:{row.error}")
         if row.published:
             published += 1
         known_ids.update(row.latest_notification_ids)
@@ -344,6 +388,12 @@ def run_bist_refresh(
             if key:
                 next_part = [(item, value) for item, value in next_part if item != symbol]
                 next_part.append((symbol, key))
+            mem_key = _membership_key(memberships.get(symbol))
+            if mem_key:
+                next_membership = [
+                    (item, value) for item, value in next_membership if item != symbol
+                ]
+                next_membership.append((symbol, mem_key))
         version = capital_versions.get(symbol, "")
         if version:
             next_cap = [(item, value) for item, value in next_cap if item != symbol]
@@ -355,9 +405,12 @@ def run_bist_refresh(
         latest_kafif_submitted=tuple(next_kafif_sub),
         latest_thb_date=_iso(latest_thb),
         participation_keys=tuple(next_part),
+        membership_keys=tuple(next_membership),
         capital_versions=tuple(next_cap),
     )
-    writes = 0 if dry_run or not persist_si else published
+    si_writes = 0 if dry_run or not persist_si else published
+    part_writes = 0 if dry_run or not persist_participation else part_published
+    writes = si_writes + part_writes
     status = "completed" if not errors else "partial"
     return BistRefreshRun(
         run_id=run_id,
@@ -367,6 +420,7 @@ def run_bist_refresh(
         status=status,
         dry_run=dry_run,
         persist_si=persist_si,
+        persist_participation=persist_participation,
         allow_live=allow_live,
         symbols_checked=len(requested),
         changes_detected=changes_n,
@@ -375,6 +429,11 @@ def run_bist_refresh(
         rows_skipped=skipped,
         writes=writes,
         errors=tuple(errors),
+        participation_changes_detected=part_changes,
+        participation_processed=part_processed,
+        participation_published=part_published,
+        participation_skipped=part_skipped,
+        participation_errors=tuple(part_errors),
         latest_thb_date=_iso(latest_thb),
         missing_thb_dates=tuple(item.isoformat() for item in missing),
         securities=tuple(results),
@@ -406,7 +465,11 @@ def _refresh_symbol(
     events: Sequence[Any],
     dry_run: bool,
     persist_si: bool,
+    persist_participation: bool,
     snapshot_repo: Any,
+    participation_repo: Any,
+    membership: Any,
+    kafif_document: Any,
 ) -> BistSymbolRefresh:
     changes: list[str] = []
     known = prior.known_ids()
@@ -446,6 +509,9 @@ def _refresh_symbol(
     if part_key and part_key != prior.participation_key(symbol) and CHANGE_PARTICIPATION not in changes:
         changes.append(CHANGE_PARTICIPATION)
         kafif_status = STATUS_CORRECTION
+    mem_key = _membership_key(membership)
+    if mem_key and mem_key != prior.membership_key(symbol) and CHANGE_PARTICIPATION not in changes:
+        changes.append(CHANGE_PARTICIPATION)
 
     capital_status = STATUS_NO_CHANGE
     if capital_version and capital_version != prior.capital_version(symbol):
@@ -490,6 +556,48 @@ def _refresh_symbol(
             unresolved = True
             ca_status = STATUS_UNRESOLVED_CA
 
+    previous_part = ""
+    if participation_repo is not None:
+        try:
+            latest_part = participation_repo.get_latest(symbol)
+        except Exception:
+            latest_part = None
+        if isinstance(latest_part, dict):
+            previous_part = str(latest_part.get("status") or "")
+
+    part_published = False
+    part_skipped = False
+    new_part = ""
+    research_allowed = None
+    part_error = ""
+    if CHANGE_PARTICIPATION in changes:
+        if official_participation_source_unavailable(membership, kafif_document):
+            part_skipped = True
+            part_error = "OFFICIAL_SOURCE_UNAVAILABLE_PRESERVE"
+        else:
+            saved = publish_official_bist_participation(
+                symbol,
+                membership=membership,
+                kafif=kafif_document,
+                repo=participation_repo,
+                dry_run=dry_run,
+                persist=persist_participation,
+            )
+            row = saved.row or {}
+            new_part = str(row.get("status") or "")
+            research_allowed = row.get("research_allowed")
+            if saved.persistence_failed or saved.message.endswith("_PRESERVE"):
+                part_skipped = True
+                part_error = saved.message
+            elif saved.saved:
+                part_published = True
+            elif saved.skipped_duplicate:
+                part_skipped = True
+            elif dry_run or not persist_participation or participation_repo is None:
+                part_skipped = True
+                if not new_part and saved.row:
+                    new_part = str(saved.row.get("status") or "")
+
     if not changes:
         return BistSymbolRefresh(
             symbol=symbol,
@@ -505,6 +613,14 @@ def _refresh_symbol(
             latest_thb_date=_iso(latest_thb),
             reason=REASON_NO_CHANGE,
         )
+    part_fields = dict(
+        participation_published=part_published,
+        participation_skipped=part_skipped,
+        previous_participation_state=previous_part,
+        new_participation_state=new_part,
+        research_allowed=research_allowed,
+        error=part_error,
+    )
     if missing and set(changes) <= {CHANGE_PRICE_HISTORY, CHANGE_CORPORATE_ACTION}:
         return BistSymbolRefresh(
             symbol=symbol,
@@ -521,6 +637,7 @@ def _refresh_symbol(
             latest_thb_date=_iso(latest_thb),
             would_publish=False,
             reason=STATUS_SOURCE_UNAVAILABLE,
+            **part_fields,
         )
     if unresolved:
         return BistSymbolRefresh(
@@ -538,6 +655,7 @@ def _refresh_symbol(
             latest_thb_date=_iso(latest_thb),
             would_publish=False,
             reason=REASON_UNRESOLVED_CA,
+            **part_fields,
         )
 
     facts, _history, _events = compose_official_facts(
@@ -549,9 +667,11 @@ def _refresh_symbol(
         official_events=merged,
     )
     effective_dry = dry_run or not persist_si or snapshot_repo is None
+    si_status_ctx = new_part or participation
+    si_research = True if research_allowed is None else bool(research_allowed)
     publish = publish_canonical_security_intelligence(
         facts,
-        SecurityParticipationContext(status=participation, research_allowed=True),
+        SecurityParticipationContext(status=si_status_ctx, research_allowed=si_research),
         snapshot_repo,
         dry_run=effective_dry,
     )
@@ -584,4 +704,5 @@ def _refresh_symbol(
         would_publish=would,
         published=bool(publish.published),
         reason=reason,
+        **part_fields,
     )

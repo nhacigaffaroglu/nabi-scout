@@ -112,6 +112,7 @@ class DiscoveryAndHealthTests(unittest.TestCase):
         self.assertTrue(CLI.is_file())
         self.assertIn("dry_run=True", CLI.read_text(encoding="utf-8"))
         self.assertIn("persist_si=False", CLI.read_text(encoding="utf-8"))
+        self.assertIn("persist_participation=False", CLI.read_text(encoding="utf-8"))
         self.assertEqual(JOB_NAME, "bist_canonical_refresh")
         for path in WORKFLOWS.glob("*.yml"):
             text = path.read_text(encoding="utf-8")
@@ -374,6 +375,266 @@ class PipelineAndSafetyTests(unittest.TestCase):
         )
         self.assertEqual(plan.recommendations, ())
         self.assertGreater(plan.residual_cash, 0)
+
+
+class ParticipationAutomationTests(unittest.TestCase):
+    def _official(self, symbol: str = "BIMAS"):
+        from services.bist_katilim_tum_parser import membership_for_symbol, parse_bist_katilim_csv
+        from services.kap_kafif_parser import parse_public_kafif_html
+        from tests.fixtures.bist_katilim_tum_pilot import PILOT_KAFIF_DISCLOSURES, compact_katilim_csv
+        from tests.fixtures.kap_kafif_pilot import bimas_kafif_html, asels_kafif_html, tuprs_kafif_html
+
+        html = {"ASELS": asels_kafif_html, "BIMAS": bimas_kafif_html, "TUPRS": tuprs_kafif_html}
+        membership = membership_for_symbol(parse_bist_katilim_csv(compact_katilim_csv()), symbol)
+        kafif = parse_public_kafif_html(
+            html[symbol](),
+            symbol=symbol,
+            disclosure_id=PILOT_KAFIF_DISCLOSURES[symbol],
+        )
+        return membership, kafif
+
+    def test_no_kafif_change_does_not_publish_participation(self) -> None:
+        from tests.test_participation_assessment_persistence import InMemorySupabase
+        from repositories.participation_assessment_repository import ParticipationAssessmentRepository
+
+        membership, kafif = self._official()
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        first = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        second = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=first.next_state,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(second.participation_changes_detected, 0)
+        self.assertEqual(second.participation_published, 0)
+
+    def test_new_kafif_and_correction_and_unavailable(self) -> None:
+        from tests.test_participation_assessment_persistence import InMemorySupabase
+        from repositories.participation_assessment_repository import ParticipationAssessmentRepository
+        from services.bist_katilim_tum_parser import membership_for_symbol
+
+        membership, kafif = self._official()
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        old = _kafif("BIMAS", "old", "11.03.2025")
+        new = _kafif("BIMAS", "1651659", "17.08.2026")
+        first = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (old,)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertIn(CHANGE_PARTICIPATION, first.securities[0].changes)
+        self.assertTrue(first.securities[0].research_allowed)
+        self.assertEqual(first.participation_published, 1)
+        second = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=first.next_state,
+            kafif_discoveries={"BIMAS": (old, new)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(second.securities[0].kafif_status, STATUS_CORRECTION)
+        self.assertTrue(second.securities[0].participation_skipped)
+        unavailable = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=second.next_state,
+            kafif_discoveries={"BIMAS": (old, new, _kafif("BIMAS", "newer", "18.08.2026"))},
+            memberships={"BIMAS": membership_for_symbol(None, "BIMAS", source_unavailable=True)},
+            kafif_documents={},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertTrue(unavailable.securities[0].participation_skipped)
+        self.assertEqual(repo.get_latest("BIMAS")["status"], PARTICIPATION_STATUS_UYGUN)
+
+    def test_persist_flags_default_zero_writes(self) -> None:
+        from tests.test_participation_assessment_persistence import InMemorySupabase
+        from repositories.participation_assessment_repository import (
+            ParticipationAssessmentRepository,
+        )
+
+        membership, kafif = self._official()
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        dry = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=True,
+            persist_participation=True,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(dry.writes, 0)
+        self.assertIsNone(repo.get_latest("BIMAS"))
+        disabled = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=False,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(disabled.writes, 0)
+        self.assertFalse(disabled.persist_participation)
+        self.assertIsNone(repo.get_latest("BIMAS"))
+        self.assertNotIn("allocate_new_money", ENGINE.read_text(encoding="utf-8"))
+
+    def test_xktum_change_and_malformed_preserve(self) -> None:
+        from tests.test_participation_assessment_persistence import InMemorySupabase
+        from repositories.participation_assessment_repository import (
+            ParticipationAssessmentRepository,
+        )
+        from services.bist_katilim_tum_contract import (
+            MEMBERSHIP_NOT_LISTED,
+            BistKatilimMembership,
+        )
+
+        membership, kafif = self._official()
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        first = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(first.participation_published, 1)
+        delisted = BistKatilimMembership(
+            symbol="BIMAS",
+            status=MEMBERSHIP_NOT_LISTED,
+            membership=False,
+            member=None,
+        )
+        changed = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=first.next_state,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": delisted},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertIn(CHANGE_PARTICIPATION, changed.securities[0].changes)
+        self.assertTrue(changed.securities[0].participation_published)
+        self.assertNotEqual(repo.get_latest("BIMAS")["status"], PARTICIPATION_STATUS_UYGUN)
+        before = repo.get_latest("BIMAS")
+        malformed = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=changed.next_state,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"), _kafif("BIMAS", "bad", "19.08.2026"))},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": object()},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertTrue(malformed.securities[0].participation_skipped)
+        self.assertEqual(repo.get_latest("BIMAS")["id"], before["id"])
+
+    def test_downgrade_and_upgrade_publish(self) -> None:
+        from tests.test_participation_assessment_persistence import InMemorySupabase
+        from repositories.participation_assessment_repository import (
+            ParticipationAssessmentRepository,
+        )
+        from services.bist_katilim_tum_contract import (
+            MEMBERSHIP_NOT_LISTED,
+            BistKatilimMembership,
+        )
+
+        membership, kafif = self._official()
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        delisted = BistKatilimMembership(
+            symbol="BIMAS",
+            status=MEMBERSHIP_NOT_LISTED,
+            membership=False,
+            member=None,
+        )
+        down = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertEqual(repo.get_latest("BIMAS")["status"], PARTICIPATION_STATUS_UYGUN)
+        dropped = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=down.next_state,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": delisted},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertTrue(dropped.securities[0].participation_published)
+        self.assertNotEqual(repo.get_latest("BIMAS")["status"], PARTICIPATION_STATUS_UYGUN)
+        self.assertFalse(repo.get_latest("BIMAS")["research_allowed"])
+        up = run_bist_refresh(
+            ["BIMAS"],
+            dry_run=False,
+            persist_participation=True,
+            participation_repo=repo,
+            state=dropped.next_state,
+            kafif_discoveries={"BIMAS": (_kafif("BIMAS", "1651659", "17.08.2026"),)},
+            memberships={"BIMAS": membership},
+            kafif_documents={"BIMAS": kafif},
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertTrue(up.securities[0].participation_published)
+        self.assertEqual(repo.get_latest("BIMAS")["status"], PARTICIPATION_STATUS_UYGUN)
+        self.assertTrue(repo.get_latest("BIMAS")["research_allowed"])
 
 
 if __name__ == "__main__":

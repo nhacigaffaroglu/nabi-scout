@@ -10,8 +10,14 @@ from repositories.participation_assessment_repository import (
     ParticipationAssessmentRepository,
 )
 from services.company_report_participation_service import CompanyReportParticipationView
-from services.participation_assessment_service import ParticipationAssessmentResult
+from services.participation_assessment_service import (
+    ParticipationAssessmentResult,
+    assess_equity_participation,
+)
+from services.bist_katilim_tum_contract import MEMBERSHIP_SOURCE_UNAVAILABLE
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.research_eligibility_service import evaluate_research_eligibility_from_assessment
+from services.security_master_contract import SOURCE_BIST
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,47 @@ PERSISTENCE_SAVE_FAILED_MESSAGE = (
 
 def _normalize_symbol(symbol: str) -> str:
     return str(symbol or "").strip().upper()
+
+
+def research_allowed_from_assessment(
+    result: Optional[ParticipationAssessmentResult],
+) -> bool:
+    """Canonical eligibility only. Missing or non-positive → False."""
+    if result is None:
+        return False
+    eligibility = evaluate_research_eligibility_from_assessment(
+        result, symbol=result.symbol
+    )
+    return bool(eligibility.research_allowed)
+
+
+def research_allowed_column_missing(exc: BaseException) -> bool:
+    message = str(exc)
+    return "research_allowed" in message and (
+        "PGRST204" in message or "Could not find the" in message
+    )
+
+
+def _research_allowed_from_row(row: Optional[Mapping[str, Any]]) -> Optional[bool]:
+    """Hydrate persisted eligibility. Never infer from Participation status."""
+    if not row:
+        return None
+    if "research_allowed" in row and row.get("research_allowed") is not None:
+        return bool(row.get("research_allowed"))
+    payload = row.get("assessment_payload")
+    if isinstance(payload, Mapping) and payload.get("research_allowed") is not None:
+        return bool(payload.get("research_allowed"))
+    return None
+
+
+def hydrate_research_allowed_row(
+    row: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if row is None:
+        return None
+    hydrated = dict(row)
+    hydrated["research_allowed"] = _research_allowed_from_row(row)
+    return hydrated
 
 
 def _rule_outcomes(rules: Any) -> Tuple[Tuple[str, str], ...]:
@@ -80,6 +127,7 @@ def compute_semantic_identity(result: ParticipationAssessmentResult) -> str:
         ),
         "provider_status": dict(result.provider_status),
         "sec_available": result.sec_available,
+        "research_allowed": research_allowed_from_assessment(result),
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -96,6 +144,8 @@ def build_snapshot_payload(
     timestamp = assessed_at or datetime.now(timezone.utc)
     audit_payload = result.to_dict()
     audit_payload.pop("participation_score", None)
+    allowed = research_allowed_from_assessment(result)
+    audit_payload["research_allowed"] = allowed
 
     return {
         "symbol": _normalize_symbol(result.symbol),
@@ -125,6 +175,7 @@ def build_snapshot_payload(
         "source_evidence": dict(result.source_evidence),
         "assessment_payload": audit_payload,
         "semantic_identity": compute_semantic_identity(result),
+        "research_allowed": allowed,
     }
 
 
@@ -151,6 +202,7 @@ def snapshot_from_row(row: Mapping[str, Any]) -> Dict[str, Any]:
         "source_evidence": row.get("source_evidence") or {},
         "semantic_identity": row.get("semantic_identity"),
         "assessment_payload": row.get("assessment_payload") or {},
+        "research_allowed": _research_allowed_from_row(row),
     }
 
 
@@ -229,3 +281,60 @@ def fetch_participation_assessment_history(
 
 def saved_snapshot_is_final_uygun(snapshot: Mapping[str, Any]) -> bool:
     return snapshot.get("status") == PARTICIPATION_STATUS_UYGUN
+
+
+def official_participation_source_unavailable(membership: Any, kafif: Any) -> bool:
+    """True when official evidence cannot be recomputed safely."""
+    if kafif is None or membership is None:
+        return True
+    status = str(getattr(membership, "status", "") or "")
+    return status == MEMBERSHIP_SOURCE_UNAVAILABLE
+
+
+def publish_official_bist_participation(
+    symbol: str,
+    *,
+    membership: Any,
+    kafif: Any,
+    repo: Any = None,
+    dry_run: bool = True,
+    persist: bool = False,
+    identity_source: str = SOURCE_BIST,
+) -> SaveParticipationAssessmentResult:
+    """Resolve official BIST Participation and persist through the canonical saver."""
+    if official_participation_source_unavailable(membership, kafif):
+        return SaveParticipationAssessmentResult(
+            saved=False,
+            message="OFFICIAL_SOURCE_UNAVAILABLE_PRESERVE",
+        )
+    try:
+        result = assess_equity_participation(
+            symbol,
+            identity_source=identity_source,
+            official_bist_membership=membership,
+            official_bist_kafif=kafif,
+        )
+    except Exception:
+        return SaveParticipationAssessmentResult(
+            saved=False,
+            persistence_failed=True,
+            message="OFFICIAL_PARTICIPATION_MALFORMED_PRESERVE",
+        )
+    if result is None:
+        return SaveParticipationAssessmentResult(
+            saved=False,
+            message="OFFICIAL_PARTICIPATION_UNRESOLVED_PRESERVE",
+        )
+    view = CompanyReportParticipationView(
+        symbol=_normalize_symbol(symbol),
+        available=True,
+        result=result,
+    )
+    if dry_run or not persist or repo is None:
+        payload = build_snapshot_payload(result)
+        return SaveParticipationAssessmentResult(
+            saved=False,
+            row=payload,
+            message="DRY_RUN_NO_WRITE" if dry_run else "PERSIST_PARTICIPATION_DISABLED",
+        )
+    return save_participation_assessment_snapshot(repo, view, skip_if_identical=True)

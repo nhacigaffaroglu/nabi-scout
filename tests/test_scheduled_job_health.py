@@ -107,6 +107,7 @@ class ScheduledJobInventoryTests(unittest.TestCase):
         self.assertIn("run_bist_refresh", cli)
         self.assertIn("dry_run=True", cli)
         self.assertIn("persist_si=False", cli)
+        self.assertIn("persist_participation=False", cli)
         for path in WORKFLOWS.glob("*.yml"):
             self.assertNotIn("run_bist_refresh.py", path.read_text(encoding="utf-8"))
 

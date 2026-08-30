@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--symbols", default="ASELS,BIMAS,TUPRS")
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--persist-si", action="store_true", default=False)
+    parser.add_argument("--persist-participation", action="store_true", default=False)
     parser.add_argument("--allow-live", action="store_true", default=False)
     parser.add_argument("--allow-broad", action="store_true", default=False)
     parser.add_argument("--as-of", default="")
@@ -34,10 +35,12 @@ def main() -> int:
         # Persist remains explicit and still requires a repo; this CLI never
         # attaches a production snapshot repository.
         args.persist_si = False
+    args.persist_participation = False
     run = run_bist_refresh(
         symbols,
         dry_run=True,
         persist_si=False,
+        persist_participation=False,
         allow_live=False,
         allow_broad=args.allow_broad,
         as_of=as_of,
@@ -46,6 +49,7 @@ def main() -> int:
     )
     payload = run.to_dict()
     payload["cli_persist_si_ignored"] = True
+    payload["cli_persist_participation_ignored"] = True
     payload["job_name"] = JOB_NAME
     print(json.dumps(payload, indent=2, default=str))
     return 0 if run.status in {"completed", "partial", "refused"} else 1

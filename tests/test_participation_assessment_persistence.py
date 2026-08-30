@@ -20,12 +20,19 @@ from services.participation_assessment_change_service import (
 from services.participation_assessment_persistence_service import (
     build_snapshot_payload,
     compute_semantic_identity,
+    fetch_latest_participation_assessment,
     fetch_participation_assessment_history,
+    official_participation_source_unavailable,
+    publish_official_bist_participation,
+    research_allowed_from_assessment,
     save_participation_assessment_snapshot,
     saved_snapshot_is_final_uygun,
     snapshot_from_row,
 )
-from services.participation_assessment_service import ParticipationAssessmentResult
+from services.participation_assessment_service import (
+    ParticipationAssessmentResult,
+    assess_equity_participation,
+)
 from services.participation_intelligence_contract import (
     ASSET_KIND_EQUITY,
     CONFIDENCE_LOW,
@@ -233,6 +240,9 @@ class ParticipationPersistenceServiceTests(unittest.TestCase):
         restored = snapshot_from_row({"id": "1", **payload})
         self.assertEqual(restored["methodology_id"], "sp_us")
         self.assertEqual(restored["missing_capabilities"], ["assessment_persistence"])
+        self.assertIn("research_allowed", payload)
+        self.assertFalse(payload["research_allowed"])
+        self.assertIs(restored["research_allowed"], False)
 
     def test_semantic_identity_stable_for_same_result(self) -> None:
         result = sample_assessment_result()
@@ -511,6 +521,247 @@ class ExistingParticipationRegressionTests(unittest.TestCase):
             view.result.participation_assessment.status,
             PARTICIPATION_STATUS_UYGUN,
         )
+
+
+class ResearchAllowedPersistenceTests(unittest.TestCase):
+    def test_uygun_eligibility_is_persisted_true(self) -> None:
+        from services.bist_katilim_tum_parser import membership_for_symbol, parse_bist_katilim_csv
+        from services.kap_kafif_parser import parse_public_kafif_html
+        from services.security_master_contract import SOURCE_BIST
+        from tests.fixtures.bist_katilim_tum_pilot import compact_katilim_csv
+        from tests.fixtures.kap_kafif_pilot import bimas_kafif_html
+
+        membership = membership_for_symbol(parse_bist_katilim_csv(compact_katilim_csv()), "BIMAS")
+        kafif = parse_public_kafif_html(bimas_kafif_html(), symbol="BIMAS", disclosure_id="1651659")
+        result = assess_equity_participation(
+            "BIMAS",
+            identity_source=SOURCE_BIST,
+            official_bist_membership=membership,
+            official_bist_kafif=kafif,
+        )
+        self.assertTrue(research_allowed_from_assessment(result))
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        first = save_participation_assessment_snapshot(
+            repo,
+            CompanyReportParticipationView(symbol="BIMAS", available=True, result=result),
+        )
+        self.assertTrue(first.saved)
+        self.assertTrue(first.row["research_allowed"])
+        loaded = repo.get_latest("BIMAS")
+        self.assertTrue(loaded["research_allowed"])
+        hydrated = fetch_latest_participation_assessment(repo, "BIMAS")
+        self.assertTrue(hydrated["research_allowed"])
+        second = save_participation_assessment_snapshot(
+            repo,
+            CompanyReportParticipationView(symbol="BIMAS", available=True, result=result),
+        )
+        self.assertTrue(second.skipped_duplicate)
+        self.assertEqual(len(repo.get_recent_history("BIMAS")), 1)
+
+    def test_null_and_false_are_not_allowed(self) -> None:
+        self.assertFalse(research_allowed_from_assessment(None))
+        self.assertFalse(research_allowed_from_assessment(sample_assessment_result()))
+        uygun = sample_assessment_result(
+            participation_assessment=ParticipationAssessment(
+                symbol="AAPL",
+                asset_kind=ASSET_KIND_EQUITY,
+                status=PARTICIPATION_STATUS_UYGUN,
+                source=PARTICIPATION_SOURCE_METHODOLOGY,
+                confidence=CONFIDENCE_MEDIUM,
+                methodology_id="sp_us",
+                methodology_version="2026.08",
+            )
+        )
+        self.assertTrue(research_allowed_from_assessment(uygun))
+        degil = sample_assessment_result(
+            participation_assessment=ParticipationAssessment(
+                symbol="AAPL",
+                asset_kind=ASSET_KIND_EQUITY,
+                status=PARTICIPATION_STATUS_UYGUN_DEGIL,
+                source=PARTICIPATION_SOURCE_METHODOLOGY,
+                confidence=CONFIDENCE_LOW,
+                methodology_id="sp_us",
+                methodology_version="2026.08",
+            )
+        )
+        self.assertFalse(research_allowed_from_assessment(degil))
+
+    def test_research_allowed_changes_semantic_identity(self) -> None:
+        kontrol = sample_assessment_result()
+        uygun = sample_assessment_result(
+            participation_assessment=ParticipationAssessment(
+                symbol="AAPL",
+                asset_kind=ASSET_KIND_EQUITY,
+                status=PARTICIPATION_STATUS_UYGUN,
+                source=PARTICIPATION_SOURCE_METHODOLOGY,
+                confidence=CONFIDENCE_MEDIUM,
+                methodology_id="sp_us",
+                methodology_version="2026.08",
+                methodology_completeness=METHODOLOGY_COMPLETENESS_PARTIAL,
+                data_completeness_pct=55.0,
+                holdings_coverage_pct=None,
+                freshness_label="recent",
+            )
+        )
+        self.assertNotEqual(compute_semantic_identity(kontrol), compute_semantic_identity(uygun))
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        old = build_snapshot_payload(kontrol)
+        old.pop("research_allowed", None)
+        payload = dict(old.get("assessment_payload") or {})
+        payload.pop("research_allowed", None)
+        old["assessment_payload"] = payload
+        repo.append_snapshot(old)
+        save_participation_assessment_snapshot(
+            repo,
+            CompanyReportParticipationView(symbol="AAPL", available=True, result=uygun),
+        )
+        history = repo.get_recent_history("AAPL")
+        self.assertEqual(len(history), 2)
+        self.assertTrue(history[0]["research_allowed"])
+        self.assertIsNone(history[1].get("research_allowed"))
+        official_repo = ParticipationAssessmentRepository(InMemorySupabase())
+        from services.bist_katilim_tum_parser import membership_for_symbol, parse_bist_katilim_csv
+        from services.kap_kafif_parser import parse_public_kafif_html
+        from services.security_master_contract import SOURCE_BIST
+        from tests.fixtures.bist_katilim_tum_pilot import compact_katilim_csv
+        from tests.fixtures.kap_kafif_pilot import bimas_kafif_html
+
+        membership = membership_for_symbol(parse_bist_katilim_csv(compact_katilim_csv()), "BIMAS")
+        kafif = parse_public_kafif_html(bimas_kafif_html(), symbol="BIMAS", disclosure_id="1651659")
+        official = assess_equity_participation(
+            "BIMAS",
+            identity_source=SOURCE_BIST,
+            official_bist_membership=membership,
+            official_bist_kafif=kafif,
+        )
+        legacy = build_snapshot_payload(official)
+        legacy.pop("research_allowed", None)
+        legacy["semantic_identity"] = "legacy-without-research-allowed"
+        official_repo.append_snapshot(legacy)
+        again = save_participation_assessment_snapshot(
+            official_repo,
+            CompanyReportParticipationView(symbol="BIMAS", available=True, result=official),
+        )
+        self.assertTrue(again.saved)
+        self.assertEqual(len(official_repo.get_recent_history("BIMAS")), 2)
+        self.assertTrue(official_repo.get_latest("BIMAS")["research_allowed"])
+
+    def test_missing_column_falls_back_to_payload(self) -> None:
+        class MissingColumnTable(InMemoryParticipationTable):
+            def insert(self, payload: Dict[str, Any]):
+                if "research_allowed" in payload:
+                    raise RuntimeError(
+                        "Could not find the 'research_allowed' column of "
+                        "'participation_assessment_snapshots' in the schema cache "
+                        "PGRST204"
+                    )
+                return super().insert(payload)
+
+        class MissingColumnClient(InMemorySupabase):
+            def table(self, name: str):
+                if name == ParticipationAssessmentRepository.TABLE:
+                    return MissingColumnTable(self)
+                raise KeyError(name)
+
+        from services.bist_katilim_tum_parser import membership_for_symbol, parse_bist_katilim_csv
+        from services.kap_kafif_parser import parse_public_kafif_html
+        from services.security_master_contract import SOURCE_BIST
+        from tests.fixtures.bist_katilim_tum_pilot import compact_katilim_csv
+        from tests.fixtures.kap_kafif_pilot import bimas_kafif_html
+
+        membership = membership_for_symbol(parse_bist_katilim_csv(compact_katilim_csv()), "BIMAS")
+        kafif = parse_public_kafif_html(bimas_kafif_html(), symbol="BIMAS", disclosure_id="1651659")
+        result = assess_equity_participation(
+            "BIMAS",
+            identity_source=SOURCE_BIST,
+            official_bist_membership=membership,
+            official_bist_kafif=kafif,
+        )
+        repo = ParticipationAssessmentRepository(MissingColumnClient())
+        saved = save_participation_assessment_snapshot(
+            repo,
+            CompanyReportParticipationView(symbol="BIMAS", available=True, result=result),
+        )
+        self.assertTrue(saved.saved)
+        self.assertNotIn("research_allowed", repo.client.snapshots[0])
+        self.assertTrue(repo.client.snapshots[0]["assessment_payload"]["research_allowed"])
+        loaded = repo.get_latest("BIMAS")
+        self.assertTrue(loaded["research_allowed"])
+
+    def test_official_unavailable_does_not_write(self) -> None:
+        from services.bist_katilim_tum_parser import membership_for_symbol
+
+        membership = membership_for_symbol(None, "ASELS", source_unavailable=True)
+        self.assertTrue(official_participation_source_unavailable(membership, None))
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        saved = publish_official_bist_participation(
+            "ASELS",
+            membership=membership,
+            kafif=None,
+            repo=repo,
+            dry_run=False,
+            persist=True,
+        )
+        self.assertFalse(saved.saved)
+        self.assertEqual(repo.get_latest("ASELS"), None)
+
+    def test_persisted_true_reaches_8e_and_null_false_block(self) -> None:
+        from services.portfolio_security_context_builder import (
+            PortfolioSecuritySourceBundle,
+            build_portfolio_security_context,
+        )
+        from services.portfolio_security_decision_contract import (
+            REASON_RESEARCH_NOT_ALLOWED,
+        )
+        from services.portfolio_security_decision_engine import (
+            evaluate_portfolio_security_decision,
+        )
+        from tests.test_bist_portfolio_decision import _ctx
+        from tests.test_portfolio_security_context_builder import _si
+
+        from services.bist_katilim_tum_parser import membership_for_symbol, parse_bist_katilim_csv
+        from services.kap_kafif_parser import parse_public_kafif_html
+        from services.security_master_contract import SOURCE_BIST
+        from tests.fixtures.bist_katilim_tum_pilot import compact_katilim_csv
+        from tests.fixtures.kap_kafif_pilot import bimas_kafif_html
+
+        membership = membership_for_symbol(parse_bist_katilim_csv(compact_katilim_csv()), "BIMAS")
+        kafif = parse_public_kafif_html(bimas_kafif_html(), symbol="BIMAS", disclosure_id="1651659")
+        result = assess_equity_participation(
+            "BIMAS",
+            identity_source=SOURCE_BIST,
+            official_bist_membership=membership,
+            official_bist_kafif=kafif,
+        )
+        repo = ParticipationAssessmentRepository(InMemorySupabase())
+        save_participation_assessment_snapshot(
+            repo,
+            CompanyReportParticipationView(symbol="BIMAS", available=True, result=result),
+        )
+        snapshot = fetch_latest_participation_assessment(repo, "BIMAS")
+        ctx = build_portfolio_security_context(
+            "BIMAS",
+            PortfolioSecuritySourceBundle(
+                snapshot=snapshot,
+                si_snapshot=_si(state="WATCH", score=53.3),
+                instrument_type="EQUITY",
+                market="BIST",
+                quantity=1,
+                market_value=1000,
+                portfolio_weight=5,
+            ),
+        )
+        self.assertTrue(ctx.research_allowed)
+        decision = evaluate_portfolio_security_decision(ctx)
+        self.assertNotIn(REASON_RESEARCH_NOT_ALLOWED, decision.reason_codes)
+        null_blocked = evaluate_portfolio_security_decision(
+            _ctx(symbol="BIMAS", participation_status=PARTICIPATION_STATUS_UYGUN, research_allowed=None)
+        )
+        self.assertIn(REASON_RESEARCH_NOT_ALLOWED, null_blocked.reason_codes)
+        false_blocked = evaluate_portfolio_security_decision(
+            _ctx(symbol="BIMAS", participation_status=PARTICIPATION_STATUS_UYGUN, research_allowed=False)
+        )
+        self.assertIn(REASON_RESEARCH_NOT_ALLOWED, false_blocked.reason_codes)
 
 
 if __name__ == "__main__":

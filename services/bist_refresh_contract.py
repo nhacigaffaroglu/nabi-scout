@@ -34,6 +34,7 @@ REASON_SOURCE_FAILURE_PRESERVE = "SOURCE_FAILURE_PRESERVE_PREVIOUS_SI"
 REASON_UNRESOLVED_CA = "UNRESOLVED_CORPORATE_ACTION_FAIL_CLOSED"
 REASON_QUALITY_GATE = "PRODUCTION_QUALITY_GATE"
 REASON_PERSIST_DISABLED = "PERSIST_SI_DISABLED"
+REASON_PERSIST_PARTICIPATION_DISABLED = "PERSIST_PARTICIPATION_DISABLED"
 REASON_FIXTURE_MOMENTUM = "FIXTURE_MOMENTUM_FORBIDDEN"
 REASON_US_ISOLATED = "US_SYMBOL_ISOLATED"
 REASON_BROAD_UNIVERSE = "BROAD_UNIVERSE_REFUSED"
@@ -57,6 +58,7 @@ class BistRefreshState:
     latest_kafif_submitted: Tuple[Tuple[str, str], ...] = ()
     latest_thb_date: Optional[str] = None
     participation_keys: Tuple[Tuple[str, str], ...] = ()
+    membership_keys: Tuple[Tuple[str, str], ...] = ()
     capital_versions: Tuple[Tuple[str, str], ...] = ()
 
     def known_ids(self) -> set[str]:
@@ -70,6 +72,9 @@ class BistRefreshState:
 
     def participation_key(self, symbol: str) -> str:
         return dict(self.participation_keys).get(symbol, "")
+
+    def membership_key(self, symbol: str) -> str:
+        return dict(self.membership_keys).get(symbol, "")
 
     def capital_version(self, symbol: str) -> str:
         return dict(self.capital_versions).get(symbol, "")
@@ -93,6 +98,11 @@ class BistSymbolRefresh:
     si_state: Optional[str] = None
     would_publish: bool = False
     published: bool = False
+    participation_published: bool = False
+    participation_skipped: bool = False
+    previous_participation_state: str = ""
+    new_participation_state: str = ""
+    research_allowed: Optional[bool] = None
     reason: str = ""
     error: str = ""
 
@@ -114,6 +124,11 @@ class BistSymbolRefresh:
             "si_state": self.si_state,
             "would_publish": self.would_publish,
             "published": self.published,
+            "participation_published": self.participation_published,
+            "participation_skipped": self.participation_skipped,
+            "previous_participation_state": self.previous_participation_state,
+            "new_participation_state": self.new_participation_state,
+            "research_allowed": self.research_allowed,
             "reason": self.reason,
             "error": self.error,
         }
@@ -128,6 +143,7 @@ class BistRefreshRun:
     status: str = ""
     dry_run: bool = True
     persist_si: bool = False
+    persist_participation: bool = False
     allow_live: bool = False
     symbols_checked: int = 0
     changes_detected: int = 0
@@ -136,6 +152,11 @@ class BistRefreshRun:
     rows_skipped: int = 0
     writes: int = 0
     errors: Tuple[str, ...] = ()
+    participation_changes_detected: int = 0
+    participation_processed: int = 0
+    participation_published: int = 0
+    participation_skipped: int = 0
+    participation_errors: Tuple[str, ...] = ()
     latest_thb_date: Optional[str] = None
     missing_thb_dates: Tuple[str, ...] = ()
     securities: Tuple[BistSymbolRefresh, ...] = ()
@@ -150,6 +171,7 @@ class BistRefreshRun:
             "status": self.status,
             "dry_run": self.dry_run,
             "persist_si": self.persist_si,
+            "persist_participation": self.persist_participation,
             "allow_live": self.allow_live,
             "symbols_checked": self.symbols_checked,
             "changes_detected": self.changes_detected,
@@ -158,6 +180,11 @@ class BistRefreshRun:
             "rows_skipped": self.rows_skipped,
             "writes": self.writes,
             "errors": list(self.errors),
+            "participation_changes_detected": self.participation_changes_detected,
+            "participation_processed": self.participation_processed,
+            "participation_published": self.participation_published,
+            "participation_skipped": self.participation_skipped,
+            "participation_errors": list(self.participation_errors),
             "latest_thb_date": self.latest_thb_date,
             "missing_thb_dates": list(self.missing_thb_dates),
             "securities": [row.to_dict() for row in self.securities],
