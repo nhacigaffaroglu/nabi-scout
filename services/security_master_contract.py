@@ -44,12 +44,17 @@ INSTRUMENT_TYPES = (
 )
 
 SOURCE_US_LISTING = "us_listing"
+SOURCE_BIST = "bist_listing"
 SOURCE_PROVIDER_EXPLICIT = "provider_explicit"
 SOURCE_CANONICAL_STATIC = "canonical_static"
 
 # Lower rank wins. Equal rank with disagreeing types is CONFLICT, not newest-row.
+# SOURCE_BIST is official BIST listing identity for pilot Turkish equities.
+# Rank 15 keeps US listing uniquely first and does not weaken US precedence.
+# BIST beats provider_explicit and canonical_static. Same-rank stays fail-closed.
 SOURCE_PRECEDENCE = {
     SOURCE_US_LISTING: 10,
+    SOURCE_BIST: 15,
     SOURCE_PROVIDER_EXPLICIT: 20,
     SOURCE_CANONICAL_STATIC: 30,
 }

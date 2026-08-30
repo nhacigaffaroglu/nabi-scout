@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from services.security_master_contract import INSTRUMENT_EQUITY, SOURCE_BIST
 from services.wealth_contract import normalize_symbol
-from services.wealth_price_service import normalize_currency
+
+
+def _normalize_currency(raw: Any) -> str:
+    text = str(raw or "").strip().upper()
+    if text == "TL":
+        return "TRY"
+    return text or "TRY"
 
 
 BIST_PORTFOLIO_SYMBOLS = frozenset({"BIMAS", "ASELS", "TUPRS"})
@@ -66,25 +73,74 @@ BORSA_ISTANBUL_EOD_PROVIDER_SERIES = {
 }
 
 
+def _build_bist_provider_aliases() -> Dict[str, str]:
+    """Known provider forms only. Unknown .IS / .E suffixes are not guessed."""
+    aliases: Dict[str, str] = {}
+    for canon, row in CANONICAL_BIST_PROVIDER_MAPPINGS.items():
+        aliases[canon] = canon
+        provider = normalize_symbol(row.get("provider_symbol"))
+        if provider:
+            aliases[provider] = canon
+        series = BORSA_ISTANBUL_EOD_PROVIDER_SERIES.get(canon)
+        if series:
+            aliases[normalize_symbol(series)] = canon
+        aliases[f"{canon}.{TWELVE_DATA_BIST_MIC}"] = canon
+    return aliases
+
+
+BIST_PROVIDER_ALIASES = _build_bist_provider_aliases()
+
+
+def normalize_bist_symbol(raw: Any) -> Optional[str]:
+    """Map a known BIST provider form to the canonical portfolio symbol.
+
+    ASELS.IS / ASELS.E / ASELS.XIST → ASELS. Unknown suffixes stay unresolved.
+    """
+    wanted = normalize_symbol(raw)
+    if not wanted:
+        return None
+    return BIST_PROVIDER_ALIASES.get(wanted)
+
+
+def canonical_bist_identity(symbol: Any) -> Optional[Dict[str, str]]:
+    """Explicit BIST listing identity for pilot equities. Not a type guess."""
+    canon = normalize_bist_symbol(symbol)
+    if not canon:
+        return None
+    row = CANONICAL_BIST_PROVIDER_MAPPINGS.get(canon)
+    if not row:
+        return None
+    return {
+        "symbol": canon,
+        "exchange": str(row.get("exchange") or "IST").strip().upper(),
+        "market": str(row.get("market") or "TR").strip().upper(),
+        "country": "TR",
+        "currency": _normalize_currency(row.get("currency") or "TRY"),
+        "instrument_type": INSTRUMENT_EQUITY,
+        "issuer_name": str(row.get("company_name") or canon),
+        "source": SOURCE_BIST,
+    }
+
+
 def canonical_bist_provider_mapping(portfolio_symbol: str) -> Optional[Dict[str, str]]:
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     row = CANONICAL_BIST_PROVIDER_MAPPINGS.get(wanted)
     return dict(row) if row else None
 
 
 def alpha_vantage_bist_provider_symbol(portfolio_symbol: str) -> Optional[str]:
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     return ALPHA_VANTAGE_BIST_PROVIDER_SYMBOLS.get(wanted)
 
 
 def twelve_data_bist_request(portfolio_symbol: str) -> Optional[Dict[str, str]]:
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     row = TWELVE_DATA_BIST_PROVIDER_REQUESTS.get(wanted)
     return dict(row) if row else None
 
 
 def borsa_istanbul_eod_series(portfolio_symbol: str) -> Optional[str]:
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     if not wanted:
         return None
     known = BORSA_ISTANBUL_EOD_PROVIDER_SERIES.get(wanted)
@@ -111,13 +167,13 @@ def select_bist_provider_mapping(
 
     Never accepts a USD/US hit (e.g. BIMT) as a BIST mapping.
     """
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     matches: List[Dict[str, Any]] = []
     for row in search_rows:
         provider_symbol = str(row.get("symbol") or "").strip().upper()
         if not provider_symbol:
             continue
-        currency = normalize_currency(row.get("currency"))
+        currency = _normalize_currency(row.get("currency"))
         exchange = str(
             row.get("exchange") or row.get("exchangeShortName") or ""
         ).strip().upper()
@@ -149,14 +205,14 @@ def select_bist_provider_mapping(
         "portfolio_symbol": wanted,
         "provider_symbol": provider_symbol,
         "company_name": str(chosen.get("name") or chosen.get("companyName") or wanted),
-        "currency": normalize_currency(chosen.get("currency") or "TRY"),
+        "currency": _normalize_currency(chosen.get("currency") or "TRY"),
         "exchange": str(chosen.get("exchange") or "IST").strip().upper(),
         "market": "TR",
     }
 
 
 def resolve_bist_provider_symbol(fmp_client, portfolio_symbol: str) -> Optional[Dict[str, str]]:
-    wanted = normalize_symbol(portfolio_symbol)
+    wanted = normalize_bist_symbol(portfolio_symbol) or normalize_symbol(portfolio_symbol)
     if wanted not in BIST_PORTFOLIO_SYMBOLS:
         return None
     return select_bist_provider_mapping(wanted, fmp_search_hits(fmp_client, wanted))

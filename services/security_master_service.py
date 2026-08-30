@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from repositories.security_master_repository import SecurityMasterRepository
 from services.security_identity_contract import IDENTITY_FACT_SOURCES
+from services.bist_symbol_mapping import canonical_bist_identity, normalize_bist_symbol
 from services.security_master_contract import (
     IDENTIFIER_TYPE_CUSIP,
     IDENTIFIER_TYPE_ISIN,
@@ -24,6 +25,7 @@ from services.security_master_contract import (
     RESOLUTION_CONFLICT,
     RESOLUTION_RESOLVED,
     RESOLUTION_UNKNOWN,
+    SOURCE_BIST,
     SOURCE_CANONICAL_STATIC,
     SOURCE_PRECEDENCE,
     SOURCE_PROVIDER_EXPLICIT,
@@ -63,6 +65,9 @@ def infer_identifier_type(raw: Any) -> str:
 def normalize_identifier(raw: Any, *, identifier_type: Optional[str] = None) -> tuple[str, str]:
     inferred = str(identifier_type or infer_identifier_type(raw)).strip().upper()
     if inferred == IDENTIFIER_TYPE_TICKER:
+        bist = normalize_bist_symbol(raw)
+        if bist:
+            return bist, inferred
         return listing_identity(raw), inferred
     return str(raw or "").strip().upper().replace(" ", ""), inferred
 
@@ -98,6 +103,30 @@ def _canonical_static_fact(identifier: str, identifier_type: str) -> Optional[Se
     return None
 
 
+def _bist_listing_fact(identifier: str, identifier_type: str) -> Optional[SecurityFact]:
+    if identifier_type != IDENTIFIER_TYPE_TICKER:
+        return None
+    identity = canonical_bist_identity(identifier)
+    if identity is None:
+        return None
+    return SecurityFact(
+        identifier=identity["symbol"],
+        identifier_type=IDENTIFIER_TYPE_TICKER,
+        instrument_type=INSTRUMENT_EQUITY,
+        source=SOURCE_BIST,
+        observed_at=_utcnow_iso(),
+        symbol=identity["symbol"],
+        exchange=identity["exchange"],
+        issuer_name=identity["issuer_name"],
+        source_reference="bist_symbol_mapping.CANONICAL_BIST_PROVIDER_MAPPINGS",
+        metadata={
+            "market": identity["market"],
+            "country": identity["country"],
+            "currency": identity["currency"],
+        },
+    )
+
+
 def listing_row_to_fact(row: Mapping[str, Any]) -> Optional[SecurityFact]:
     identity = listing_index_key(row)
     instrument = listing_instrument_type(row)
@@ -125,6 +154,7 @@ def memory_security_master(
     rows: Sequence[Mapping[str, Any]],
     *,
     include_canonical_static: bool = True,
+    include_bist_listing: bool = True,
 ) -> "SecurityMasterService":
     """Build an in-memory service from already-loaded fact rows."""
     repo = SecurityMasterRepository()
@@ -137,13 +167,18 @@ def memory_security_master(
         if not key[0] or not key[1] or not key[2]:
             continue
         repo._memory[key] = dict(row)
-    return SecurityMasterService(repo=repo, include_canonical_static=include_canonical_static)
+    return SecurityMasterService(
+        repo=repo,
+        include_canonical_static=include_canonical_static,
+        include_bist_listing=include_bist_listing,
+    )
 
 
 def production_security_master(
     client: Any,
     *,
     include_canonical_static: bool = True,
+    include_bist_listing: bool = True,
 ) -> "SecurityMasterService":
     """Load production facts once, then resolve in-memory. Fail closed without a client."""
     if client is None:
@@ -153,6 +188,7 @@ def production_security_master(
     return memory_security_master(
         SecurityMasterRepository(client).list_all(),
         include_canonical_static=include_canonical_static,
+        include_bist_listing=include_bist_listing,
     )
 
 
@@ -176,10 +212,12 @@ class SecurityMasterService:
         repo: Optional[SecurityMasterRepository] = None,
         listing_index: Optional[Mapping[str, Mapping[str, Any]]] = None,
         include_canonical_static: bool = True,
+        include_bist_listing: bool = True,
     ) -> None:
         self.repo = repo or SecurityMasterRepository()
         self.listing_index = dict(listing_index or {})
         self.include_canonical_static = include_canonical_static
+        self.include_bist_listing = include_bist_listing
 
     def register_listing_index(self, rows: Iterable[Mapping[str, Any]]) -> int:
         added = 0
@@ -282,6 +320,10 @@ class SecurityMasterService:
         listing_fact = listing_row_to_fact(listing_row) if listing_row else None
         if listing_fact is not None and SOURCE_US_LISTING not in sources:
             candidates.append(listing_fact)
+        if self.include_bist_listing and SOURCE_BIST not in sources:
+            bist = _bist_listing_fact(ident, itype)
+            if bist is not None:
+                candidates.append(bist)
         if self.include_canonical_static and SOURCE_CANONICAL_STATIC not in sources:
             static = _canonical_static_fact(ident, itype)
             if static is not None:

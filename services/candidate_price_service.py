@@ -4,6 +4,7 @@ from typing import Dict, Iterable, Optional, Tuple
 
 from repositories.candidate_repository import CandidateRepository
 from services.asset_capability_contract import capability_for_asset_class
+from services.bist_symbol_mapping import normalize_bist_symbol
 from services.candidate_identity import (
     MARKET_ALIASES,
     numeric_current_price,
@@ -76,7 +77,9 @@ class CandidatePriceService:
                 error="unsupported_pricing",
             )
 
-        sym = str(symbol or "").strip().upper()
+        canonical = normalize_bist_symbol(symbol)
+        sym = canonical or str(symbol or "").strip().upper()
+        preferred_market = market or ("TR" if canonical else market)
         if sym in self._cache:
             return self._cache[sym]
 
@@ -92,7 +95,7 @@ class CandidatePriceService:
             rows = [legacy] if isinstance(legacy, dict) else []
         candidate = select_persisted_price_candidate(
             rows,
-            preferred_market=market,
+            preferred_market=preferred_market,
         )
         price_raw = numeric_current_price(candidate)
         asset_currency = normalize_currency(

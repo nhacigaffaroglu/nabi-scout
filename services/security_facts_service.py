@@ -6,7 +6,8 @@ Consumers must not construct SecurityFacts independently.
 Source precedence (audit-first, production ownership):
 
 Identity:
-  Security Master → candidate listing fields → unavailable
+  Security Master (including bist_listing for BIST pilots) → candidate listing fields → unavailable
+  BIST identity/currency does not invent financial or valuation completeness.
 
 Financial statement facts:
   SEC extract_financials (passed in or local cache replay)
@@ -39,6 +40,7 @@ import math
 from dataclasses import dataclass, fields
 from typing import Any, Mapping, Optional
 
+from services.bist_symbol_mapping import normalize_bist_symbol
 from services.security_intelligence_contract import (
     AUTHORITY_CANDIDATE,
     AUTHORITY_COMPANY_INTELLIGENCE,
@@ -690,6 +692,25 @@ def _quality_summary(slots: _FactSlots, *, stale: bool) -> dict[str, Any]:
     }
 
 
+def _winning_identity_fact(resolution: Any) -> Any:
+    facts = getattr(resolution, "facts", ()) or ()
+    source = getattr(resolution, "source", None)
+    for fact in facts:
+        if getattr(fact, "source", None) == source:
+            return fact
+    return facts[0] if facts else None
+
+
+def _resolve_identity_resolution(symbol: str, security_resolution: Any) -> Any:
+    if security_resolution is not None:
+        return security_resolution
+    if not normalize_bist_symbol(symbol):
+        return None
+    from services.security_master_service import SecurityMasterService
+
+    return SecurityMasterService().resolve_security(symbol)
+
+
 class SecurityFactsService:
     """Canonical fact assembler. No writes. No live provider calls by default."""
 
@@ -743,7 +764,7 @@ class SecurityFactsService:
         client: Any = None,
         local_momentum: Any = None,
     ) -> SecurityFactsBuildResult:
-        ticker = _text(symbol).upper()
+        ticker = normalize_bist_symbol(symbol) or _text(symbol).upper()
         cand = dict(candidate or {})
         snap = dict(participation_snapshot or {})
         slots = _FactSlots()
@@ -774,23 +795,25 @@ class SecurityFactsService:
             snap.get("assessed_at"),
             snap.get("as_of"),
         )
-        _derive_comparable(slots, currency, as_of)
-
-        resolution = security_resolution
+        resolution = _resolve_identity_resolution(ticker, security_resolution)
         name = ""
         exchange = ""
         resolved_type = instrument_type
         if resolution is not None:
             resolved_type = resolved_type or _text(getattr(resolution, "instrument_type", ""))
-            facts = getattr(resolution, "facts", ()) or ()
-            if facts:
-                name = _text(getattr(facts[0], "issuer_name", ""))
-                exchange = _text(getattr(facts[0], "exchange", ""))
+            winning = _winning_identity_fact(resolution)
+            if winning is not None:
+                name = _text(getattr(winning, "issuer_name", ""))
+                exchange = _text(getattr(winning, "exchange", ""))
+                metadata = getattr(winning, "metadata", None) or {}
+                if isinstance(metadata, Mapping):
+                    currency = currency or _text(metadata.get("currency"))
             if hasattr(resolution, "to_dict"):
                 slots.sources.append("security_master")
         name = name or _text(cand.get("company_name"))
         exchange = exchange or _text(cand.get("exchange_name") or cand.get("exchange"))
         resolved_type = resolved_type or _text(cand.get("security_type"))
+        _derive_comparable(slots, currency, as_of)
 
         quality = _quality_summary(slots, stale=candidate_stale)
         missing = tuple(name for name, value in slots.values.items() if value is None)
