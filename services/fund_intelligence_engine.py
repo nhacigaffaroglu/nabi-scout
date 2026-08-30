@@ -22,6 +22,8 @@ from services.fund_product_contract import (
     DIM_COUNTRY_CONCENTRATION,
     DIM_CREDIT_QUALITY,
     DIM_CREDIT_RISK,
+    DIM_CURRENCY_DENOMINATION,
+    DIM_DEVELOPED_EMERGING,
     DIM_CURRENCY_EXPOSURE,
     DIM_DIVERSIFICATION_EVAL,
     DIM_DURATION,
@@ -44,6 +46,7 @@ from services.fund_product_contract import (
     FUND_EVAL_FACTS_VERSION,
     FundDimensionResult,
     FundFacts,
+    FundExposureEvidence,
     FundFixedIncomeRiskEvidence,
     FundIntelligenceEvaluation,
     FundLookthroughSummary,
@@ -229,6 +232,32 @@ def _lookthrough_ready(lookthrough: Optional[FundLookthroughSummary]) -> bool:
     return lookthrough is not None and lookthrough.holdings_count > 0
 
 
+def _country_dimension(exposure: Optional[FundExposureEvidence]) -> FundDimensionResult:
+    if exposure is not None and exposure.country_reliable:
+        return _ready(
+            DIM_COUNTRY_CONCENTRATION,
+            _concentration_score(exposure.largest_country_weight, exposure.top5_country_weight),
+            "nport_invCountry",
+        )
+    return _ready(DIM_COUNTRY_CONCENTRATION, None, "official_country")
+
+
+def _denomination_and_style_dims(exposure: Optional[FundExposureEvidence]) -> list[FundDimensionResult]:
+    if exposure is not None and exposure.denomination_present:
+        denomination = _ready(
+            DIM_CURRENCY_DENOMINATION,
+            None,
+            "nport_curCd",
+            "not_fx_exposure",
+        )
+    else:
+        denomination = _missing(DIM_CURRENCY_DENOMINATION, "official_denomination")
+    return [
+        denomination,
+        _missing(DIM_DEVELOPED_EMERGING, "official_developed_emerging"),
+    ]
+
+
 def _tracking_dimension(performance: Optional[OfficialFundPerformance]) -> FundDimensionResult:
     if (
         performance is None
@@ -255,6 +284,7 @@ def evaluate_official_fund_intelligence(
     official_risk_series_present: bool = False,
     fixed_income: Optional[FundFixedIncomeRiskEvidence] = None,
     use_official_fixed_income: bool = True,
+    exposure: Optional[FundExposureEvidence] = None,
 ) -> FundIntelligenceEvaluation:
     from services.official_sp_funds_product import default_official_sp_funds_provider
 
@@ -280,6 +310,9 @@ def evaluate_official_fund_intelligence(
         fi_view = resolved.fixed_income_risk(fund)
     if fi_view is not None and fi_view.official_issuer_field_present:
         official_issuer_present = True
+    exposure_view = exposure
+    if exposure_view is None and hasattr(resolved, "exposure"):
+        exposure_view = resolved.exposure(fund)
     return evaluate_fund_intelligence(
         facts=resolved.facts(fund),
         mandate=resolved.mandate(fund),
@@ -292,6 +325,8 @@ def evaluate_official_fund_intelligence(
         official_risk_series_present=official_risk_series_present,
         official_issuer_present=official_issuer_present,
         fixed_income=fi_view,
+        exposure=exposure_view,
+        official_country_weights=bool(exposure_view is not None and exposure_view.country_reliable),
     )
 
 
@@ -314,6 +349,7 @@ def evaluate_fund_intelligence(
     official_yield: Optional[OfficialFundYield] = None,
     official_issuer_present: bool = False,
     fixed_income: Optional[FundFixedIncomeRiskEvidence] = None,
+    exposure: Optional[FundExposureEvidence] = None,
 ) -> FundIntelligenceEvaluation:
     if official_yield is not None and official_yield.sec_yield_30d is not None:
         official_yield_present = True
@@ -406,15 +442,18 @@ def evaluate_fund_intelligence(
         if region == "US":
             dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "US_EQUITY_PROFILE"))
             dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "US_EQUITY_PROFILE"))
+            dimensions.append(_na(DIM_CURRENCY_DENOMINATION, "US_EQUITY_PROFILE"))
+            dimensions.append(_na(DIM_DEVELOPED_EMERGING, "US_EQUITY_PROFILE"))
         elif official_country_weights:
-            dimensions.append(_ready(DIM_COUNTRY_CONCENTRATION, None, "official_country"))
+            dimensions.append(_country_dimension(exposure))
         else:
             dimensions.append(_missing(DIM_COUNTRY_CONCENTRATION, "official_country_weights"))
         if region != "US":
             if official_currency_weights:
-                dimensions.append(_ready(DIM_CURRENCY_EXPOSURE, None, "official_currency"))
+                dimensions.append(_ready(DIM_CURRENCY_EXPOSURE, None, "official_fx_exposure"))
             else:
-                dimensions.append(_missing(DIM_CURRENCY_EXPOSURE, "official_currency_weights"))
+                dimensions.append(_missing(DIM_CURRENCY_EXPOSURE, "official_fx_exposure"))
+            dimensions.extend(_denomination_and_style_dims(exposure))
         dimensions.append(_na(DIM_DURATION, "NOT_SUKUK"))
         dimensions.append(_na(DIM_YIELD, "NOT_SUKUK"))
         dimensions.append(_na(DIM_CREDIT_QUALITY, "NOT_SUKUK"))
@@ -426,6 +465,8 @@ def evaluate_fund_intelligence(
         dimensions.append(tracking if tracking.status != DIM_STATUS_MISSING else _na(DIM_TRACKING_EVAL, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "SUKUK_PROFILE"))
+        dimensions.append(_na(DIM_CURRENCY_DENOMINATION, "SUKUK_PROFILE"))
+        dimensions.append(_na(DIM_DEVELOPED_EMERGING, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
         if official_duration_present:
             dimensions.append(_ready(DIM_DURATION, None, "official_duration"))
@@ -499,10 +540,11 @@ def evaluate_fund_intelligence(
                 )
             )
         if official_country_weights:
-            dimensions.append(_ready(DIM_COUNTRY_CONCENTRATION, None, "official_country"))
+            dimensions.append(_country_dimension(exposure))
         else:
             dimensions.append(_missing(DIM_COUNTRY_CONCENTRATION, "official_country_weights"))
         dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "OPTIONAL_REIT"))
+        dimensions.extend(_denomination_and_style_dims(exposure))
     dimensions.append(_na(DIM_PORTFOLIO_FIT_EVAL, "OWNED_BY_8E"))
 
     by_name = {row.name: row for row in dimensions}
@@ -567,6 +609,7 @@ def evaluate_fund_intelligence(
         "official_sp_funds_product",
         "official_fund_holdings" if lookthrough is not None else "product_facts_only",
         "official_nport_fixed_income" if fixed_income is not None else "nport_fixed_income_absent",
+        "official_nport_exposure" if exposure is not None else "nport_exposure_absent",
         "purification_metadata_only",
     )
     return FundIntelligenceEvaluation(

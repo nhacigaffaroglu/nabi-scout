@@ -149,7 +149,8 @@ class IssuerCountryCurrencyFirewallTests(unittest.TestCase):
 
     def test_spwo_does_not_guess_country_or_currency(self) -> None:
         view = evaluate_official_fund_intelligence("SPWO")
-        self.assertEqual(view.evidence_map()[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_MISSING)
+        self.assertEqual(view.evidence_map()[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_READY)
+        self.assertEqual(view.dimension(DIM_COUNTRY_CONCENTRATION).facts_used, ("nport_invCountry",))
         self.assertEqual(view.evidence_map()[DIM_CURRENCY_EXPOSURE], DIM_STATUS_MISSING)
         self.assertEqual(view.evidence_map()[DIM_DIVERSIFICATION_EVAL], DIM_STATUS_READY)
         self.assertEqual(view.evidence_map()[DIM_CONCENTRATION_EVAL], DIM_STATUS_READY)

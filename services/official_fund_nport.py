@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 from services.fund_product_contract import (
+    FundExposureEvidence,
     FundFixedIncomeRiskEvidence,
     NportDebtHolding,
     NportTenorRisk,
@@ -384,5 +385,117 @@ def parse_official_nport_fixed_income(
         source_url=nport_source_url(cik=expected.cik, accession=acc),
         provenance=(NPORT_SOURCE, "official_nport_fixed_income"),
         reliability=reliability,
+        limitations=tuple(limitations),
+    )
+
+
+def _nport_currency(node: ET.Element) -> Optional[str]:
+    cur = None
+    cond = None
+    for child in node.iter():
+        local = _local(child.tag).lower()
+        if local == "curcd" and cur is None:
+            cur = _official_issuer_name(_attr_or_text(child) or (child.text if child is not None else None))
+        elif local == "currencyconditional" and cond is None:
+            cond = _official_issuer_name(child.get("curCd") or child.get("curcd"))
+    return cur or cond
+
+
+def parse_official_nport_exposure(
+    xml_text: str,
+    *,
+    symbol: str,
+    accession: str = "",
+) -> Optional[FundExposureEvidence]:
+    """Parse official N-PORT invCountry and denomination currency only.
+
+    Does not infer country from ticker, name, CUSIP, ISIN, or exchange.
+    Denomination currency is not FX exposure.
+    """
+    expected = nport_identity(symbol)
+    if expected is None:
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return None
+    series = (_first_text(root, ("seriesId", "seriesid")) or "").upper()
+    class_id = (_first_text(root, ("classId", "classid")) or "").upper()
+    if series != expected.series_id or class_id != expected.class_id:
+        return None
+    as_of = _first_text(root, ("repPdDate", "rptPdDate"))
+    country_weights: dict[str, float] = {}
+    currency_weights: dict[str, float] = {}
+    unknown_country = 0.0
+    unknown_currency = 0.0
+    raw_sum = 0.0
+    count = 0
+    for node in root.iter():
+        if _local(node.tag).lower() != "invstorsec":
+            continue
+        count += 1
+        pct_node = None
+        country_node = None
+        for child in node.iter():
+            local = _local(child.tag).lower()
+            if local == "pctval" and pct_node is None:
+                pct_node = child
+            elif local == "invcountry" and country_node is None:
+                country_node = child
+        weight = _parse_number(_attr_or_text(pct_node) or (pct_node.text if pct_node is not None else None)) or 0.0
+        raw_sum += weight
+        country = _official_issuer_name(
+            _attr_or_text(country_node) or (country_node.text if country_node is not None else None)
+        )
+        if country:
+            country_weights[country.upper()] = country_weights.get(country.upper(), 0.0) + weight
+        else:
+            unknown_country += weight
+        currency = _nport_currency(node)
+        if currency:
+            currency_weights[currency.upper()] = currency_weights.get(currency.upper(), 0.0) + weight
+        else:
+            unknown_currency += weight
+    residual = round(max(0.0, 100.0 - raw_sum), 4)
+    unknown_country = round(unknown_country + residual, 4)
+    unknown_currency = round(unknown_currency + residual, 4)
+    ranked = sorted(country_weights.items(), key=lambda item: item[1], reverse=True)
+    largest = ranked[0] if ranked else None
+    top5 = round(sum(weight for _, weight in ranked[:5]), 4) if ranked else None
+    acc = accession or _first_text(root, ("accessionNumber", "accession")) or ""
+    limitations = [
+        "COUNTRY_IS_NPORT_INVCOUNTRY",
+        "CURRENCY_IS_NPORT_DENOMINATION_NOT_FX",
+        "NO_PROPERTY_TYPE_FIELD",
+        "NO_DEVELOPED_EMERGING_FIELD",
+        "RESIDUAL_NOT_RENORMALIZED",
+    ]
+    return FundExposureEvidence(
+        fund_symbol=expected.symbol,
+        as_of=as_of,
+        country_weights=tuple((code, round(weight, 4)) for code, weight in ranked),
+        currency_weights=tuple(
+            (code, round(weight, 4))
+            for code, weight in sorted(currency_weights.items(), key=lambda item: item[1], reverse=True)
+        ),
+        sector_weights=(),
+        property_type_weights=(),
+        developed_emerging_weights=(),
+        known_country_weight=round(sum(country_weights.values()), 4),
+        unknown_country_weight=unknown_country,
+        known_currency_weight=round(sum(currency_weights.values()), 4),
+        unknown_currency_weight=unknown_currency,
+        holding_count=count,
+        raw_weight_sum=round(raw_sum, 4),
+        residual_weight=residual,
+        largest_country=largest[0] if largest else None,
+        largest_country_weight=round(largest[1], 4) if largest else None,
+        top5_country_weight=top5,
+        country_count=len(country_weights),
+        currency_semantics="NPORT_DENOMINATION",
+        source=NPORT_SOURCE,
+        source_url=nport_source_url(cik=expected.cik, accession=acc),
+        provenance=(NPORT_SOURCE, "official_nport_exposure"),
+        reliability="official_nport" if ranked else "missing",
         limitations=tuple(limitations),
     )

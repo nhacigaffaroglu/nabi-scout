@@ -379,6 +379,51 @@ class FundFixedIncomeRiskEvidence:
 
 
 @dataclass(frozen=True)
+class FundExposureEvidence:
+    """Official N-PORT country/currency facts only. No ticker or name inference."""
+
+    fund_symbol: str
+    as_of: Optional[str]
+    country_weights: tuple[tuple[str, float], ...]
+    currency_weights: tuple[tuple[str, float], ...]
+    sector_weights: tuple[tuple[str, float], ...]
+    property_type_weights: tuple[tuple[str, float], ...]
+    developed_emerging_weights: tuple[tuple[str, float], ...]
+    known_country_weight: float
+    unknown_country_weight: float
+    known_currency_weight: float
+    unknown_currency_weight: float
+    holding_count: int
+    raw_weight_sum: float
+    residual_weight: float
+    largest_country: Optional[str]
+    largest_country_weight: Optional[float]
+    top5_country_weight: Optional[float]
+    country_count: int
+    currency_semantics: str
+    source: str
+    source_url: str
+    provenance: tuple[str, ...]
+    reliability: str
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @property
+    def country_reliable(self) -> bool:
+        return (
+            self.country_count > 0
+            and self.unknown_country_weight <= 10.0
+            and self.largest_country_weight is not None
+        )
+
+    @property
+    def denomination_present(self) -> bool:
+        return bool(self.currency_weights) and self.unknown_currency_weight <= 10.0
+
+
+@dataclass(frozen=True)
 class OverlapRow:
     underlying_symbol: str
     direct_weight_pct: float
@@ -455,8 +500,10 @@ DIM_COUNTRY_CONCENTRATION = "COUNTRY_CONCENTRATION"
 DIM_CURRENCY_EXPOSURE = "CURRENCY_EXPOSURE"
 DIM_RATE_RISK = "RATE_RISK"
 DIM_CREDIT_RISK = "CREDIT_RISK"
+DIM_CURRENCY_DENOMINATION = "CURRENCY_DENOMINATION"
+DIM_DEVELOPED_EMERGING = "DEVELOPED_EMERGING"
 
-FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1f.1"
+FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1g.1"
 FUND_EVAL_FACTS_VERSION = "fund_facts_1d.1"
 PERFORMANCE_BASIS_NAV = "NAV"
 PERFORMANCE_BASIS_MARKET_PRICE = "MARKET_PRICE"

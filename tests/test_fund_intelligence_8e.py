@@ -140,11 +140,12 @@ class FundIntelligenceEvaluationTests(unittest.TestCase):
             if symbol == "SPRE":
                 self.assertEqual(evidence[DIM_REAL_ESTATE_CONCENTRATION], DIM_STATUS_MISSING)
                 self.assertEqual(evidence[DIM_DURATION], DIM_STATUS_NOT_APPLICABLE)
+                self.assertEqual(evidence[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_READY)
             if symbol == "SPUS":
                 self.assertEqual(evidence[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_NOT_APPLICABLE)
                 self.assertEqual(evidence[DIM_CURRENCY_EXPOSURE], DIM_STATUS_NOT_APPLICABLE)
             if symbol == "SPWO":
-                self.assertEqual(evidence[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_MISSING)
+                self.assertEqual(evidence[DIM_COUNTRY_CONCENTRATION], DIM_STATUS_READY)
                 self.assertEqual(evidence[DIM_CURRENCY_EXPOSURE], DIM_STATUS_MISSING)
 
     def test_lookthrough_concentration_and_unknown_holdings(self) -> None:

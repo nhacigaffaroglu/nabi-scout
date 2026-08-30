@@ -535,6 +535,14 @@ class OfficialSpFundsProductProvider:
 
         return load_spsk_nport_fixed_income()
 
+    def exposure(self, symbol: str):
+        fund = _norm_symbol(symbol)
+        if fund not in {"SPRE", "SPWO"}:
+            return None
+        from services.official_fund_nport_exposure_evidence import load_official_nport_exposure
+
+        return load_official_nport_exposure(fund)
+
 
 class TefasFundProductProvider:
     """Architecture stub. Same contract, no SP-Funds-only engine."""
