@@ -925,6 +925,8 @@ with tab_adviser:
         fund_snapshots=adviser_fund_snapshots,
         security_master=adviser_security_master,
         identity_service=adviser_identity,
+        portfolio_security_client=client,
+        user_id=user_id,
     )
 
     with st.expander("Detaylar", expanded=False):

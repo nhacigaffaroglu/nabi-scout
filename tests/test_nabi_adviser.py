@@ -259,7 +259,8 @@ class AdversarialAdviserTests(unittest.TestCase):
             ],
             llm_config=_cfg(usable=False),
         )
-        self.assertIn("Önce araştırmayı tamamla", result.answer)
+        self.assertIn("Veri yetersiz", result.answer)
+        self.assertNotIn(ACTION_CONSIDER_NEW_POSITION, result.answer)
         self.assertNotIn(ACTION_RESEARCH_FIRST, result.answer)
         self.assertNotIn("hedef fiyat", result.answer.lower())
         self.assertNotIn("catalyst invented", result.answer.lower())

@@ -6,6 +6,9 @@ import json
 from typing import Any, Mapping, Optional, Sequence
 
 from services.nabi_adviser_contract import (
+    INTENT_PARTICIPATION_EXPLAIN,
+    INTENT_RESEARCH_EXPLAIN,
+    INTENT_SYMBOL_EXPLAIN,
     NabiAdviserAnswer,
     NabiAdviserContext,
     present_user_text,
@@ -17,6 +20,10 @@ from services.nabi_decision_contract import (
     ACTION_CONSIDER_TOP_UP,
 )
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.portfolio_security_decision_contract import (
+    INCREASE_DECISIONS,
+    PortfolioSecurityDecision,
+)
 from services.wealth_adviser_config import AdviserLlmConfig, load_adviser_llm_config
 from services.wealth_adviser_llm_client import WealthAdviserLlmClient, WealthAdviserLlmError
 from services.wealth_adviser_output_validator import (
@@ -28,13 +35,21 @@ from services.wealth_new_money_allocation import AllocationPlan
 _SYSTEM = """You are NABI Danışman. You only explain the supplied canonical context in Turkish.
 
 Rules:
-- Do not decide Participation, NABI Score, ADAY class, timing, portfolio fit, Goal, or New Money.
+- Do not decide Participation, research_allowed, 8E decisions, NABI Score, ADAY class, timing, portfolio fit, Goal, or New Money.
 - Do not invent missing evidence, catalysts, valuation, or price targets.
 - Do not issue BUY/SELL/al/sat orders or quantities.
+- Do not create CONSIDER_NEW_POSITION or CONSIDER_TOP_UP independently.
+- Do not change exposure_increase_allowed, Goal output, or AllocationPlan.
 - If a field is missing, say veri yetersiz.
 - Keep the canonical primary action unchanged.
 - Return JSON: {"answer": "..."}.
 """
+
+_SYMBOL_ACTION_INTENTS = {
+    INTENT_SYMBOL_EXPLAIN,
+    INTENT_PARTICIPATION_EXPLAIN,
+    INTENT_RESEARCH_EXPLAIN,
+}
 
 
 def _contains_trade_command(text: str) -> bool:
@@ -53,6 +68,25 @@ def _violates_halal_firewall(context: NabiAdviserContext, text: str) -> bool:
     if ACTION_CONSIDER_NEW_POSITION in blob or ACTION_CONSIDER_TOP_UP in blob:
         return True
     return False
+
+
+def _llm_invents_security_action(context: NabiAdviserContext, text: str) -> bool:
+    blob = str(text or "")
+    if ACTION_CONSIDER_NEW_POSITION not in blob and ACTION_CONSIDER_TOP_UP not in blob:
+        return False
+    allowed = any(
+        item.decision in INCREASE_DECISIONS and item.exposure_increase_allowed
+        for item in context.security_decisions
+    )
+    return not allowed
+
+
+def _canonical_action_from_context(context: NabiAdviserContext) -> str:
+    if context.intent in _SYMBOL_ACTION_INTENTS and context.focus_symbol:
+        for item in context.security_decisions:
+            if item.symbol == str(context.focus_symbol).strip().upper():
+                return item.decision
+    return str(context.current_recommendation.get("action_code") or "")
 
 
 def _llm_messages(context: NabiAdviserContext) -> list[dict[str, str]]:
@@ -106,6 +140,9 @@ def answer_nabi_adviser(
     fund_snapshots: Optional[Mapping[str, Any]] = None,
     security_master=None,
     identity_service=None,
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
+    portfolio_security_client: Any = None,
+    user_id: Optional[str] = None,
 ) -> NabiAdviserAnswer:
     context = build_nabi_adviser_context(
         question,
@@ -125,6 +162,9 @@ def answer_nabi_adviser(
         fund_snapshots=fund_snapshots,
         security_master=security_master,
         identity_service=identity_service,
+        security_decisions=security_decisions,
+        portfolio_security_client=portfolio_security_client,
+        user_id=user_id,
     )
     parsed = parse_adviser_question(question, conversation_state)
     followup_state = build_followup_state(
@@ -134,7 +174,7 @@ def answer_nabi_adviser(
         context.new_money_context,
         conversation_state,
     )
-    action = str(context.current_recommendation.get("action_code") or "")
+    action = _canonical_action_from_context(context)
     config = llm_config or load_adviser_llm_config()
     if not config.is_usable:
         return NabiAdviserAnswer(
@@ -161,6 +201,7 @@ def answer_nabi_adviser(
         not explained
         or _contains_trade_command(explained)
         or _violates_halal_firewall(context, explained)
+        or _llm_invents_security_action(context, explained)
     ):
         return NabiAdviserAnswer(
             answer=present_user_text(context.canonical_answer),

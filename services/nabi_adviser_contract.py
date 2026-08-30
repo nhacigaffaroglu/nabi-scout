@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Optional, Tuple
+
+from services.portfolio_security_decision_contract import PortfolioSecurityDecision
 
 INTENT_TODAY_RECOMMENDATION = "TODAY_RECOMMENDATION"
 INTENT_WHY_RECOMMENDATION = "WHY_RECOMMENDATION"
@@ -57,6 +59,11 @@ ACTION_LABELS_TR = {
     "RESEARCH_FIRST": "Önce araştırmayı tamamla",
     "WATCH": "İzle",
     "WAIT": "Bekle",
+    "HOLD": "Mevcut pozisyonu koru",
+    "REVIEW": "Gözden geçir",
+    "REDUCE": "Azaltmayı değerlendir",
+    "AVOID": "Uzak dur",
+    "INSUFFICIENT_DATA": "Veri yetersiz",
     "CONSIDER_NEW_POSITION": "Yeni pozisyon değerlendirilebilir",
     "CONSIDER_TOP_UP": "Pozisyon artırımı değerlendirilebilir",
     "NO_ACTION": "Şimdilik işlem yok",
@@ -66,6 +73,12 @@ ACTION_LABELS_TR = {
     "RESEARCH_OPPORTUNITY": "Öne çıkan fırsatı araştır",
     "HOLD_CURRENT_PORTFOLIO": "Mevcut portföyü koru",
 }
+REASON_8E_VS_NEW_MONEY_CONFLICT = "8E_VS_NEW_MONEY_CONFLICT"
+EIGHT_E_VS_NEW_MONEY_COPY = (
+    "8E bu sembol için exposure artışına izin vermiyor. "
+    "New Money bir tutar üretti. Bu çelişki çözülmeden "
+    "Adviser yeni bir yatırım aksiyonu yazmaz."
+)
 MISSING_EVIDENCE_LABELS_TR = {
     "thesis_evidence": "yatırım tezi",
     "canonical_valuation_classification": "değerleme sınıflandırması",
@@ -154,6 +167,8 @@ class NabiAdviserContext:
     canonical_answer: str
     prior_context: Optional[Mapping[str, Any]] = None
     economic_exposure_context: Optional[dict[str, Any]] = None
+    security_decisions: Tuple[PortfolioSecurityDecision, ...] = ()
+    blockers: Tuple[str, ...] = field(default_factory=tuple)
 
     def to_llm_payload(self) -> dict[str, Any]:
         return {
@@ -170,6 +185,8 @@ class NabiAdviserContext:
             "research_intelligence": self.research_intelligence,
             "portfolio_fit": self.portfolio_fit,
             "opportunity_comparison": list(self.opportunity_comparison),
+            "security_decisions": [item.to_dict() for item in self.security_decisions],
+            "blockers": list(self.blockers),
             "reason_codes": list(self.reason_codes),
             "evidence_refs": [
                 item.to_dict() if hasattr(item, "to_dict") else item

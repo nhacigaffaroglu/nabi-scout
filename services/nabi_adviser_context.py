@@ -10,6 +10,7 @@ from services.candidate_pipeline_presentation import is_actionable_opportunity
 from services.nabi_adviser_contract import (
     AMOUNT_CLARIFICATION,
     AMOUNT_REQUIRED,
+    EIGHT_E_VS_NEW_MONEY_COPY,
     INSUFFICIENT_DATA,
     INTENT_GENERAL_NABI,
     INTENT_GOAL_EXPLAIN,
@@ -25,6 +26,7 @@ from services.nabi_adviser_contract import (
     NO_ACTIONABLE_OPPORTUNITY,
     NOT_A_TRADE,
     PENDING_NEW_MONEY_AMOUNT,
+    REASON_8E_VS_NEW_MONEY_CONFLICT,
     UNKNOWN,
     NabiAdviserContext,
     format_try_display,
@@ -34,11 +36,8 @@ from services.nabi_adviser_contract import (
 )
 from services.nabi_adviser_intent import ParsedAdviserQuestion, parse_adviser_question
 from services.nabi_decision_contract import (
-    ACTION_BLOCKED_PARTICIPATION,
     ACTION_CONSIDER_NEW_POSITION,
     ACTION_CONSIDER_TOP_UP,
-    ACTION_RESEARCH_FIRST,
-    ACTION_WATCH,
     CandidateInvestmentDecision,
     NabiDecisionV3,
 )
@@ -89,6 +88,17 @@ from services.hybrid_exposure_allocation_policy import (
     resolve_hybrid_allocation_policy,
     resolve_hybrid_portfolio_mode,
 )
+from services.portfolio_security_decision_contract import (
+    DECISION_INSUFFICIENT_DATA,
+    DECISION_WATCH,
+    INCREASE_DECISIONS,
+    PortfolioSecurityDecision,
+)
+from services.portfolio_security_decision_service import (
+    evaluate_portfolio_security_for_symbol,
+    fail_closed_portfolio_security_decision,
+)
+from services.wealth_contract import normalize_symbol
 from services.wealth_new_money_allocation import (
     AllocationPlan,
     _allocation_buckets_from_exposure,
@@ -98,9 +108,137 @@ from services.wealth_new_money_allocation import (
     REASON_NO_ELIGIBLE_SECURITY,
 )
 
+SECURITY_CONSIDER_ACTIONS = frozenset(
+    {ACTION_CONSIDER_NEW_POSITION, ACTION_CONSIDER_TOP_UP}
+)
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _index_security_decisions(
+    decisions: Sequence[PortfolioSecurityDecision],
+) -> dict[str, PortfolioSecurityDecision]:
+    return {normalize_symbol(item.symbol): item for item in decisions if normalize_symbol(item.symbol)}
+
+
+def resolve_adviser_security_decisions(
+    symbols: Sequence[str],
+    *,
+    provided: Sequence[PortfolioSecurityDecision] = (),
+    client: Any = None,
+    user_id: Optional[str] = None,
+) -> Tuple[PortfolioSecurityDecision, ...]:
+    """Load 8E via the 8E.4B path. Injected decisions win. Missing symbols fail closed."""
+    by_symbol = _index_security_decisions(provided)
+    seen: list[str] = []
+    out: list[PortfolioSecurityDecision] = []
+    for raw in symbols:
+        symbol = normalize_symbol(raw)
+        if not symbol or symbol in seen:
+            continue
+        seen.append(symbol)
+        if symbol in by_symbol:
+            out.append(by_symbol[symbol])
+        elif client is not None:
+            out.append(
+                evaluate_portfolio_security_for_symbol(client, symbol, user_id=user_id)
+            )
+        else:
+            out.append(fail_closed_portfolio_security_decision(symbol))
+    return tuple(out)
+
+
+def _collect_adviser_symbols(
+    parsed: ParsedAdviserQuestion,
+    rec: Any,
+    view: Any,
+    allocation: Optional[AllocationPlan],
+    new_money: Mapping[str, Any],
+) -> list[str]:
+    symbols: list[str] = []
+    if parsed.focus_symbol:
+        symbols.append(parsed.focus_symbol)
+    symbols.extend(parsed.compare_symbols or ())
+    symbols.extend(parsed.inherited_symbols or ())
+    for value in (
+        getattr(rec, "symbol", None),
+        getattr(view, "deployment_symbol", None),
+        getattr(view, "opportunity_leader", None),
+    ):
+        if value:
+            symbols.append(str(value))
+    if allocation is not None:
+        symbols.extend(item.symbol for item in allocation.recommendations)
+    for item in new_money.get("recommendations") or []:
+        if item.get("symbol"):
+            symbols.append(str(item["symbol"]))
+    return symbols
+
+
+def _apply_8e_security_authority(
+    rec_dict: dict[str, Any],
+    rec: Any,
+    decisions_by_symbol: Mapping[str, PortfolioSecurityDecision],
+) -> dict[str, Any]:
+    """Replace CONSIDER_* recommendation/v3 actions with the 8E decision."""
+    overlaid = dict(rec_dict)
+    symbol = normalize_symbol(
+        getattr(rec, "symbol", None) or overlaid.get("deployment_symbol")
+    )
+    decision = decisions_by_symbol.get(symbol) if symbol else None
+    if overlaid.get("action_code") in SECURITY_CONSIDER_ACTIONS:
+        if decision is None:
+            overlaid["action_code"] = DECISION_INSUFFICIENT_DATA
+            overlaid["primary_action"] = present_action_label(DECISION_INSUFFICIENT_DATA)
+            overlaid["final_action"] = DECISION_INSUFFICIENT_DATA
+            overlaid["exposure_increase_allowed"] = False
+        else:
+            overlaid["action_code"] = decision.decision
+            overlaid["primary_action"] = present_action_label(decision.decision)
+            overlaid["final_action"] = decision.decision
+            overlaid["exposure_increase_allowed"] = decision.exposure_increase_allowed
+            if decision.primary_reasons:
+                overlaid["why_now"] = ", ".join(decision.primary_reasons)
+    elif overlaid.get("final_action") in SECURITY_CONSIDER_ACTIONS:
+        overlaid["final_action"] = (
+            decision.decision if decision is not None else DECISION_INSUFFICIENT_DATA
+        )
+        overlaid["exposure_increase_allowed"] = (
+            decision.exposure_increase_allowed if decision is not None else False
+        )
+    elif decision is not None:
+        overlaid["exposure_increase_allowed"] = decision.exposure_increase_allowed
+    return overlaid
+
+
+def _new_money_eight_e_conflicts(
+    *,
+    allocation: Optional[AllocationPlan],
+    new_money: Mapping[str, Any],
+    decisions_by_symbol: Mapping[str, PortfolioSecurityDecision],
+    authoritative_symbols: Sequence[str] = (),
+) -> Tuple[str, ...]:
+    if new_money.get("status") == AMOUNT_REQUIRED:
+        return ()
+    allowed = {normalize_symbol(item) for item in authoritative_symbols if item}
+    symbols: list[str] = []
+    if allocation is not None:
+        symbols.extend(item.symbol for item in allocation.recommendations)
+    symbols.extend(
+        str(item.get("symbol") or "")
+        for item in (new_money.get("recommendations") or [])
+    )
+    conflicts: list[str] = []
+    for raw in symbols:
+        symbol = normalize_symbol(raw)
+        if allowed and symbol not in allowed:
+            continue
+        decision = decisions_by_symbol.get(symbol)
+        if decision is not None and not decision.exposure_increase_allowed:
+            conflicts.append(REASON_8E_VS_NEW_MONEY_CONFLICT)
+    return tuple(dict.fromkeys(conflicts))
 
 
 def _row_by_symbol(
@@ -115,21 +253,36 @@ def _row_by_symbol(
     return {"symbol": needle}
 
 
-def _decision_dict(item: Optional[CandidateInvestmentDecision]) -> Optional[dict[str, Any]]:
-    if item is None:
+def _decision_dict(
+    item: Optional[CandidateInvestmentDecision],
+    security: Optional[PortfolioSecurityDecision] = None,
+) -> Optional[dict[str, Any]]:
+    if item is None and security is None:
         return None
-    return {
-        "symbol": item.symbol,
-        "final_action": item.final_action,
-        "participation_status": item.participation_status,
-        "research_completeness": item.research_completeness,
-        "decision_class": item.decision_class or UNKNOWN,
-        "nabi_score": item.nabi_score,
-        "timing_state": item.timing_state,
-        "portfolio_fit": item.portfolio_fit,
-        "reason_codes": list(item.reason_codes),
-        "why": item.why,
+    payload = {
+        "symbol": security.symbol if security is not None else item.symbol,
+        "final_action": (
+            security.decision if security is not None else item.final_action
+        ),
+        "participation_status": (
+            security.participation_status
+            if security is not None and security.participation_status
+            else (item.participation_status if item is not None else None)
+        ),
+        "research_completeness": item.research_completeness if item is not None else None,
+        "decision_class": (item.decision_class or UNKNOWN) if item is not None else UNKNOWN,
+        "nabi_score": item.nabi_score if item is not None else None,
+        "timing_state": item.timing_state if item is not None else None,
+        "portfolio_fit": item.portfolio_fit if item is not None else None,
+        "reason_codes": list(item.reason_codes) if item is not None else [],
+        "why": item.why if item is not None else "",
     }
+    if security is not None:
+        payload["security_action"] = security.decision
+        payload["exposure_increase_allowed"] = security.exposure_increase_allowed
+        payload["blocking_reasons"] = list(security.blocking_reasons)
+        payload["research_allowed"] = security.research_allowed
+    return payload
 
 
 def _recommendation_dict(rec: NABIRecommendation, view: NabiDecisionV3) -> dict[str, Any]:
@@ -369,38 +522,33 @@ def _compose_why(
 def _compose_opportunity_status(
     view: NabiDecisionV3,
     actionable_count: int,
+    decisions: Sequence[PortfolioSecurityDecision] = (),
 ) -> str:
-    if actionable_count > 0:
-        investable = [
-            item
-            for item in view.candidate_decisions
-            if item.final_action in {ACTION_CONSIDER_NEW_POSITION, ACTION_CONSIDER_TOP_UP}
-        ]
-        if investable:
-            parts = [
-                f"{item.symbol}: {present_action_label(item.final_action)}"
-                for item in investable
-            ]
-            return "Onaylanmış fırsatlar: " + "; ".join(parts) + f". {NOT_A_TRADE}"
-    lines = [NO_ACTIONABLE_OPPORTUNITY]
-    research_first = [
-        item.symbol
-        for item in view.candidate_decisions
-        if item.final_action == ACTION_RESEARCH_FIRST
+    investable = [
+        item
+        for item in decisions
+        if item.decision in INCREASE_DECISIONS and item.exposure_increase_allowed
     ]
+    if investable:
+        parts = [
+            f"{item.symbol}: {present_action_label(item.decision)}"
+            for item in investable
+        ]
+        return "Onaylanmış fırsatlar: " + "; ".join(parts) + f". {NOT_A_TRADE}"
+    lines = [NO_ACTIONABLE_OPPORTUNITY]
     watch = [
         item.symbol
-        for item in view.candidate_decisions
-        if item.final_action == ACTION_WATCH
+        for item in decisions
+        if item.decision == DECISION_WATCH
     ]
-    if research_first:
-        lines.append(
-            "Onaylı isimler olsa da bazıları önce araştırma gerektiriyor; "
-            "bunlar yatırım fırsatı değildir."
-        )
     if watch:
         lines.append(
             "İzleme listesindeki isimler de şu anda alınabilir fırsat değildir."
+        )
+    elif actionable_count > 0:
+        lines.append(
+            "Onaylı isimler olsa da 8E exposure artışına izin vermiyor; "
+            "bunlar yatırım fırsatı değildir."
         )
     return "\n".join(lines)
 
@@ -519,6 +667,16 @@ def _compose_new_money(new_money: Mapping[str, Any]) -> str:
     )
 
 
+def _append_new_money_conflict(answer: str, blockers: Sequence[str]) -> str:
+    if REASON_8E_VS_NEW_MONEY_CONFLICT not in blockers:
+        return answer
+    return "\n".join(
+        line
+        for line in (answer, EIGHT_E_VS_NEW_MONEY_COPY)
+        if line
+    )
+
+
 def _compose_comparison(
     symbols: Sequence[str],
     *,
@@ -527,6 +685,7 @@ def _compose_comparison(
     theses: Optional[Mapping[str, Any]],
     allocation: Optional[AllocationPlan],
     portfolio_view: Any,
+    decisions: Sequence[PortfolioSecurityDecision] = (),
 ) -> tuple[str, Tuple[dict[str, Any], ...], Optional[CandidateInvestmentDecision], Optional[Any], Optional[Any], Optional[str]]:
     evaluated: list[dict[str, Any]] = []
     first_research = None
@@ -665,13 +824,24 @@ def _compose_comparison(
         conclusion_bits.append("Portföy uyumu fırsat sırasını değiştirmez.")
     conclusion_bits.append(NOT_A_TRADE)
 
-    answer = "\n".join(
-        [
-            "Fırsat kalitesi açısından: " + " ".join(quality_bits),
-            "Portföy uyumu açısından: " + " ".join(fit_bits),
-            "Sonuç: " + " ".join(conclusion_bits),
-        ]
-    )
+    by_8e = _index_security_decisions(decisions)
+    eight_e_bits = []
+    for item in evaluated:
+        security = by_8e.get(item["symbol"])
+        if security is None:
+            continue
+        eight_e_bits.append(
+            f"{security.symbol}: {present_action_label(security.decision)}"
+            f" (increase_allowed={str(security.exposure_increase_allowed).lower()})"
+        )
+    answer_lines = [
+        "Fırsat kalitesi açısından: " + " ".join(quality_bits),
+        "Portföy uyumu açısından: " + " ".join(fit_bits),
+        "Sonuç: " + " ".join(conclusion_bits),
+    ]
+    if eight_e_bits:
+        answer_lines.insert(2, "8E aksiyon: " + "; ".join(eight_e_bits) + ".")
+    answer = "\n".join(answer_lines)
     public_rows = tuple(
         {
             "symbol": item["symbol"],
@@ -679,6 +849,14 @@ def _compose_comparison(
             "nabi_score": item["nabi_score"],
             "portfolio_fit": item["portfolio_fit"],
             "participation_status": item["participation_status"],
+            "security_action": (
+                by_8e[item["symbol"]].decision if item["symbol"] in by_8e else None
+            ),
+            "exposure_increase_allowed": (
+                by_8e[item["symbol"]].exposure_increase_allowed
+                if item["symbol"] in by_8e
+                else False
+            ),
         }
         for item in evaluated
     )
@@ -689,6 +867,7 @@ def _compose_canonical_answer(
     parsed: ParsedAdviserQuestion,
     *,
     rec: NABIRecommendation,
+    rec_dict: Mapping[str, Any],
     view: NabiDecisionV3,
     focus: Optional[CandidateInvestmentDecision],
     comparison_answer: Optional[str],
@@ -698,19 +877,27 @@ def _compose_canonical_answer(
     actionable_count: int,
     participation_status: Optional[str],
     prior: Mapping[str, Any],
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
+    blockers: Sequence[str] = (),
 ) -> str:
     intent = parsed.intent
+    by_8e = _index_security_decisions(security_decisions)
+    focus_8e = by_8e.get(normalize_symbol(parsed.focus_symbol)) if parsed.focus_symbol else None
     if intent == INTENT_TODAY_RECOMMENDATION or intent == "GENERAL_NABI":
-        return present_user_text(_compose_today(rec))
+        return present_user_text(_compose_today_overlaid(rec, rec_dict))
     if intent == INTENT_WHY_RECOMMENDATION:
         prior_intent = _text(prior.get("intent"))
         if prior_intent == INTENT_OPPORTUNITY_COMPARE and comparison_answer:
             return present_user_text(comparison_answer)
         if prior_intent == INTENT_OPPORTUNITY_STATUS:
-            return present_user_text(_compose_opportunity_status(view, actionable_count))
+            return present_user_text(
+                _compose_opportunity_status(view, actionable_count, security_decisions)
+            )
         if prior_intent == INTENT_NEW_MONEY_SCENARIO:
             if new_money.get("status") != AMOUNT_REQUIRED:
-                return present_user_text(_compose_new_money(new_money))
+                return present_user_text(
+                    _append_new_money_conflict(_compose_new_money(new_money), blockers)
+                )
             return present_user_text(_compose_why(rec, goal, prior))
         return present_user_text(_compose_why(rec, goal, prior))
     if intent == INTENT_GOAL_EXPLAIN:
@@ -722,9 +909,13 @@ def _compose_canonical_answer(
             )
         return present_user_text("\n".join(line for line in lines if line))
     if intent == INTENT_NEW_MONEY_SCENARIO:
-        return present_user_text(_compose_new_money(new_money))
+        return present_user_text(
+            _append_new_money_conflict(_compose_new_money(new_money), blockers)
+        )
     if intent == INTENT_OPPORTUNITY_STATUS:
-        return present_user_text(_compose_opportunity_status(view, actionable_count))
+        return present_user_text(
+            _compose_opportunity_status(view, actionable_count, security_decisions)
+        )
     if intent == INTENT_OPPORTUNITY_COMPARE:
         return present_user_text(
             comparison_answer
@@ -747,26 +938,53 @@ def _compose_canonical_answer(
             lines.append("Tekil yoğunluk eşiğinin altında.")
         if focus is not None:
             lines.append(f"Portföy uyumu: {fit_label_tr(focus.portfolio_fit)}.")
+        if focus_8e is not None:
+            lines.append(
+                f"8E aksiyon: {present_action_label(focus_8e.decision)} "
+                f"(increase_allowed={str(focus_8e.exposure_increase_allowed).lower()})."
+            )
         return present_user_text("\n".join(lines))
     if intent in {
         INTENT_PARTICIPATION_EXPLAIN,
         INTENT_SYMBOL_EXPLAIN,
         INTENT_RESEARCH_EXPLAIN,
     }:
-        if focus is None:
+        symbol = parsed.focus_symbol or (focus.symbol if focus is not None else None)
+        if symbol is None and focus_8e is None:
             return "Sembol için kanonik karar yok; " + INSUFFICIENT_DATA + "."
-        if focus.final_action == ACTION_BLOCKED_PARTICIPATION or (
-            participation_status and participation_status != PARTICIPATION_STATUS_UYGUN
-        ):
-            return (
-                f"{focus.symbol} için Participation {focus.participation_status}. "
+        action = focus_8e.decision if focus_8e is not None else DECISION_INSUFFICIENT_DATA
+        status = (
+            (focus_8e.participation_status if focus_8e is not None else None)
+            or participation_status
+            or (focus.participation_status if focus is not None else None)
+        )
+        lines = [f"{symbol}: {present_action_label(action)}."]
+        if focus_8e is not None:
+            if focus_8e.primary_reasons:
+                lines.append(" ".join(focus_8e.primary_reasons))
+            lines.append(
+                f"exposure_increase_allowed="
+                f"{str(focus_8e.exposure_increase_allowed).lower()}."
+            )
+        if status and status != PARTICIPATION_STATUS_UYGUN:
+            lines.append(
+                f"Participation {status}. "
                 "NABI bunu katılım çözülmeden yatırım önerisi olarak sunamaz."
             )
-        action_label = present_action_label(focus.final_action)
-        return present_user_text(
-            f"{focus.symbol}: {action_label}. {focus.why}\n{NOT_A_TRADE}"
-        )
-    return present_user_text(_compose_today(rec))
+        elif focus is not None and focus_8e is None:
+            lines.append(focus.why)
+        lines.append(NOT_A_TRADE)
+        return present_user_text("\n".join(line for line in lines if line))
+    return present_user_text(_compose_today_overlaid(rec, rec_dict))
+
+
+def _compose_today_overlaid(rec: NABIRecommendation, rec_dict: Mapping[str, Any]) -> str:
+    primary = _text(rec_dict.get("primary_action")) or rec.primary_action
+    why = _text(rec_dict.get("why_now")) or rec.why_now
+    lines = [primary]
+    if why and why not in primary:
+        lines.append(why)
+    return "\n".join(line for line in lines if line)
 
 
 def build_followup_state(
@@ -838,6 +1056,9 @@ def build_nabi_adviser_context(
     identity_service: Any = None,
     hybrid_policy: Optional[HybridExposureAllocationPolicy] = None,
     enable_hybrid_exposure_allocation: Optional[bool] = None,
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
+    portfolio_security_client: Any = None,
+    user_id: Optional[str] = None,
 ) -> NabiAdviserContext:
     prior = dict(conversation_state or {})
     parsed = parse_adviser_question(question, prior)
@@ -896,6 +1117,12 @@ def build_nabi_adviser_context(
             theses=theses,
             allocation=allocation,
             portfolio_view=portfolio_view,
+            decisions=resolve_adviser_security_decisions(
+                compare_symbols[:4],
+                provided=security_decisions,
+                client=portfolio_security_client,
+                user_id=user_id,
+            ),
         )
     elif focus_symbol:
         _, focus_item, research, fit, authority = _evaluate_symbol(
@@ -979,9 +1206,44 @@ def build_nabi_adviser_context(
             policy=hybrid_policy,
         ),
     )
+    resolved_decisions = resolve_adviser_security_decisions(
+        _collect_adviser_symbols(parsed, rec, view, allocation, new_money),
+        provided=security_decisions,
+        client=portfolio_security_client,
+        user_id=user_id,
+    )
+    decisions_by_symbol = _index_security_decisions(resolved_decisions)
+    rec_dict = _apply_8e_security_authority(
+        _recommendation_dict(rec, view), rec, decisions_by_symbol
+    )
+    authoritative_symbols = tuple(
+        normalize_symbol(item.symbol) for item in security_decisions
+    )
+    if portfolio_security_client is not None:
+        authoritative_symbols = tuple(item.symbol for item in resolved_decisions)
+    blockers = _new_money_eight_e_conflicts(
+        allocation=allocation,
+        new_money=new_money,
+        decisions_by_symbol=decisions_by_symbol,
+        authoritative_symbols=authoritative_symbols,
+    )
+    if blockers:
+        new_money = dict(new_money)
+        new_money["blockers"] = list(
+            dict.fromkeys([*(new_money.get("blockers") or []), *blockers])
+        )
+        new_money["limitations"] = list(
+            dict.fromkeys([*(new_money.get("limitations") or []), *blockers])
+        )
+    focus_8e = (
+        decisions_by_symbol.get(normalize_symbol(parsed.focus_symbol))
+        if parsed.focus_symbol
+        else None
+    )
     canonical = _compose_canonical_answer(
         parsed,
         rec=rec,
+        rec_dict=rec_dict,
         view=view,
         focus=focus_item,
         comparison_answer=comparison_answer,
@@ -989,21 +1251,29 @@ def build_nabi_adviser_context(
         new_money=new_money,
         weights=weights,
         actionable_count=actionable,
-        participation_status=authority_status
-        or (focus_item.participation_status if focus_item else None),
+        participation_status=(
+            (focus_8e.participation_status if focus_8e is not None else None)
+            or authority_status
+            or (focus_item.participation_status if focus_item else None)
+        ),
         prior=prior,
+        security_decisions=resolved_decisions,
+        blockers=blockers,
     )
     limitations = list(rec.limitations)
+    limitations.extend(blockers)
     if research is not None and research.missing_evidence:
         limitations.extend(research.missing_evidence)
     evidence = rec.evidence_refs
     if focus_item is not None:
         evidence = tuple(dict.fromkeys((*evidence, *focus_item.reason_codes)))
+    if focus_8e is not None:
+        evidence = tuple(dict.fromkeys((*evidence, *focus_8e.reason_codes)))
     return NabiAdviserContext(
         question=parsed.question,
         intent=parsed.intent,
         focus_symbol=parsed.focus_symbol,
-        current_recommendation=_recommendation_dict(rec, view),
+        current_recommendation=rec_dict,
         wealth_context={
             "dashboard_primary": view.dashboard_primary,
             "wealth_action": view.wealth_action,
@@ -1011,9 +1281,12 @@ def build_nabi_adviser_context(
         goal_context=goal,
         new_money_context=new_money,
         economic_exposure_context=economic_exposure,
-        candidate_decision=_decision_dict(focus_item),
-        participation_status=authority_status
-        or (focus_item.participation_status if focus_item else None),
+        candidate_decision=_decision_dict(focus_item, focus_8e),
+        participation_status=(
+            (focus_8e.participation_status if focus_8e is not None else None)
+            or authority_status
+            or (focus_item.participation_status if focus_item else None)
+        ),
         research_intelligence=(
             {
                 "research_state": research.research_state,
@@ -1031,9 +1304,11 @@ def build_nabi_adviser_context(
             else None
         ),
         opportunity_comparison=comparison_rows,
-        reason_codes=tuple(view.audit.reason_codes),
+        reason_codes=tuple(dict.fromkeys((*view.audit.reason_codes, *blockers))),
         evidence_refs=evidence,
         limitations=tuple(dict.fromkeys(limitations)),
         canonical_answer=canonical,
         prior_context=prior or None,
+        security_decisions=resolved_decisions,
+        blockers=blockers,
     )
