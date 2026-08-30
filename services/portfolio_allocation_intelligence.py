@@ -49,7 +49,9 @@ KNOWN_MARKET_SYMBOLS = (
     KNOWN_ETF_SYMBOLS | KNOWN_EQUITY_US | KNOWN_EQUITY_TR | {CASH_SYMBOL, TF_PARTICIPATION_SYMBOL}
 )
 US_MARKET_ALIASES = frozenset({"US", "USA", "ABD"})
-TR_MARKET_ALIASES = frozenset({"TR", "BIST", "TURKEY", "TURKIYE", "TÜRKİYE"})
+TR_MARKET_ALIASES = frozenset(
+    {"TR", "BIST", "IST", "XIST", "ISTANBUL", "TURKEY", "TURKIYE", "TÜRKİYE"}
+)
 ASSET_CLASS_KEYS = frozenset({"equity", "etf", "sukuk", "cash", "other"})
 MARKET_KEYS = frozenset({"us", "tr", "other", "unknown"})
 ECONOMIC_EXPOSURE_KEYS = frozenset(

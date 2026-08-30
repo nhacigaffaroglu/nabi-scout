@@ -522,13 +522,14 @@ class UsParityAndMarketAliasTests(unittest.TestCase):
         self.assertTrue(save.saved or view.overall_score is not None)
         self.assertEqual(SecurityIntelligenceSnapshotRepository.TABLE, "security_intelligence_snapshots")
 
-    def test_market_alias_issue_reported_not_changed(self) -> None:
+    def test_market_aliases_normalize_bist_family_to_tr(self) -> None:
         self.assertEqual(_map_market("US"), "us")
         self.assertEqual(_map_market("NASDAQ"), "other")
         self.assertEqual(_map_market("TR"), "tr")
         self.assertEqual(_map_market("BIST"), "tr")
-        self.assertEqual(_map_market("IST"), "other")
-        self.assertEqual(_map_market("XIST"), "other")
+        self.assertEqual(_map_market("IST"), "tr")
+        self.assertEqual(_map_market("XIST"), "tr")
+        self.assertEqual(_map_market("ISTANBUL"), "tr")
 
     def test_security_master_still_resolves_bist_equity(self) -> None:
         master = SecurityMasterService()
