@@ -14,6 +14,7 @@ from services.nabi_recommendation import (
     build_nabi_recommendation,
     opportunity_intelligence_summary,
 )
+from services.nabi_adviser_context import resolve_adviser_security_decisions
 from services.nabi_decision_orchestrator import (
     build_nabi_decision_v3,
     present_decision_v3_brief,
@@ -109,6 +110,23 @@ decision_v3 = build_nabi_decision_v3(
     allocation=allocation,
     recommendation=recommendation,
 )
+gate_symbols: list[str] = []
+for value in (
+    recommendation.symbol,
+    decision_v3.deployment_symbol,
+    decision_v3.opportunity_leader,
+):
+    if value:
+        gate_symbols.append(str(value))
+for row in overlaid:
+    symbol = row.get("symbol") if isinstance(row, dict) else None
+    if symbol:
+        gate_symbols.append(str(symbol))
+security_decisions = resolve_adviser_security_decisions(
+    gate_symbols,
+    client=client,
+    user_id=user_id,
+)
 
 view = build_opportunity_center(
     candidates=candidates,
@@ -125,5 +143,6 @@ view = build_opportunity_center(
         else None
     ),
     decision_brief=present_decision_v3_brief(decision_v3),
+    security_decisions=security_decisions,
 )
 render_opportunity_center(view, candidates=candidates)

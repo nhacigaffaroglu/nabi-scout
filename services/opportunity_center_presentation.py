@@ -38,6 +38,11 @@ from services.nabi_portfolio_fit import fit_label_tr
 from services.research_intelligence_contract import ResearchIntelligenceBrief
 from services.nabi_decision_contract import DecisionV3Brief
 from services.nabi_recommendation_history_presentation import TRACKING_READY
+from services.portfolio_security_decision_contract import (
+    DECISION_INSUFFICIENT_DATA,
+    PortfolioSecurityDecision,
+)
+from services.wealth_contract import normalize_symbol
 from services.research_intelligence_service import (
     build_research_intelligence,
     present_research_intelligence_brief,
@@ -260,6 +265,34 @@ class OpportunityCenterView:
     decision_brief: Optional[DecisionV3Brief] = None
     tracking_status: Optional[str] = None
     history_lines: tuple[str, ...] = ()
+    security_decisions: tuple[PortfolioSecurityDecision, ...] = ()
+
+
+def opportunity_security_action(
+    view: OpportunityCenterView,
+    symbol: Optional[str] = None,
+) -> Optional[PortfolioSecurityDecision]:
+    """Canonical 8E action displayed by Fırsatlar. Never a v3/Recommendation action."""
+    needle = normalize_symbol(symbol)
+    if not needle and view.today:
+        needle = normalize_symbol(view.today[0].symbol)
+    if needle:
+        for item in view.security_decisions:
+            if item.symbol == needle:
+                return item
+    if view.security_decisions:
+        return view.security_decisions[0]
+    return None
+
+
+def opportunity_displayed_security_action(
+    view: OpportunityCenterView,
+    symbol: Optional[str] = None,
+) -> str:
+    action = opportunity_security_action(view, symbol)
+    if action is not None:
+        return action.decision
+    return DECISION_INSUFFICIENT_DATA
 
 
 def _why(candidate: Mapping[str, Any]) -> Optional[str]:
@@ -619,6 +652,7 @@ def build_opportunity_center(
     decision_brief: Optional[DecisionV3Brief] = None,
     tracking_status: Optional[str] = None,
     history_lines: tuple[str, ...] = (),
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
 ) -> OpportunityCenterView:
     candidates = overlay_candidate_rows(candidates, snapshots)
     today = present_today_opportunity_cards(candidates, snapshots=snapshots)
@@ -654,4 +688,5 @@ def build_opportunity_center(
         decision_brief=decision_brief,
         tracking_status=tracking_status if tracking_status is not None else TRACKING_READY,
         history_lines=history_lines,
+        security_decisions=tuple(security_decisions),
     )

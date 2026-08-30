@@ -14,6 +14,7 @@ from services.wealth_goal_models import ContributionPlan, default_contribution_p
 from services.wealth_new_money_allocation import (
     AllocationPlan,
     REASON_BELOW_MIN_TRADE,
+    REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
     REASON_INSUFFICIENT_CASH,
     REASON_NOT_ACTIONABLE,
     allocate_new_money,
@@ -436,11 +437,19 @@ class EligibilityAndSafetyTests(unittest.TestCase):
         result = dummy.session_state[RESULT_STATE_KEY]
         self.assertNotIn("TUPRS", [row.symbol for row in result.recommendations])
         self.assertTrue(
-            any(row.symbol == "TUPRS" and row.reason_code == REASON_NOT_ACTIONABLE for row in result.skipped)
+            any(
+                row.symbol == "TUPRS"
+                and row.reason_code
+                in {REASON_NOT_ACTIONABLE, REASON_EXPOSURE_INCREASE_NOT_ALLOWED}
+                for row in result.skipped
+            )
         )
         text = _blob(dummy)
         self.assertIn("TUPRS", text)
-        self.assertIn("İşlem yapılabilir karar yok.", text)
+        self.assertTrue(
+            "İşlem yapılabilir karar yok." in text
+            or "8E exposure artışına izin vermiyor." in text
+        )
         for line in dummy.markdowns:
             if "TUPRS" in line:
                 self.assertNotIn(NEW_LABEL, line)

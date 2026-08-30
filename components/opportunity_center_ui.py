@@ -34,6 +34,7 @@ from services.opportunity_center_presentation import (
     OpportunityCenterView,
     OpportunityComparisonCard,
     TodayOpportunityCard,
+    opportunity_displayed_security_action,
 )
 from services.research_workflow_service import normalize_research_status
 from services.ui_formatters import format_research_status
@@ -70,8 +71,8 @@ def _render_hero(view: OpportunityCenterView) -> None:
         for col, kpi in zip(cols, view.hero.kpis):
             col.metric(kpi.label, kpi.value)
     st.caption(view.hero.recommendation)
+    st.caption(f"Final action: {opportunity_displayed_security_action(view)}")
     if view.decision_brief:
-        st.caption(f"Final action: {view.decision_brief.final_action}")
         st.caption(f"Timing: {view.decision_brief.timing_state}")
         st.caption(f"Portfolio fit: {view.decision_brief.portfolio_fit}")
         if view.decision_brief.why:

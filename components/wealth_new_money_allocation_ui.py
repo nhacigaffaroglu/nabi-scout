@@ -167,6 +167,7 @@ def render_new_money_allocation(
     candidate_loader=None,
     allocate_fn: Optional[AllocateFn] = None,
     session_state: Optional[Any] = None,
+    security_decisions: Optional[Sequence[Any]] = None,
 ) -> None:
     """Render a recommendation-only allocation scenario. No writes or providers."""
     state = session_state if session_state is not None else st.session_state
@@ -233,6 +234,30 @@ def render_new_money_allocation(
             if str(getattr(row, "asset_class", "") or "").strip().lower() in {"etf", "fund"}
             and str(getattr(row, "symbol", "") or "").strip()
         ]
+        from services.nabi_adviser_context import resolve_adviser_security_decisions
+
+        if security_decisions is None:
+            gate_symbols: list[str] = []
+            for bucket in (
+                getattr(portfolio_view, "priced_positions", ()) or (),
+                getattr(portfolio_view, "unpriced_positions", ()) or (),
+                getattr(portfolio_view, "foreign_currency_positions", ()) or (),
+            ):
+                for item in bucket:
+                    symbol = getattr(item, "symbol", None)
+                    if symbol:
+                        gate_symbols.append(str(symbol))
+            for row in loaded_candidates:
+                symbol = row.get("symbol") if isinstance(row, dict) else None
+                if symbol:
+                    gate_symbols.append(str(symbol))
+            gate_decisions = resolve_adviser_security_decisions(
+                gate_symbols,
+                client=getattr(wealth, "client", None),
+                user_id=getattr(wealth, "user_id", None),
+            )
+        else:
+            gate_decisions = security_decisions
         state[RESULT_STATE_KEY] = runner(
             available_amount=amount,
             amount_currency=plan.currency,
@@ -244,6 +269,7 @@ def render_new_money_allocation(
             positions=positions if positions is not None else wealth.list_positions(),
             minimum_trade_amount=min_trade,
             fund_snapshots=load_persisted_fund_snapshots(wealth, fund_symbols),
+            security_decisions=gate_decisions,
         )
 
     result = state.get(RESULT_STATE_KEY)
