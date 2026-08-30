@@ -42,7 +42,10 @@ class OfficialHolding:
     security_name: str
     weight_pct: float
     shares: Optional[float] = None
+    price: Optional[float] = None
     market_value: Optional[float] = None
+    net_assets: Optional[float] = None
+    shares_outstanding: Optional[float] = None
     source: str = SOURCE_SP_FUNDS_OFFICIAL
     source_reference: str = ""
     asset_type: Optional[str] = None
@@ -50,7 +53,13 @@ class OfficialHolding:
 
     @property
     def holding_identifier(self) -> str:
-        return listing_identity(self.ticker) or str(self.ticker or "").strip().upper()
+        listed = listing_identity(self.ticker)
+        if listed:
+            return listed
+        cusip = str(self.cusip_raw or "").strip().upper()
+        if cusip:
+            return cusip
+        return str(self.ticker or "").strip().upper()
 
 
 @dataclass(frozen=True)
@@ -143,9 +152,10 @@ def parse_official_holdings_csv(
         elif row_date != as_of:
             raise OfficialHoldingsError("official holdings file has mixed as-of dates")
         ticker = str(row.get("StockTicker") or "").strip()
+        cusip = str(row.get("CUSIP") or "").strip()
         name = str(row.get("SecurityName") or "").strip()
         weight = parse_weight_pct(row.get("Weightings"))
-        if not ticker or weight is None:
+        if (not ticker and not cusip) or weight is None:
             failures += 1
             continue
         holdings.append(
@@ -153,11 +163,14 @@ def parse_official_holdings_csv(
                 fund_symbol=symbol,
                 as_of=row_date,
                 ticker=ticker,
-                cusip_raw=str(row.get("CUSIP") or "").strip(),
+                cusip_raw=cusip,
                 security_name=name,
                 weight_pct=weight,
                 shares=parse_optional_number(row.get("Shares")),
+                price=parse_optional_number(row.get("Price")),
                 market_value=parse_optional_number(row.get("MarketValue")),
+                net_assets=parse_optional_number(row.get("NetAssets")),
+                shares_outstanding=parse_optional_number(row.get("SharesOutstanding")),
                 source_reference=source_reference or official_holdings_url(symbol),
                 metadata={"issuer_columns": {key: row.get(key) for key in columns}},
             )

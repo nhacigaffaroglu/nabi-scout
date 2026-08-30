@@ -70,6 +70,7 @@ class EconomicExposureBucket(str, Enum):
 class ExposureEvidenceSource(str, Enum):
     USER_CONFIRMED = "USER_CONFIRMED"
     PERSISTED_FUND_METADATA = "PERSISTED_FUND_METADATA"
+    OFFICIAL_FUND_MANDATE = "OFFICIAL_FUND_MANDATE"
     PERSISTED_HOLDINGS_LOOKTHROUGH = "PERSISTED_HOLDINGS_LOOKTHROUGH"
     CANONICAL_STATIC_MAPPING = "CANONICAL_STATIC_MAPPING"
     ASSET_CLASS_FALLBACK = "ASSET_CLASS_FALLBACK"
@@ -455,6 +456,7 @@ def classify_instrument_exposure(
     user_overrides: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     canonical_mappings: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     fund_snapshots: Optional[Mapping[str, FundHoldingsSnapshotView]] = None,
+    fund_mandates: Optional[Mapping[str, Any]] = None,
     security_master: Optional[SecurityMasterService] = None,
     identity_service: Optional[SecurityIdentityService] = None,
 ) -> InstrumentExposureView:
@@ -467,6 +469,7 @@ def classify_instrument_exposure(
     overrides = user_overrides or {}
     canonical = canonical_mappings if canonical_mappings is not None else CANONICAL_STATIC_MAPPINGS
     snapshots = fund_snapshots or {}
+    mandates = fund_mandates or {}
 
     if symbol in overrides:
         exposures = _clone_with_source(
@@ -482,6 +485,24 @@ def classify_instrument_exposure(
             confidence=ExposureConfidence.HIGH,
         )
         complete = True
+    elif symbol in mandates:
+        mandate = mandates[symbol]
+        layer = str(getattr(mandate, "primary_layer", "") or "").strip().lower()
+        if layer in EXPOSURE_BUCKET_IDS and layer != EconomicExposureBucket.UNKNOWN.value:
+            exposures = (
+                EconomicExposure(
+                    exposure_bucket=layer,
+                    weight_pct=100.0,
+                    evidence_source=ExposureEvidenceSource.OFFICIAL_FUND_MANDATE,
+                    confidence=ExposureConfidence.HIGH,
+                    limitations=(),
+                ),
+            )
+            complete = True
+        else:
+            exposures = _unknown(limitation="OFFICIAL_FUND_MANDATE_INVALID")
+            complete = False
+            limitations.append("EXPOSURE_UNKNOWN")
     elif instrument_class in {ASSET_CLASS_ETF, ASSET_CLASS_FUND} and symbol in snapshots:
         snapshot = snapshots[symbol]
         if snapshot.holdings:
@@ -544,6 +565,7 @@ def build_economic_exposure(
     portfolio_view: PortfolioIntelligenceView,
     *,
     fund_snapshots: Optional[Mapping[str, FundHoldingsSnapshotView]] = None,
+    fund_mandates: Optional[Mapping[str, Any]] = None,
     user_overrides: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     canonical_mappings: Optional[Mapping[str, Sequence[EconomicExposure]]] = None,
     assets: Optional[Sequence[dict]] = None,
@@ -577,6 +599,7 @@ def build_economic_exposure(
                 user_overrides=user_overrides,
                 canonical_mappings=canonical_mappings,
                 fund_snapshots=fund_snapshots,
+                fund_mandates=fund_mandates,
                 security_master=security_master,
                 identity_service=identity_service,
             )
