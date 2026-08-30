@@ -338,8 +338,14 @@ DIM_REAL_ESTATE_CONCENTRATION = "REAL_ESTATE_CONCENTRATION"
 DIM_COUNTRY_CONCENTRATION = "COUNTRY_CONCENTRATION"
 DIM_CURRENCY_EXPOSURE = "CURRENCY_EXPOSURE"
 
-FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1c.1"
-FUND_EVAL_FACTS_VERSION = "fund_facts_1a.1"
+FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1d.1"
+FUND_EVAL_FACTS_VERSION = "fund_facts_1d.1"
+PERFORMANCE_BASIS_NAV = "NAV"
+PERFORMANCE_BASIS_MARKET_PRICE = "MARKET_PRICE"
+TRACKING_CONCEPT_DIFFERENCE = "TRACKING_DIFFERENCE"
+YIELD_BASIS_SEC_30D = "SEC_30_DAY_YIELD"
+PERFORMANCE_LEAD_HORIZONS = ("return_1y", "return_3y", "return_5y", "since_inception_annualized")
+MOMENTUM_LEAD_HORIZONS = ("return_3m", "return_6m", "return_ytd", "return_1m")
 
 # Documented weights. Missing READY dimensions are excluded, never redistributed.
 EQUITY_ETF_WEIGHTS = {
@@ -411,8 +417,46 @@ class FundParticipationGate:
 
 
 @dataclass(frozen=True)
+class OfficialFundYield:
+    """Official yield metadata. Never treated as total return."""
+
+    symbol: str
+    sec_yield_30d: Optional[float] = None
+    as_of: Optional[str] = None
+    source: str = ""
+    source_url: str = ""
+    basis: str = YIELD_BASIS_SEC_30D
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class OfficialNportSnapshot:
+    """Pilot N-PORT period snapshot. No daily NAV series. No crawler."""
+
+    symbol: str
+    cik: str
+    series_id: str
+    class_id: str
+    registrant: str
+    period_of_report: Optional[str]
+    accession: str
+    source_url: str
+    tot_assets: Optional[float] = None
+    net_assets: Optional[float] = None
+    shares_outstanding: Optional[float] = None
+    nav_per_share: Optional[float] = None
+    nav_method: str = ""
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class OfficialFundPerformance:
-    """Official/free historical series only. Absence stays None. Never synthesized."""
+    """Official/free standardized performance. Absence stays None. Never synthesized."""
 
     symbol: str
     return_1m: Optional[float] = None
@@ -422,12 +466,64 @@ class OfficialFundPerformance:
     volatility: Optional[float] = None
     source: str = ""
     as_of: Optional[str] = None
+    fund_symbol: str = ""
+    basis: str = PERFORMANCE_BASIS_NAV
+    return_6m: Optional[float] = None
+    return_ytd: Optional[float] = None
+    return_3y: Optional[float] = None
+    return_5y: Optional[float] = None
+    since_inception_cumulative: Optional[float] = None
+    since_inception_annualized: Optional[float] = None
+    benchmark_name: Optional[str] = None
+    benchmark_ticker: Optional[str] = None
+    benchmark_return_1m: Optional[float] = None
+    benchmark_return_3m: Optional[float] = None
+    benchmark_return_6m: Optional[float] = None
+    benchmark_return_ytd: Optional[float] = None
+    benchmark_return_1y: Optional[float] = None
+    benchmark_return_3y: Optional[float] = None
+    benchmark_return_5y: Optional[float] = None
+    tracking_difference: Optional[float] = None
+    tracking_horizon: Optional[str] = None
+    tracking_concept: str = TRACKING_CONCEPT_DIFFERENCE
+    source_url: str = ""
+    provenance: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+
+    def resolved_symbol(self) -> str:
+        return self.fund_symbol or self.symbol
 
     def has_return_history(self) -> bool:
-        return any(value is not None for value in (self.return_1m, self.return_3m, self.return_1y))
+        return any(
+            value is not None
+            for value in (
+                self.return_1m,
+                self.return_3m,
+                self.return_6m,
+                self.return_ytd,
+                self.return_1y,
+                self.return_3y,
+                self.return_5y,
+                self.since_inception_annualized,
+            )
+        )
 
     def has_risk_history(self) -> bool:
         return self.drawdown is not None or self.volatility is not None
+
+    def performance_lead(self) -> tuple[Optional[float], Optional[str]]:
+        for name in PERFORMANCE_LEAD_HORIZONS:
+            value = getattr(self, name)
+            if value is not None:
+                return value, name
+        return None, None
+
+    def momentum_lead(self) -> tuple[Optional[float], Optional[str]]:
+        for name in MOMENTUM_LEAD_HORIZONS:
+            value = getattr(self, name)
+            if value is not None:
+                return value, name
+        return None, None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

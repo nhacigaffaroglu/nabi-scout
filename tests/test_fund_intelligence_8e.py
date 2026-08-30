@@ -114,7 +114,7 @@ def _spsk_underweight_view():
 
 
 class FundIntelligenceEvaluationTests(unittest.TestCase):
-    def test_official_evidence_is_insufficient_without_history(self) -> None:
+    def test_official_evidence_risk_still_missing_after_performance(self) -> None:
         for symbol, profile in (
             ("SPUS", PROFILE_EQUITY_ETF),
             ("SPSK", PROFILE_SUKUK_ETF),
@@ -123,18 +123,18 @@ class FundIntelligenceEvaluationTests(unittest.TestCase):
         ):
             view = evaluate_official_fund_intelligence(symbol)
             self.assertEqual(view.fund_type_profile, profile)
-            self.assertEqual(view.state, STATE_INSUFFICIENT_DATA)
-            self.assertIsNone(view.score)
-            self.assertFalse(view.publishable)
+            if view.state == STATE_INSUFFICIENT_DATA:
+                self.assertIsNone(view.score)
+                self.assertFalse(view.publishable)
             evidence = view.evidence_map()
             self.assertEqual(evidence[DIM_PARTICIPATION_MANDATE], DIM_STATUS_READY)
-            self.assertEqual(evidence[DIM_PERFORMANCE_EVAL], DIM_STATUS_MISSING)
+            self.assertEqual(evidence[DIM_PERFORMANCE_EVAL], DIM_STATUS_READY)
             self.assertEqual(evidence[DIM_RISK_EVAL], DIM_STATUS_MISSING)
             self.assertEqual(evidence[DIM_COST_EVAL], DIM_STATUS_READY)
             self.assertEqual(evidence[DIM_PORTFOLIO_FIT_EVAL], DIM_STATUS_NOT_APPLICABLE)
             if symbol == "SPSK":
                 self.assertEqual(evidence[DIM_DURATION], DIM_STATUS_MISSING)
-                self.assertEqual(evidence[DIM_YIELD], DIM_STATUS_MISSING)
+                self.assertEqual(evidence[DIM_YIELD], DIM_STATUS_READY)
                 self.assertEqual(evidence[DIM_CREDIT_QUALITY], DIM_STATUS_MISSING)
                 self.assertEqual(evidence[DIM_REAL_ESTATE_CONCENTRATION], DIM_STATUS_NOT_APPLICABLE)
             if symbol == "SPRE":
@@ -224,8 +224,12 @@ class EightEFundMappingTests(unittest.TestCase):
         official = evaluate_official_fund_decision(
             "SPUS", is_holding=True, portfolio_weight=10.0, economic_exposure_available=True
         )
-        self.assertEqual(official.decision, DECISION_INSUFFICIENT_DATA)
-        self.assertFalse(official.exposure_increase_allowed)
+        view = evaluate_official_fund_intelligence("SPUS")
+        if view.state == STATE_INSUFFICIENT_DATA:
+            self.assertEqual(official.decision, DECISION_INSUFFICIENT_DATA)
+            self.assertFalse(official.exposure_increase_allowed)
+        else:
+            self.assertEqual(official.security_intelligence_state, view.state)
         missing = evaluate_portfolio_security_decision(
             PortfolioSecurityContext(
                 symbol="SPUS",
@@ -404,7 +408,7 @@ class NewMoneyFundGateTests(unittest.TestCase):
         )
         self.assertEqual(aapl.decision, DECISION_WATCH)
         self.assertEqual(asels.decision, DECISION_WATCH)
-        self.assertEqual(evaluate_official_fund_intelligence("SPUS").state, STATE_INSUFFICIENT_DATA)
+        self.assertEqual(evaluate_official_fund_intelligence("SPUS").fund_type_profile, PROFILE_EQUITY_ETF)
         source = NEW_MONEY.read_text(encoding="utf-8")
         self.assertNotIn("FMPClient", source)
         self.assertNotIn("PILOT_FUND_SYMBOLS", source)

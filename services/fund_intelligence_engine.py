@@ -40,6 +40,7 @@ from services.fund_product_contract import (
     FundPurificationEvidence,
     FundShariaEvidence,
     OfficialFundPerformance,
+    OfficialFundYield,
     MIN_READY_SCORED_DIMENSIONS,
     MIN_READY_WEIGHT_COVERAGE,
     OfficialFundMandate,
@@ -202,12 +203,28 @@ def _lookthrough_ready(lookthrough: Optional[FundLookthroughSummary]) -> bool:
     return lookthrough is not None and lookthrough.holdings_count > 0
 
 
+def _tracking_dimension(performance: Optional[OfficialFundPerformance]) -> FundDimensionResult:
+    if (
+        performance is None
+        or performance.tracking_difference is None
+        or performance.tracking_concept != "TRACKING_DIFFERENCE"
+    ):
+        return _missing(DIM_TRACKING_EVAL, "official_period_tracking_difference")
+    return _ready(
+        DIM_TRACKING_EVAL,
+        inverse(abs(performance.tracking_difference), 0.25, 5.0),
+        "tracking_difference",
+        performance.tracking_horizon or "matched_period",
+    )
+
+
 def evaluate_official_fund_intelligence(
     symbol: str,
     *,
     provider: Optional[object] = None,
     lookthrough: Optional[FundLookthroughSummary] = None,
     performance: Optional[OfficialFundPerformance] = None,
+    official_yield: Optional[OfficialFundYield] = None,
     historical_performance_present: bool = False,
     official_risk_series_present: bool = False,
 ) -> FundIntelligenceEvaluation:
@@ -215,13 +232,20 @@ def evaluate_official_fund_intelligence(
 
     fund = str(symbol or "").strip().upper()
     resolved = provider or default_official_sp_funds_provider()
+    nav_performance = performance
+    if nav_performance is None and hasattr(resolved, "performance"):
+        nav_performance = resolved.performance(fund)
+    yield_evidence = official_yield
+    if yield_evidence is None and hasattr(resolved, "sec_yield"):
+        yield_evidence = resolved.sec_yield(fund)
     return evaluate_fund_intelligence(
         facts=resolved.facts(fund),
         mandate=resolved.mandate(fund),
         sharia=resolved.sharia_evidence(fund),
         purification=resolved.purification_evidence(fund),
         lookthrough=lookthrough,
-        performance=performance,
+        performance=nav_performance,
+        official_yield=yield_evidence,
         historical_performance_present=historical_performance_present,
         official_risk_series_present=official_risk_series_present,
     )
@@ -243,7 +267,10 @@ def evaluate_fund_intelligence(
     official_currency_weights: bool = False,
     official_real_estate_weights: bool = False,
     performance: Optional[OfficialFundPerformance] = None,
+    official_yield: Optional[OfficialFundYield] = None,
 ) -> FundIntelligenceEvaluation:
+    if official_yield is not None and official_yield.sec_yield_30d is not None:
+        official_yield_present = True
     if performance is not None:
         historical_performance_present = historical_performance_present or performance.has_return_history()
         official_risk_series_present = official_risk_series_present or performance.has_risk_history()
@@ -262,20 +289,24 @@ def evaluate_fund_intelligence(
         )
     ]
     if historical_performance_present:
+        lead, horizon = (None, None) if performance is None else performance.performance_lead()
         perf_score = None
-        if performance is not None and performance.return_1y is not None:
-            perf_score = scale(performance.return_1y, -15.0, 20.0)
-        elif performance is not None and performance.return_3m is not None:
-            perf_score = scale(performance.return_3m, -10.0, 10.0)
-        dimensions.append(_ready(DIM_PERFORMANCE_EVAL, perf_score, "official_history"))
+        if lead is not None:
+            perf_score = scale(lead, -15.0, 20.0)
+        dimensions.append(_ready(DIM_PERFORMANCE_EVAL, perf_score, horizon or "official_nav_return"))
     else:
         dimensions.append(_missing(DIM_PERFORMANCE_EVAL, "official_return_history"))
     if profile != PROFILE_SUKUK_ETF:
-        if performance is not None and (performance.return_1m is not None or performance.return_3m is not None):
-            lead = performance.return_3m if performance.return_3m is not None else performance.return_1m
-            dimensions.append(_ready(DIM_MOMENTUM_EVAL, scale(lead, -8.0, 8.0), "official_short_horizon"))
+        if performance is not None:
+            momentum, momentum_horizon = performance.momentum_lead()
         else:
-            dimensions.append(_missing(DIM_MOMENTUM_EVAL, "official_price_history"))
+            momentum, momentum_horizon = None, None
+        if momentum is not None:
+            dimensions.append(
+                _ready(DIM_MOMENTUM_EVAL, scale(momentum, -8.0, 8.0), momentum_horizon or "official_short_horizon")
+            )
+        else:
+            dimensions.append(_missing(DIM_MOMENTUM_EVAL, "official_short_horizon"))
     if official_risk_series_present:
         risk_score = None
         if performance is not None:
@@ -316,8 +347,9 @@ def evaluate_fund_intelligence(
         dimensions.append(_ready(DIM_LIQUIDITY_EVAL, _liquidity_score(facts.net_assets), "net_assets", "market_price"))
     else:
         dimensions.append(_missing(DIM_LIQUIDITY_EVAL, "net_assets", "market_price"))
+    tracking = _tracking_dimension(performance)
     if profile == PROFILE_EQUITY_ETF:
-        dimensions.append(_missing(DIM_TRACKING_EVAL, "official_tracking_error"))
+        dimensions.append(tracking)
         if region == "US":
             dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "US_EQUITY_PROFILE"))
             dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "US_EQUITY_PROFILE"))
@@ -336,7 +368,7 @@ def evaluate_fund_intelligence(
         dimensions.append(_na(DIM_ISSUER_CONCENTRATION, "NOT_SUKUK"))
         dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
     elif profile == PROFILE_SUKUK_ETF:
-        dimensions.append(_na(DIM_TRACKING_EVAL, "SUKUK_PROFILE"))
+        dimensions.append(tracking if tracking.status != DIM_STATUS_MISSING else _na(DIM_TRACKING_EVAL, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "SUKUK_PROFILE"))
         dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
@@ -345,8 +377,11 @@ def evaluate_fund_intelligence(
             if official_duration_present
             else _missing(DIM_DURATION, "official_duration")
         )
+        yield_score = None
+        if official_yield is not None and official_yield.sec_yield_30d is not None:
+            yield_score = scale(official_yield.sec_yield_30d, 1.0, 6.0)
         dimensions.append(
-            _ready(DIM_YIELD, None, "official_yield")
+            _ready(DIM_YIELD, yield_score, "sec_30_day_yield")
             if official_yield_present
             else _missing(DIM_YIELD, "official_yield")
         )
@@ -366,7 +401,7 @@ def evaluate_fund_intelligence(
         else:
             dimensions.append(_missing(DIM_ISSUER_CONCENTRATION, "official_holdings"))
     else:
-        dimensions.append(_na(DIM_TRACKING_EVAL, "REIT_PROFILE"))
+        dimensions.append(tracking if tracking.status != DIM_STATUS_MISSING else _na(DIM_TRACKING_EVAL, "REIT_PROFILE"))
         dimensions.append(_na(DIM_DURATION, "NOT_SUKUK"))
         dimensions.append(_na(DIM_YIELD, "NOT_SUKUK"))
         dimensions.append(_na(DIM_CREDIT_QUALITY, "NOT_SUKUK"))

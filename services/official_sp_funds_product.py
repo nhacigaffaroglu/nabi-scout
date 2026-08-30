@@ -8,6 +8,13 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Optional, Sequence
 
+from services.official_fund_nport import parse_official_nport_xml
+from services.official_fund_performance import (
+    parse_official_performance_html,
+    parse_official_sec_yield_html,
+    select_market_performance,
+    select_nav_performance,
+)
 from services.fund_product_contract import (
     DIM_CONCENTRATION,
     DIM_COST,
@@ -39,6 +46,9 @@ from services.fund_product_contract import (
     FundPurificationEvidence,
     FundShariaEvidence,
     OfficialFundMandate,
+    OfficialFundPerformance,
+    OfficialFundYield,
+    OfficialNportSnapshot,
     PurificationFactor,
 )
 from services.security_identity_contract import ECONOMIC_LAYERS
@@ -451,9 +461,11 @@ class OfficialSpFundsProductProvider:
         *,
         product_html: dict[str, str],
         purification_html: str = "",
+        nport_xml: Optional[Mapping[str, str]] = None,
     ) -> None:
         self._product_html = {key.upper(): value for key, value in product_html.items()}
         self._purification = parse_purification_html(purification_html) if purification_html else {}
+        self._nport_xml = {key.upper(): value for key, value in (nport_xml or {}).items()}
 
     def supports(self, symbol: str) -> bool:
         return _norm_symbol(symbol) in PILOT_FUND_SYMBOLS
@@ -481,6 +493,31 @@ class OfficialSpFundsProductProvider:
 
     def mandate(self, symbol: str) -> OfficialFundMandate:
         return mandate_from_official_facts(self.facts(symbol))
+
+    def performance_rows(self, symbol: str) -> dict[str, OfficialFundPerformance]:
+        fund = _norm_symbol(symbol)
+        html = self._product_html.get(fund)
+        if not html:
+            raise ValueError(f"official product html missing for {fund}")
+        return parse_official_performance_html(html, symbol=fund)
+
+    def performance(self, symbol: str) -> Optional[OfficialFundPerformance]:
+        return select_nav_performance(self.performance_rows(symbol))
+
+    def market_performance(self, symbol: str) -> Optional[OfficialFundPerformance]:
+        return select_market_performance(self.performance_rows(symbol))
+
+    def sec_yield(self, symbol: str) -> Optional[OfficialFundYield]:
+        fund = _norm_symbol(symbol)
+        html = self._product_html.get(fund) or ""
+        return parse_official_sec_yield_html(html, symbol=fund)
+
+    def nport_snapshot(self, symbol: str) -> Optional[OfficialNportSnapshot]:
+        fund = _norm_symbol(symbol)
+        xml_text = self._nport_xml.get(fund)
+        if not xml_text:
+            return None
+        return parse_official_nport_xml(xml_text, symbol=fund)
 
 
 class TefasFundProductProvider:
@@ -510,11 +547,13 @@ def assert_provider_surface(provider: FundProductProvider) -> tuple[str, ...]:
 
 
 def default_official_sp_funds_provider() -> OfficialSpFundsProductProvider:
+    from services.official_fund_nport_evidence import NPORT_XML
     from services.official_sp_funds_evidence import PRODUCT_HTML, PURIFICATION_HTML
 
     return OfficialSpFundsProductProvider(
         product_html=PRODUCT_HTML,
         purification_html=PURIFICATION_HTML,
+        nport_xml=NPORT_XML,
     )
 
 

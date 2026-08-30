@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from services.fund_intelligence_engine import evaluate_fund_intelligence
+from services.fund_intelligence_engine import (
+    evaluate_fund_intelligence,
+    evaluate_official_fund_intelligence,
+)
 from services.fund_product_contract import (
     READINESS_NEEDS_MORE_DATA,
     READINESS_READY_NOW,
@@ -120,12 +123,7 @@ def evaluate_official_fund_decision(
                 participation_acceptable=False,
                 economic_exposure_available=economic_exposure_available,
             )
-        view = evaluate_fund_intelligence(
-            facts=resolved.facts(fund),
-            mandate=resolved.mandate(fund),
-            sharia=resolved.sharia_evidence(fund),
-            purification=resolved.purification_evidence(fund),
-        )
+        view = evaluate_official_fund_intelligence(fund, provider=resolved)
         return evaluate_fund_portfolio_decision(
             view,
             is_holding=is_holding,
