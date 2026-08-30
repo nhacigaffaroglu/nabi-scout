@@ -15,7 +15,6 @@ from services.fund_product_contract import PILOT_FUND_SYMBOLS, PILOT_TEFAS_FUND_
 from services.official_tefas_product import default_tefas_fund_provider
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.portfolio_security_decision_contract import (
-    DECISION_INSUFFICIENT_DATA,
     DECISION_WATCH,
     REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
     REASON_SI_NOT_ATTRACTIVE,
@@ -39,12 +38,12 @@ FROZEN_FI = {
 
 
 class TurkiyeFundEightETests(unittest.TestCase):
-    def test_default_fail_closed_without_economic_exposure(self) -> None:
+    def test_default_uses_official_economic_exposure(self) -> None:
         for code in PILOT_TEFAS_FUND_CODES:
             decision = evaluate_official_fund_decision(code)
-            self.assertEqual(decision.decision, DECISION_INSUFFICIENT_DATA)
+            self.assertEqual(decision.decision, DECISION_WATCH)
             self.assertFalse(decision.exposure_increase_allowed)
-            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, decision.blocking_reasons)
+            self.assertNotIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, decision.blocking_reasons)
             self.assertNotIn("TURKIYE_FUND_8E_NOT_STARTED", decision.reason_codes)
             self.assertEqual(decision.participation_status, PARTICIPATION_STATUS_UYGUN)
             self.assertTrue(decision.research_allowed)

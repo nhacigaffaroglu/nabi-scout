@@ -63,7 +63,7 @@ from services.official_tefas_performance import (
 )
 from services.official_tefas_product import default_tefas_fund_provider
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
-from services.portfolio_security_decision_contract import DECISION_INSUFFICIENT_DATA
+from services.portfolio_security_decision_contract import DECISION_WATCH
 from services.wealth_new_money_allocation import allocate_new_money
 
 
@@ -325,7 +325,7 @@ class TurkishFundIntelligenceTests(unittest.TestCase):
             self.assertEqual(view.score, frozen[code][0])
             self.assertEqual(view.state, frozen[code][1])
             decision = evaluate_official_fund_decision(code)
-            self.assertEqual(decision.decision, DECISION_INSUFFICIENT_DATA)
+            self.assertEqual(decision.decision, DECISION_WATCH)
             self.assertFalse(decision.exposure_increase_allowed)
         source = TEFAS.read_text(encoding="utf-8")
         self.assertNotIn("evaluate_official_fund_decision", source)

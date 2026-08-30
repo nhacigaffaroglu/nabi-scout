@@ -132,11 +132,14 @@ def evaluate_official_fund_decision(
                 economic_exposure_available=economic_exposure_available,
             )
         view = evaluate_official_fund_intelligence(fund, provider=resolved)
+        exposure_ready = bool(economic_exposure_available) or _provider_economic_exposure_available(
+            resolved, fund
+        )
         return evaluate_fund_portfolio_decision(
             view,
             is_holding=is_holding,
             portfolio_weight=portfolio_weight,
-            economic_exposure_available=economic_exposure_available,
+            economic_exposure_available=exposure_ready,
         )
     except Exception:
         return _blocked_fund_decision(
@@ -145,6 +148,18 @@ def evaluate_official_fund_decision(
             participation_acceptable=False,
             economic_exposure_available=economic_exposure_available,
         )
+
+
+def _provider_economic_exposure_available(provider: object, symbol: str) -> bool:
+    """8E consumes provider classification. It does not derive exposure itself."""
+    classify = getattr(provider, "economic_classification", None)
+    if not callable(classify):
+        return False
+    try:
+        row = classify(symbol)
+    except Exception:
+        return False
+    return bool(row is not None and getattr(row, "ready", False))
 
 
 def _default_official_fund_provider(symbol: str):

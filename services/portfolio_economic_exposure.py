@@ -62,6 +62,7 @@ class EconomicExposureBucket(str, Enum):
     SUKUK = "sukuk"
     REAL_ESTATE = "real_estate"
     CASH = "cash"
+    CASH_LIKE = "cash_like"
     COMMODITY = "commodity"
     OTHER = "other"
     UNKNOWN = "unknown"

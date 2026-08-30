@@ -71,7 +71,9 @@ FUND_INTELLIGENCE_DIMENSIONS = (
 REGION_US = "US"
 REGION_INTERNATIONAL_EX_US = "INTERNATIONAL_EX_US"
 REGION_GLOBAL = "GLOBAL"
+REGION_TR = "TR"
 REGION_UNKNOWN = "UNKNOWN"
+LAYER_CASH_LIKE = "cash_like"
 
 MARKET_US = "US"
 MARKET_OTHER = "other"
@@ -160,6 +162,32 @@ class OfficialFundMandate:
     def validate(self) -> None:
         if self.primary_layer not in ECONOMIC_LAYERS:
             raise ValueError(f"mandate layer must be a canonical economic layer: {self.primary_layer}")
+
+
+@dataclass(frozen=True)
+class OfficialFundEconomicClassification:
+    """Primary economic exposure from official mandate + official holdings.
+
+    Look-through weights stay on the official holdings structure.
+    cash_like is not portfolio CASH.
+    """
+
+    symbol: str
+    instrument: str
+    primary_exposure: str
+    geography: str
+    lookthrough_weights: tuple[tuple[str, float], ...]
+    subgroup_weights: tuple[tuple[str, float], ...]
+    confidence: str
+    source: str
+    source_url: str
+    as_of: Optional[str]
+    evidence_basis: tuple[str, ...]
+    ready: bool
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)

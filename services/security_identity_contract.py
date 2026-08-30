@@ -51,6 +51,7 @@ ECONOMIC_LAYERS = (
     "sukuk",
     "real_estate",
     "cash",
+    "cash_like",
     "commodity",
     "other",
 )

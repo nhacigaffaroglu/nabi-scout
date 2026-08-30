@@ -17,6 +17,7 @@ from services.fund_product_contract import (
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROFILE_SUKUK_PARTICIPATION_FUND,
     PROVIDER_KAP_FUND,
+    REGION_TR,
     PROVIDER_TEFAS,
     PURIFICATION_NOT_REQUIRED,
     READINESS_NEEDS_MORE_DATA,
@@ -30,6 +31,7 @@ from services.fund_product_contract import (
     FundShariaEvidence,
     KapFundMandateEvidence,
     KapPortfolioReportAudit,
+    OfficialFundEconomicClassification,
     OfficialFundMandate,
     OfficialFundPerformance,
     TefasPriceSeries,
@@ -193,6 +195,12 @@ class TefasFundProductProvider:
     def mandate(self, symbol: str) -> OfficialFundMandate:
         return mandate_from_kap(self.kap_mandate(symbol))
 
+    def economic_classification(self, symbol: str) -> Optional[OfficialFundEconomicClassification]:
+        from services.official_turkiye_fund_exposure import classify_official_turkiye_fund_exposure
+
+        code = self._require(symbol)
+        return classify_official_turkiye_fund_exposure(self.mandate(code), self.pdr_holdings(code))
+
     def performance(self, symbol: str) -> OfficialFundPerformance:
         code = self._require(symbol)
         return performance_from_tefas_series(
@@ -310,7 +318,7 @@ def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
     """Map official KAP profile facts onto the shared OfficialFundMandate."""
     profile = kap.official_profile
     if profile == PROFILE_SHORT_TERM_PARTICIPATION:
-        layer, vehicle = "cash", PROFILE_LIQUIDITY_PARTICIPATION_FUND
+        layer, vehicle = "cash_like", PROFILE_LIQUIDITY_PARTICIPATION_FUND
     elif profile == PROFILE_PARTICIPATION_EQUITY:
         layer, vehicle = "equity", PROFILE_EQUITY_PARTICIPATION_FUND
     elif profile == PROFILE_SUKUK_LEASE_CERTIFICATE:
@@ -320,7 +328,7 @@ def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
     mandate = OfficialFundMandate(
         symbol=kap.fund_code,
         primary_layer=layer,
-        region="TR",
+        region=REGION_TR,
         vehicle=vehicle,
         confidence="HIGH",
         source=kap.source,

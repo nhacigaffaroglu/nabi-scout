@@ -44,7 +44,7 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
 from services.portfolio_security_decision_contract import (
-    DECISION_INSUFFICIENT_DATA,
+    DECISION_WATCH,
     REASON_ECONOMIC_EXPOSURE_UNAVAILABLE,
 )
 from services.wealth_new_money_allocation import allocate_new_money
@@ -320,13 +320,13 @@ class IsolationTests(unittest.TestCase):
         provider = default_tefas_fund_provider()
         for code in PILOT_TEFAS_FUND_CODES:
             decision = evaluate_official_fund_decision(code)
-            self.assertEqual(decision.decision, DECISION_INSUFFICIENT_DATA)
+            self.assertEqual(decision.decision, DECISION_WATCH)
             self.assertFalse(decision.exposure_increase_allowed)
-            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, decision.blocking_reasons)
+            self.assertNotIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, decision.blocking_reasons)
             self.assertNotIn("TURKIYE_FUND_8E_NOT_STARTED", decision.reason_codes)
             forced = evaluate_official_fund_decision(code, provider=provider)
-            self.assertEqual(forced.decision, DECISION_INSUFFICIENT_DATA)
-            self.assertIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, forced.blocking_reasons)
+            self.assertEqual(forced.decision, DECISION_WATCH)
+            self.assertNotIn(REASON_ECONOMIC_EXPOSURE_UNAVAILABLE, forced.blocking_reasons)
         self.assertNotIn("evaluate_official_fund_decision", TEFAS.read_text(encoding="utf-8"))
         self.assertNotIn("allocate_new_money", TEFAS.read_text(encoding="utf-8"))
         self.assertNotIn("AIS", NEW_MONEY.read_text(encoding="utf-8"))
