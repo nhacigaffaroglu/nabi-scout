@@ -5,6 +5,7 @@ from typing import Mapping, Optional, Sequence, Tuple
 
 SOURCE_SEC = "SEC"
 SOURCE_FMP = "FMP"
+SOURCE_KAP = "KAP"
 SOURCE_MIXED = "SEC + FMP"
 
 NUMERATOR_TO_INPUT_FIELD: dict[str, str] = {
@@ -45,6 +46,8 @@ def _normalize_source_label(source: str) -> str:
         return SOURCE_SEC
     if normalized == SOURCE_FMP:
         return SOURCE_FMP
+    if normalized == SOURCE_KAP:
+        return SOURCE_KAP
     return str(source or "").strip() or "—"
 
 
@@ -64,7 +67,7 @@ def combine_field_provenance(
         combined_source = next(iter(sources))
     else:
         ordered = []
-        for candidate in (SOURCE_SEC, SOURCE_FMP):
+        for candidate in (SOURCE_SEC, SOURCE_FMP, SOURCE_KAP):
             if candidate in sources:
                 ordered.append(candidate)
         combined_source = " + ".join(ordered) if ordered else SOURCE_MIXED

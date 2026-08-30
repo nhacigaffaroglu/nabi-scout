@@ -10,7 +10,8 @@ Identity:
   BIST identity/currency does not invent financial or valuation completeness.
 
 Financial statement facts:
-  SEC extract_financials (passed in or local cache replay)
+  SEC extract_financials (passed in or local cache replay) for US
+  → official normalized KAP facts for BIST pilots only (never US)
   → scanner-persisted candidate financials (themselves SEC-derived)
   → Participation financial_inputs (revenue/assets/debt/cash only)
   → Company Intelligence already-loaded trends (fallback, marked)
@@ -45,6 +46,7 @@ from services.security_intelligence_contract import (
     AUTHORITY_CANDIDATE,
     AUTHORITY_COMPANY_INTELLIGENCE,
     AUTHORITY_DERIVED,
+    AUTHORITY_KAP,
     AUTHORITY_MIXED,
     AUTHORITY_PARTICIPATION,
     AUTHORITY_SEC,
@@ -60,8 +62,10 @@ from services.security_intelligence_contract import (
     PERIOD_FY,
     PERIOD_INCOMPATIBLE,
     PERIOD_MIXED,
+    PERIOD_Q,
     PERIOD_TTM,
     PERIOD_UNKNOWN,
+    PERIOD_YTD,
     SecurityFacts,
 )
 
@@ -91,6 +95,20 @@ NUMERIC_FACT_FIELDS = tuple(
         "facts_version",
     }
 )
+
+KAP_FIELD_MAP = {
+    "revenue": "revenue",
+    "operating_income": "operating_income",
+    "net_income": "net_income",
+    "total_assets": "total_assets",
+    "equity": "equity",
+    "cash": "cash",
+    "total_debt": "total_debt",
+    "roa": "roa",
+    "roe": "roe",
+    "debt_to_equity": "debt_to_equity",
+    "current_ratio": "current_ratio",
+}
 
 SEC_FIELD_MAP = {
     "revenue": "revenue",
@@ -344,6 +362,38 @@ def _replay_sec_cache(symbol: str) -> tuple[dict[str, Any], bool]:
         return dict(extracted or {}), True
     except Exception:
         return {}, False
+
+
+def _kap_facts_payload(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if hasattr(raw, "mapped") and hasattr(raw, "symbol"):
+        from services.kap_financial_bridge import kap_security_facts_payload
+
+        return kap_security_facts_payload(raw)
+    return _mapping(raw)
+
+
+def _ingest_kap(slots: _FactSlots, payload: Mapping[str, Any]) -> None:
+    if not payload:
+        return
+    currency = _text(payload.get("financial_currency") or payload.get("currency"))
+    as_of = _as_of(payload.get("financial_period_end"), payload.get("as_of"))
+    period = _text(payload.get("period_kind")).upper() or PERIOD_FY
+    if period in {PERIOD_YTD, PERIOD_TTM, PERIOD_Q}:
+        return
+    for dest, src in KAP_FIELD_MAP.items():
+        slots.set(
+            dest,
+            payload.get(src),
+            source="kap_normalized",
+            authority=AUTHORITY_KAP,
+            source_as_of=as_of,
+            currency=currency,
+            period_kind=PERIOD_FY,
+            normalization=_text(payload.get("normalization")) or "KAP_FY_BASE_UNITS",
+            confidence="HIGH",
+        )
 
 
 def _ingest_sec(slots: _FactSlots, payload: Mapping[str, Any], *, source: str) -> None:
@@ -647,9 +697,20 @@ def _quality_summary(slots: _FactSlots, *, stale: bool) -> dict[str, Any]:
         freshness = FRESHNESS_FRESH
     else:
         freshness = FRESHNESS_UNKNOWN
+    incompatible = (
+        {PERIOD_FY, PERIOD_YTD},
+        {PERIOD_TTM, PERIOD_YTD},
+        {PERIOD_FY, PERIOD_Q},
+        {PERIOD_TTM, PERIOD_Q},
+        {PERIOD_YTD, PERIOD_Q},
+    )
     if AUTHORITY_SEC in authorities and len(authorities) == 1:
         authority = AUTHORITY_SEC
     elif AUTHORITY_SEC in authorities:
+        authority = AUTHORITY_MIXED
+    elif AUTHORITY_KAP in authorities and len(authorities) == 1:
+        authority = AUTHORITY_KAP
+    elif AUTHORITY_KAP in authorities:
         authority = AUTHORITY_MIXED
     elif AUTHORITY_CANDIDATE in authorities and len(authorities) == 1:
         authority = AUTHORITY_CANDIDATE
@@ -664,7 +725,7 @@ def _quality_summary(slots: _FactSlots, *, stale: bool) -> dict[str, Any]:
         for item in slots.provenance.values()
         if item.period_kind not in {"", PERIOD_UNKNOWN}
     }
-    if PERIOD_INCOMPATIBLE in periods:
+    if PERIOD_INCOMPATIBLE in periods or any(pair <= periods for pair in incompatible):
         compatibility = PERIOD_INCOMPATIBLE
         period_kind = PERIOD_INCOMPATIBLE
     elif PERIOD_MIXED in periods or ({PERIOD_FY, PERIOD_TTM} <= periods):
@@ -722,6 +783,7 @@ class SecurityFactsService:
         participation_snapshot: Optional[Mapping[str, Any]] = None,
         participation_result: Any = None,
         sec_financials: Optional[Mapping[str, Any]] = None,
+        kap_financials: Optional[Mapping[str, Any]] = None,
         company_intelligence: Any = None,
         security_resolution: Any = None,
         instrument_type: str = "",
@@ -737,6 +799,7 @@ class SecurityFactsService:
             participation_snapshot=participation_snapshot,
             participation_result=participation_result,
             sec_financials=sec_financials,
+            kap_financials=kap_financials,
             company_intelligence=company_intelligence,
             security_resolution=security_resolution,
             instrument_type=instrument_type,
@@ -755,6 +818,7 @@ class SecurityFactsService:
         participation_snapshot: Optional[Mapping[str, Any]] = None,
         participation_result: Any = None,
         sec_financials: Optional[Mapping[str, Any]] = None,
+        kap_financials: Optional[Mapping[str, Any]] = None,
         company_intelligence: Any = None,
         security_resolution: Any = None,
         instrument_type: str = "",
@@ -769,27 +833,34 @@ class SecurityFactsService:
         snap = dict(participation_snapshot or {})
         slots = _FactSlots()
         cache_replayed = False
+        is_bist = bool(normalize_bist_symbol(ticker))
 
-        extracted = _sec_financials(sec_financials, participation_result)
-        sec_source = "sec_extract_financials"
-        if not extracted and allow_sec_cache_replay:
-            extracted, cache_replayed = _replay_sec_cache(ticker)
-            if extracted:
-                sec_source = "sec_company_facts_cache"
-
-        _ingest_sec(slots, extracted, source=sec_source)
+        extracted: dict[str, Any] = {}
+        if is_bist:
+            _ingest_kap(slots, _kap_facts_payload(kap_financials))
+        else:
+            extracted = _sec_financials(sec_financials, participation_result)
+            sec_source = "sec_extract_financials"
+            if not extracted and allow_sec_cache_replay:
+                extracted, cache_replayed = _replay_sec_cache(ticker)
+                if extracted:
+                    sec_source = "sec_company_facts_cache"
+            _ingest_sec(slots, extracted, source=sec_source)
         candidate_stale = stale or _text(cand.get("freshness_status")).upper() == "STALE"
         _ingest_candidate(slots, cand, stale=candidate_stale)
         _ingest_participation_inputs(slots, _financial_inputs(snap, participation_result))
         _ingest_company_intelligence(slots, company_intelligence)
         _ingest_local_momentum(slots, local_momentum, client=client, symbol=ticker)
 
+        kap_payload = _kap_facts_payload(kap_financials) if is_bist else {}
         currency = ""
         if extracted:
             currency = _text(extracted.get("financial_currency") or extracted.get("currency"))
+        currency = currency or _text(kap_payload.get("financial_currency") or kap_payload.get("currency"))
         currency = currency or _text(cand.get("financial_currency") or cand.get("currency"))
         as_of = _as_of(
             (extracted or {}).get("financial_period_end"),
+            kap_payload.get("financial_period_end"),
             cand.get("financial_period_end"),
             cand.get("source_updated_at"),
             snap.get("assessed_at"),
