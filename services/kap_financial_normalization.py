@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Iterable, Optional, Sequence
 
 from services.kap_financial_contract import (
+    ACCOUNT_ACCOUNTS_RECEIVABLE,
     ACCOUNT_CASH,
     ACCOUNT_CURRENT_ASSETS,
     ACCOUNT_CURRENT_LIABILITIES,
@@ -22,6 +23,7 @@ from services.kap_financial_contract import (
     IFRS_CASH,
     IFRS_CURRENT_ASSETS,
     IFRS_CURRENT_LIABILITIES,
+    IFRS_CURRENT_TRADE_RECEIVABLES,
     IFRS_EQUITY,
     IFRS_NET_INCOME,
     IFRS_OPERATING_INCOME,
@@ -56,6 +58,7 @@ KAP_ACCOUNT_CODE_MAP = {
     ACCOUNT_TOTAL_DEBT: ("total_debt", NATURE_POINT_IN_TIME),
     ACCOUNT_CURRENT_ASSETS: ("current_assets", NATURE_POINT_IN_TIME),
     ACCOUNT_CURRENT_LIABILITIES: ("current_liabilities", NATURE_POINT_IN_TIME),
+    ACCOUNT_ACCOUNTS_RECEIVABLE: ("accounts_receivable", NATURE_POINT_IN_TIME),
     IFRS_REVENUE: ("revenue", NATURE_FLOW),
     IFRS_OPERATING_INCOME: ("operating_income", NATURE_FLOW),
     IFRS_NET_INCOME: ("net_income", NATURE_FLOW),
@@ -64,6 +67,7 @@ KAP_ACCOUNT_CODE_MAP = {
     IFRS_CASH: ("cash", NATURE_POINT_IN_TIME),
     IFRS_CURRENT_ASSETS: ("current_assets", NATURE_POINT_IN_TIME),
     IFRS_CURRENT_LIABILITIES: ("current_liabilities", NATURE_POINT_IN_TIME),
+    IFRS_CURRENT_TRADE_RECEIVABLES: ("accounts_receivable", NATURE_POINT_IN_TIME),
 }
 
 _INCOMPATIBLE_PERIOD_PAIRS = (
@@ -286,6 +290,14 @@ def fy_facts_only(
     facts: Sequence[KapNormalizedFinancialFact],
 ) -> tuple[KapNormalizedFinancialFact, ...]:
     return tuple(item for item in facts if item.period_kind == PERIOD_FY)
+
+
+def facts_for_period(
+    facts: Sequence[KapNormalizedFinancialFact],
+    period_kind: str,
+) -> tuple[KapNormalizedFinancialFact, ...]:
+    wanted = normalize_reporting_period(period_kind)
+    return tuple(item for item in facts if item.period_kind == wanted)
 
 
 def normalize_kap_lines(

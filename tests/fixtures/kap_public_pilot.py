@@ -50,10 +50,33 @@ def compact_public_html(
     operating: str = "10.000.000",
     profit: str = "14.439.306",
     unknown_value: str = "1.000",
+    current_receivables: str = "",
+    noncurrent_receivables: str = "",
+    longterm_borrowings: str = "",
 ) -> str:
     unknown_row = (
         _row("ifrs-full_Inventories", "Stoklar", unknown_value, "900")
         if include_unknown
+        else ""
+    )
+    ar_row = (
+        _row("ifrs-full_CurrentTradeReceivables", "Ticari Alacaklar", current_receivables, "1.000")
+        if current_receivables
+        else ""
+    )
+    ncar_row = (
+        _row(
+            "ifrs-full_NoncurrentTradeReceivables",
+            "Uzun Vadeli Ticari Alacaklar",
+            noncurrent_receivables,
+            "1.000",
+        )
+        if noncurrent_receivables
+        else ""
+    )
+    debt_row = (
+        _row("ifrs-full_LongtermBorrowings", "Uzun Vadeli Borçlanmalar", longterm_borrowings, "1.000")
+        if longterm_borrowings
         else ""
     )
     quarter_headers = (
@@ -79,9 +102,12 @@ def compact_public_html(
       <td class="context-header">{bs_prior}</td>
     </tr>
     {_row("ifrs-full_CashAndCashEquivalents", "Nakit ve Nakit Benzerleri", cash, "34.251.653")}
+    {ar_row}
+    {ncar_row}
     {_row("ifrs-full_CurrentAssets", "TOPLAM DÖNEN VARLIKLAR", current_assets, "206.057.730")}
     {_row("ifrs-full_Assets", "TOPLAM VARLIKLAR", assets, "508.228.606")}
     {_row("ifrs-full_CurrentLiabilities", "TOPLAM KISA VADELİ YÜKÜMLÜLÜKLER", current_liabilities, "90.000.000")}
+    {debt_row}
     {_row("ifrs-full_Equity", "TOPLAM ÖZKAYNAKLAR", equity, "180.000.000")}
     {unknown_row}
   </table>

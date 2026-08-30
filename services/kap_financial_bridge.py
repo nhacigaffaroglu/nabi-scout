@@ -11,8 +11,10 @@ from typing import Any, Iterable, Optional
 
 from services.kap_financial_contract import KapNormalizedBundle, KapRawFinancialLine
 from services.kap_financial_normalization import (
+    facts_for_period,
     fy_facts_only,
     normalize_kap_lines,
+    normalize_reporting_period,
 )
 from services.participation_financial_contract import ParticipationFinancialInputs
 from services.participation_financial_provenance import SOURCE_KAP, FinancialFieldProvenance
@@ -27,12 +29,12 @@ PARTICIPATION_SUPPORTED_FROM_KAP = (
     "total_assets",
     "total_debt",
     "cash",
+    "accounts_receivable",
 )
 
-# Existing methodology fields that KAP financial statements do not safely fill.
+# Fields the existing methodology consumes that public KAP still cannot fill.
 PARTICIPATION_MISSING_REQUIRED = (
     "cash_and_interest_bearing_securities",
-    "accounts_receivable",
     "non_permissible_revenue",
     "interest_bearing_debt",
     "market_capitalization",
@@ -108,17 +110,16 @@ def _as_of_date(raw: Optional[str]) -> Optional[date]:
         return None
 
 
-def participation_inputs_from_kap(
+def _inputs_from_period_facts(
     bundle: KapNormalizedBundle,
+    facts: Iterable[Any],
 ) -> tuple[ParticipationFinancialInputs, tuple[str, ...]]:
-    """Map supported KAP FY facts. Does not evaluate a Participation screen."""
-    fy = {item.field: item for item in fy_facts_only(bundle.mapped)}
-    missing = list(PARTICIPATION_MISSING_REQUIRED)
-    as_of = next((item.period_end for item in fy.values() if item.period_end), None)
+    by_field = {item.field: item for item in facts}
+    as_of = next((item.period_end for item in by_field.values() if item.period_end), None)
     provenance: list[tuple[str, FinancialFieldProvenance]] = []
 
     def _value(kap_field: str, input_field: str) -> Optional[float]:
-        fact = fy.get(kap_field)
+        fact = by_field.get(kap_field)
         if fact is None:
             return None
         provenance.append(
@@ -140,10 +141,32 @@ def participation_inputs_from_kap(
         total_assets=_value("total_assets", "total_assets"),
         total_debt=_value("total_debt", "total_debt"),
         cash=_value("cash", "cash"),
+        accounts_receivable=_value("accounts_receivable", "accounts_receivable"),
         source_evidence=(("source", SOURCE_KAP), ("identity", bundle.identity_source)),
         field_provenance=tuple(provenance),
     )
-    return inputs, tuple(f"{MISSING_REQUIRED_FACT}:{name}" for name in missing)
+    missing = [
+        name
+        for name in (*PARTICIPATION_SUPPORTED_FROM_KAP, *PARTICIPATION_MISSING_REQUIRED)
+        if getattr(inputs, name, None) is None
+    ]
+    return inputs, tuple(f"{MISSING_REQUIRED_FACT}:{name}" for name in dict.fromkeys(missing))
+
+
+def participation_inputs_from_kap(
+    bundle: KapNormalizedBundle,
+) -> tuple[ParticipationFinancialInputs, tuple[str, ...]]:
+    """Map supported KAP FY facts. Does not evaluate a Participation screen."""
+    return _inputs_from_period_facts(bundle, fy_facts_only(bundle.mapped))
+
+
+def participation_inputs_from_kap_period(
+    bundle: KapNormalizedBundle,
+    period_kind: str,
+) -> tuple[ParticipationFinancialInputs, tuple[str, ...]]:
+    """Same-period KAP facts only. Does not mix FY with YTD. No screen."""
+    period = normalize_reporting_period(period_kind)
+    return _inputs_from_period_facts(bundle, facts_for_period(bundle.mapped, period))
 
 
 def is_us_symbol_blocked_from_kap(symbol: str) -> bool:
