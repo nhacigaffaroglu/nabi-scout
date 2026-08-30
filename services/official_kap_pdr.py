@@ -320,7 +320,7 @@ def _section_from_line(line: str) -> Optional[str]:
         return None
     if len(_plain(line)) > 80 and _ISIN_RE.search(line):
         return None
-    return line.strip()
+    return re.sub(r"^#+\s*", "", line.strip())
 
 
 def _numbers(text: str) -> list[str]:
@@ -670,6 +670,51 @@ def _parse_ftd_overlay(
 
 
 _ISIN_HOLDING_SPLIT = re.compile(r"(?=(?:[A-Z]{2}[A-Z0-9]{10})\s+(?:TL|TRY)\s+)")
+_SPLIT_IDENTITY = re.compile(
+    r"([A-Z]{2}[A-Z0-9]{10})\s+(TL|TRY|USD|EUR)\s+(\S+?)\s+"
+    r"(\d{2}/\d{2}/\d{2})\s+(\d+)\s+\1\b"
+)
+_SPLIT_FTD = re.compile(
+    r"(\d{1,3}(?:\.\d{3})+,\d{2})\s+(\d+,\d+)\s+(\d+,\d+)\s+(\d+,\d+)"
+)
+_SPLIT_NOMINAL = re.compile(
+    r"(\d+,\d+)\s+(\d+)\s+(\d{1,3}(?:\.\d{3})+,\d{2})"
+)
+
+
+def _holding_ftd_triple(match: re.Match[str]) -> bool:
+    grup = parse_tr_number(match.group(2))
+    ftd = parse_tr_number(match.group(4))
+    if grup is None or ftd is None:
+        return False
+    # Official holding triplets stay small; GRUP TOPLAMI is 100 / 58.80 / 59.19.
+    return abs(grup) < 20 and abs(ftd) < 10
+
+
+def reconstruct_split_table_rows(text: str) -> list[str]:
+    """Rebuild official rows split across PDF page-break table columns.
+
+    Pair identity fragments with explicit FTD weight fragments only when
+    counts match. Do not invent a residual balancer.
+    """
+    body = str(text or "")
+    identities = list(_SPLIT_IDENTITY.finditer(body))
+    weights = [m for m in _SPLIT_FTD.finditer(body) if _holding_ftd_triple(m)]
+    if not identities or len(identities) != len(weights):
+        return []
+    noms = list(_SPLIT_NOMINAL.finditer(body))
+    rows: list[str] = []
+    for idx, ident in enumerate(identities):
+        isin, ccy, issuer, maturity, days = ident.groups()
+        mv, grup, fpd, ftd = weights[idx].groups()
+        extra = ""
+        if len(noms) == len(identities):
+            rate, pay, nominal = noms[idx].groups()
+            extra = f"{rate} {pay} {nominal} "
+        rows.append(
+            f"{isin} {ccy} {issuer} {maturity} {days} {isin} {extra}{mv} {grup} {fpd} {ftd}"
+        )
+    return rows
 
 
 def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
@@ -677,9 +722,19 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
     chunks: list[tuple[Optional[str], str]] = []
     section: Optional[str] = None
     buf = ""
+    pipe_buf: list[str] = []
+
+    def flush_pipes() -> None:
+        if not pipe_buf:
+            return
+        rebuilt = reconstruct_split_table_rows(" ".join(pipe_buf))
+        pipe_buf.clear()
+        for part in rebuilt:
+            chunks.append((section, part))
 
     def flush() -> None:
         nonlocal buf
+        flush_pipes()
         text = _plain(buf)
         buf = ""
         if not text or text.upper().startswith("GRUP TOPLAMI"):
@@ -700,6 +755,7 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if not line or line in {"|", ":"} or set(line) <= {"|", "-", " "}:
             continue
         if re.search(r"IV-?FON TOPLAM|4 - TOPLAM DE[ĞG]ER|VII-PORTF|7 - PORTF|8 - [İI]TFALAR|9 - PORTF", line, flags=re.I):
+            flush()
             break
         header = _section_from_line(line)
         if header and not _ISIN_RE.search(line) and not _BIST_CODE_RE.search(line):
@@ -707,6 +763,7 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             section = header
             continue
         if line.startswith("|") and not _BIST_CODE_RE.search(line):
+            pipe_buf.append(line)
             continue
         if _BIST_CODE_RE.search(line):
             flush()

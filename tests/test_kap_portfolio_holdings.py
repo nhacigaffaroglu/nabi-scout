@@ -32,6 +32,7 @@ from services.official_kap_pdr import (
     parse_tr_date,
     pdr_lookthrough_readiness,
     reconcile_pdr_weights,
+    reconstruct_split_table_rows,
     top_holdings,
 )
 from services.official_kap_pdr_evidence import (
@@ -50,6 +51,14 @@ PDR_SRC = Path("services/official_kap_pdr.py")
 TEFAS_SRC = Path("services/official_tefas_product.py")
 BIST = Path("services/bist_refresh_contract.py")
 WEALTH_NEW_MONEY = Path("services/wealth_new_money_allocation.py")
+
+AIS_JAMMED_TAAHHUT = """
+III-FON PORTFÖY DEĞERİ TABLOSU
+## Taahhüt Sözleşmesi Satış
+TRD170730T14 TL HAZİNE 03/08/26 0 TRD170730T14 38,00 2 100.312.328,77 100.312.328,77 1,25 0,73 0,74
+| VADEYE VADE İHRAÇCI ISIN KODU TRD190728T16 TL HAZİNE 07/08/26 4 TRD190728T16 TRD190728T16 TL HAZİNE 07/08/26 4 TRD190728T16 GRUP TOPLAMI | 38,40 2 100.736.438,36 38,40 2 100.736.438,36 | 38,400000 100.314.954,58 1,25 0,73 0,74 38,400000 100.314.954,58 1,25 0,74 0,74 8.025.117.591,97 100,00 58,80 59,19 |
+IV-FON TOPLAM DEĞERİ TABLOSU
+"""
 
 
 def _holding(**kwargs) -> KapPdrHolding:
@@ -132,6 +141,19 @@ class KapPortfolioHoldingsTests(unittest.TestCase):
         self.assertIsNotNone(largest)
         self.assertEqual(len(top_holdings(file, 10)), 10)
         self.assertFalse(file.weights.renormalized)
+        self.assertTrue(file.weights.weight_reconciled)
+        self.assertGreaterEqual(file.weights.reported_weight_sum, 95.0)
+        self.assertLessEqual(file.weights.reported_weight_sum, 100.50)
+        repo_w = sum(float(row.portfolio_weight or 0) for row in file.holdings if row.asset_group == ASSET_GROUP_REPO)
+        self.assertAlmostEqual(repo_w, 59.19, places=2)
+        self.assertFalse(any((row.portfolio_weight or 0) == 23.97 for row in file.holdings))
+        self.assertTrue(
+            any(
+                row.asset_group_raw and "Taahhüt" in row.asset_group_raw
+                for row in file.holdings
+                if row.asset_group == ASSET_GROUP_REPO
+            )
+        )
 
     def test_zpe_parser(self) -> None:
         file = load_captured_pdr_holdings("ZPE")
@@ -299,6 +321,27 @@ class KapPortfolioHoldingsTests(unittest.TestCase):
             file = provider.pdr_holdings(code)
             self.assertEqual(file.fund_code, code)
             self.assertGreater(len(file.holdings), 0)
+
+    def test_ais_jammed_taahhut_continuation(self) -> None:
+        pipe = next(line for line in AIS_JAMMED_TAAHHUT.splitlines() if line.startswith("|"))
+        rebuilt = reconstruct_split_table_rows(pipe)
+        self.assertEqual(len(rebuilt), 2)
+        self.assertTrue(all("TRD190728T16" in row and "HAZİNE" in row for row in rebuilt))
+        self.assertTrue(all("0,74" in row or "0,73" in row for row in rebuilt))
+        unmatched = reconstruct_split_table_rows(
+            "| TRD190728T16 TL HAZİNE 07/08/26 4 TRD190728T16 | 100,00 58,80 59,19 |"
+        )
+        self.assertEqual(unmatched, [])
+        file = parse_kap_pdr_text(AIS_JAMMED_TAAHHUT, fund_code="AIS", report_period="2026-07")
+        self.assertEqual(len(file.holdings), 3)
+        self.assertTrue(all(row.asset_group_raw == "Taahhüt Sözleşmesi Satış" for row in file.holdings))
+        self.assertAlmostEqual(sum(float(row.portfolio_weight or 0) for row in file.holdings), 2.22, places=2)
+        self.assertFalse(file.weights.renormalized)
+        self.assertFalse(any((row.portfolio_weight or 0) == 23.97 for row in file.holdings))
+        zpe = load_captured_pdr_holdings("ZPE")
+        iat = load_captured_pdr_holdings("IAT")
+        self.assertEqual(zpe.weights.reported_weight_sum, 100.0)
+        self.assertAlmostEqual(iat.weights.reported_weight_sum, 99.99, places=2)
 
 
 if __name__ == "__main__":
