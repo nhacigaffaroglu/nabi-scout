@@ -18,7 +18,8 @@ Financial statement facts:
   → unavailable
 
 Market / valuation levels:
-  persisted candidate price/mcap/multiples
+  official Borsa Istanbul THB close when provided (BIST only; no invented market cap)
+  → persisted candidate price/mcap/multiples
   → Company Intelligence already-loaded snapshot/valuation
   → derived from comparable SEC + price facts
   → unavailable
@@ -43,6 +44,7 @@ from typing import Any, Mapping, Optional
 
 from services.bist_symbol_mapping import normalize_bist_symbol
 from services.security_intelligence_contract import (
+    AUTHORITY_BORSA_ISTANBUL,
     AUTHORITY_CANDIDATE,
     AUTHORITY_COMPANY_INTELLIGENCE,
     AUTHORITY_DERIVED,
@@ -376,6 +378,83 @@ def _kap_facts_payload(raw: Any) -> dict[str, Any]:
     return _mapping(raw)
 
 
+_BIST_UNOFFICIAL_MARKET_FIELDS = frozenset(
+    {
+        "price",
+        "market_cap",
+        "pe",
+        "forward_pe",
+        "price_to_sales",
+        "price_to_book",
+        "fcf_yield",
+        "ev_ebitda",
+    }
+)
+
+
+def _ingest_borsa_market(slots: _FactSlots, payload: Any, *, symbol: str) -> None:
+    if payload is None:
+        return
+    if not normalize_bist_symbol(symbol):
+        return
+    if hasattr(payload, "symbol"):
+        facts_symbol = _text(getattr(payload, "symbol", ""))
+        price = getattr(payload, "price", None)
+        market_cap = getattr(payload, "market_cap", None)
+        currency = _text(getattr(payload, "currency", ""))
+        market_date = getattr(payload, "market_date", None)
+        source = _text(getattr(payload, "source_dataset", "")) or "borsa_istanbul_thb"
+        source_url = _text(getattr(payload, "source_url", ""))
+        mcap_class = _text(getattr(payload, "market_cap_classification", ""))
+        stale = bool(getattr(payload, "stale", False))
+        official_field = _text(getattr(payload, "official_field", ""))
+    else:
+        mapped = _mapping(payload)
+        facts_symbol = _text(mapped.get("symbol"))
+        price = mapped.get("price")
+        market_cap = mapped.get("market_cap")
+        currency = _text(mapped.get("currency"))
+        market_date = mapped.get("market_date")
+        source = _text(mapped.get("source_dataset") or mapped.get("source")) or "borsa_istanbul_thb"
+        source_url = _text(mapped.get("source_url"))
+        mcap_class = _text(mapped.get("market_cap_classification"))
+        stale = bool(mapped.get("stale"))
+        official_field = _text(mapped.get("official_field"))
+    if normalize_bist_symbol(facts_symbol) != normalize_bist_symbol(symbol):
+        return
+    as_of = _as_of(market_date.isoformat() if hasattr(market_date, "isoformat") else market_date)
+    del source_url
+    slots.set(
+        "price",
+        price,
+        source=source,
+        authority=AUTHORITY_BORSA_ISTANBUL,
+        source_as_of=as_of,
+        currency=currency,
+        period_kind=PERIOD_UNKNOWN,
+        normalization=official_field or "BORSA_THB_CLOSING_PRICE",
+        stale=stale,
+        confidence="HIGH",
+    )
+    allowed_mcap = {
+        "DIRECT_OFFICIAL",
+        "DERIVED_FROM_OFFICIAL_COMPONENTS",
+    }
+    if mcap_class in allowed_mcap:
+        slots.set(
+            "market_cap",
+            market_cap,
+            source=source,
+            authority=AUTHORITY_BORSA_ISTANBUL,
+            source_as_of=as_of,
+            currency=currency,
+            period_kind=PERIOD_UNKNOWN,
+            normalization=mcap_class,
+            stale=stale,
+            confidence="HIGH",
+        )
+
+
 def _ingest_kap(slots: _FactSlots, payload: Mapping[str, Any]) -> None:
     if not payload:
         return
@@ -430,12 +509,20 @@ def _ingest_sec(slots: _FactSlots, payload: Mapping[str, Any], *, source: str) -
         )
 
 
-def _ingest_candidate(slots: _FactSlots, row: Mapping[str, Any], *, stale: bool) -> None:
+def _ingest_candidate(
+    slots: _FactSlots,
+    row: Mapping[str, Any],
+    *,
+    stale: bool,
+    skip_market_fields: bool = False,
+) -> None:
     if not row:
         return
     currency = _text(row.get("financial_currency") or row.get("currency"))
     as_of = _as_of(row.get("financial_period_end"), row.get("source_updated_at"))
     for dest, keys in CANDIDATE_FIELD_MAP.items():
+        if skip_market_fields and dest in _BIST_UNOFFICIAL_MARKET_FIELDS:
+            continue
         raw = None
         for key in keys:
             raw = row.get(key)
@@ -459,7 +546,12 @@ def _ingest_candidate(slots: _FactSlots, row: Mapping[str, Any], *, stale: bool)
         )
 
 
-def _ingest_participation_inputs(slots: _FactSlots, inputs: Mapping[str, Any]) -> None:
+def _ingest_participation_inputs(
+    slots: _FactSlots,
+    inputs: Mapping[str, Any],
+    *,
+    skip_market_fields: bool = False,
+) -> None:
     if not inputs:
         return
     as_of = _as_of(inputs.get("as_of_date"))
@@ -472,6 +564,8 @@ def _ingest_participation_inputs(slots: _FactSlots, inputs: Mapping[str, Any]) -
         "market_cap": "market_capitalization",
     }
     for dest, src in mapping.items():
+        if skip_market_fields and dest in _BIST_UNOFFICIAL_MARKET_FIELDS:
+            continue
         slots.set(
             dest,
             inputs.get(src),
@@ -484,11 +578,16 @@ def _ingest_participation_inputs(slots: _FactSlots, inputs: Mapping[str, Any]) -
         )
 
 
-def _ingest_company_intelligence(slots: _FactSlots, view: Any) -> None:
+def _ingest_company_intelligence(
+    slots: _FactSlots,
+    view: Any,
+    *,
+    skip_market_fields: bool = False,
+) -> None:
     if view is None:
         return
     snapshot = getattr(view, "business_snapshot", None)
-    if snapshot is not None:
+    if snapshot is not None and not skip_market_fields:
         currency = _text(getattr(snapshot, "currency", "") or getattr(snapshot, "reporting_currency", ""))
         slots.set(
             "market_cap",
@@ -532,7 +631,7 @@ def _ingest_company_intelligence(slots: _FactSlots, view: Any) -> None:
         "ev_ebitda": "ev_ebitda",
         "fcf_yield": "fcf_yield",
     }
-    if valuation is not None:
+    if valuation is not None and not skip_market_fields:
         for metric in getattr(valuation, "metrics", ()) or ():
             dest = None
             code = _text(getattr(metric, "code", "")).lower()
@@ -714,6 +813,8 @@ def _quality_summary(slots: _FactSlots, *, stale: bool) -> dict[str, Any]:
         authority = AUTHORITY_KAP
     elif AUTHORITY_KAP in authorities:
         authority = AUTHORITY_MIXED
+    elif AUTHORITY_BORSA_ISTANBUL in authorities and len(authorities) == 1:
+        authority = AUTHORITY_BORSA_ISTANBUL
     elif AUTHORITY_CANDIDATE in authorities and len(authorities) == 1:
         authority = AUTHORITY_CANDIDATE
     elif AUTHORITY_PARTICIPATION in authorities and len(authorities) == 1:
@@ -786,6 +887,7 @@ class SecurityFactsService:
         participation_result: Any = None,
         sec_financials: Optional[Mapping[str, Any]] = None,
         kap_financials: Optional[Mapping[str, Any]] = None,
+        bist_market_facts: Any = None,
         company_intelligence: Any = None,
         security_resolution: Any = None,
         instrument_type: str = "",
@@ -802,6 +904,7 @@ class SecurityFactsService:
             participation_result=participation_result,
             sec_financials=sec_financials,
             kap_financials=kap_financials,
+            bist_market_facts=bist_market_facts,
             company_intelligence=company_intelligence,
             security_resolution=security_resolution,
             instrument_type=instrument_type,
@@ -821,6 +924,7 @@ class SecurityFactsService:
         participation_result: Any = None,
         sec_financials: Optional[Mapping[str, Any]] = None,
         kap_financials: Optional[Mapping[str, Any]] = None,
+        bist_market_facts: Any = None,
         company_intelligence: Any = None,
         security_resolution: Any = None,
         instrument_type: str = "",
@@ -840,6 +944,7 @@ class SecurityFactsService:
         extracted: dict[str, Any] = {}
         if is_bist:
             _ingest_kap(slots, _kap_facts_payload(kap_financials))
+            _ingest_borsa_market(slots, bist_market_facts, symbol=ticker)
         else:
             extracted = _sec_financials(sec_financials, participation_result)
             sec_source = "sec_extract_financials"
@@ -848,10 +953,20 @@ class SecurityFactsService:
                 if extracted:
                     sec_source = "sec_company_facts_cache"
             _ingest_sec(slots, extracted, source=sec_source)
-        candidate_stale = stale or _text(cand.get("freshness_status")).upper() == "STALE"
-        _ingest_candidate(slots, cand, stale=candidate_stale)
-        _ingest_participation_inputs(slots, _financial_inputs(snap, participation_result))
-        _ingest_company_intelligence(slots, company_intelligence)
+        official_stale = bool(getattr(bist_market_facts, "stale", False)) if bist_market_facts is not None else False
+        candidate_stale = stale or _text(cand.get("freshness_status")).upper() == "STALE" or official_stale
+        skip_unofficial_market = is_bist and bist_market_facts is not None
+        _ingest_candidate(slots, cand, stale=candidate_stale, skip_market_fields=skip_unofficial_market)
+        _ingest_participation_inputs(
+            slots,
+            _financial_inputs(snap, participation_result),
+            skip_market_fields=skip_unofficial_market,
+        )
+        _ingest_company_intelligence(
+            slots,
+            company_intelligence,
+            skip_market_fields=skip_unofficial_market,
+        )
         _ingest_local_momentum(slots, local_momentum, client=client, symbol=ticker)
 
         kap_payload = _kap_facts_payload(kap_financials) if is_bist else {}
@@ -860,6 +975,13 @@ class SecurityFactsService:
             currency = _text(extracted.get("financial_currency") or extracted.get("currency"))
         currency = currency or _text(kap_payload.get("financial_currency") or kap_payload.get("currency"))
         currency = currency or _text(cand.get("financial_currency") or cand.get("currency"))
+        market_as_of = None
+        if is_bist and bist_market_facts is not None:
+            raw_market_date = getattr(bist_market_facts, "market_date", None)
+            if hasattr(raw_market_date, "isoformat"):
+                market_as_of = raw_market_date.isoformat()
+            else:
+                market_as_of = _text(raw_market_date) or None
         as_of = _as_of(
             (extracted or {}).get("financial_period_end"),
             kap_payload.get("financial_period_end"),
@@ -867,6 +989,7 @@ class SecurityFactsService:
             cand.get("source_updated_at"),
             snap.get("assessed_at"),
             snap.get("as_of"),
+            market_as_of,
         )
         resolution = _resolve_identity_resolution(ticker, security_resolution)
         name = ""
