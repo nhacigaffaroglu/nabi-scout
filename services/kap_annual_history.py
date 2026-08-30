@@ -1,6 +1,7 @@
 """Canonical KAP annual (FY) history for the existing SecurityFacts path.
 
-Does not invent FCF, ROIC, EPS, TTM, or interest-bearing debt.
+Does not invent FCF, ROIC, TTM, or interest-bearing debt.
+Official KAP EPS is ingested only when the share/quote unit is explicit.
 Does not mix consolidated and standalone series.
 Does not persist SI, Participation, or portfolio state.
 """
@@ -653,7 +654,13 @@ def inventory_annual_facts(
         "debt": NOT_AVAILABLE,
         "fcf": METHODOLOGY_UNRESOLVED,
         "roic": NOT_AVAILABLE,
-        "eps": AVAILABLE_RAW_ONLY if any(code in concepts for code in RAW_ONLY_CONCEPTS["eps"]) else NOT_AVAILABLE,
+        "eps": (
+            AVAILABLE_CANONICAL
+            if facts.get("eps") is not None
+            else AVAILABLE_RAW_ONLY
+            if any(code in concepts for code in RAW_ONLY_CONCEPTS["eps"])
+            else NOT_AVAILABLE
+        ),
     }
     return inventory
 

@@ -19,6 +19,12 @@ from services.kap_financial_contract import (
     KapNormalizedBundle,
     KapRawFinancialLine,
 )
+from services.kap_eps_normalization import (
+    BASIS_ONE_TRY,
+    candidate_from_row,
+    is_eps_concept,
+    select_canonical_eps,
+)
 from services.kap_public_contract import (
     LIMITATION_SCALE,
     LIMITATION_US_SYMBOL,
@@ -44,8 +50,18 @@ def structured_payloads_from_public(
     """KapRawFinancialLine-shaped dicts. No normalization."""
     scale = _unit_scale(document.presentation_unit_label)
     payloads: list[dict[str, Any]] = []
+    eps_candidates = []
     for row in document.rows:
         if not row.values or row.values[0] is None:
+            continue
+        if is_eps_concept(row.concept):
+            candidate = candidate_from_row(
+                row,
+                notification_id=document.disclosure_id,
+                reporting_basis=document.consolidation,
+            )
+            if candidate is not None:
+                eps_candidates.append(candidate)
             continue
         payloads.append(
             {
@@ -72,6 +88,40 @@ def structured_payloads_from_public(
                     "source_url": document.source_url,
                     "taxonomy": row.concept,
                     "period_identity": row.period_identity,
+                    "cached": document.cached,
+                },
+            }
+        )
+    chosen = select_canonical_eps(eps_candidates)
+    if chosen is not None and chosen.canonical_value is not None:
+        payloads.append(
+            {
+                "symbol": document.symbol,
+                "issuer_id": document.disclosure_id,
+                "statement_type": "INCOME",
+                "period_start": None,
+                "period_end": chosen.period_end,
+                "reporting_period": chosen.period_kind,
+                "fact_nature": "FLOW",
+                "consolidation": document.consolidation,
+                "currency": document.presentation_currency or "TRY",
+                "unit_scale": 1,
+                "unit_label": "TRY",
+                "account_code": chosen.taxonomy_concept,
+                "account_label": chosen.reported_label or chosen.taxonomy_concept,
+                "raw_value": float(chosen.canonical_value),
+                "source": SOURCE_PUBLIC_KAP,
+                "source_document_id": document.disclosure_id,
+                "published_at": document.published_at,
+                "as_of": chosen.period_end or document.published_at,
+                "provenance": {
+                    "source": SOURCE_PUBLIC_KAP,
+                    "source_url": document.source_url,
+                    "taxonomy": chosen.taxonomy_concept,
+                    "typed_dimension": chosen.typed_dimension,
+                    "eps_normalization": BASIS_ONE_TRY,
+                    "share_nominal_basis": chosen.share_nominal_basis,
+                    "share_count_basis": chosen.share_count_basis,
                     "cached": document.cached,
                 },
             }

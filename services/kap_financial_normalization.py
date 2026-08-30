@@ -20,10 +20,15 @@ from services.kap_financial_contract import (
     ACCOUNT_TOTAL_DEBT,
     ACCOUNT_TOTAL_EQUITY,
     EXPLICIT_UNIT_SCALES,
+    IFRS_BASIC_AND_DILUTED_EPS,
+    IFRS_BASIC_EPS,
+    IFRS_BASIC_EPS_CONTINUING,
     IFRS_CASH,
     IFRS_CURRENT_ASSETS,
     IFRS_CURRENT_LIABILITIES,
     IFRS_CURRENT_TRADE_RECEIVABLES,
+    IFRS_DILUTED_EPS,
+    IFRS_DILUTED_EPS_CONTINUING,
     IFRS_EQUITY,
     IFRS_NET_INCOME,
     IFRS_OPERATING_INCOME,
@@ -68,6 +73,11 @@ KAP_ACCOUNT_CODE_MAP = {
     IFRS_CURRENT_ASSETS: ("current_assets", NATURE_POINT_IN_TIME),
     IFRS_CURRENT_LIABILITIES: ("current_liabilities", NATURE_POINT_IN_TIME),
     IFRS_CURRENT_TRADE_RECEIVABLES: ("accounts_receivable", NATURE_POINT_IN_TIME),
+    IFRS_DILUTED_EPS_CONTINUING: ("eps", NATURE_FLOW),
+    IFRS_DILUTED_EPS: ("eps", NATURE_FLOW),
+    IFRS_BASIC_AND_DILUTED_EPS: ("eps", NATURE_FLOW),
+    IFRS_BASIC_EPS_CONTINUING: ("eps", NATURE_FLOW),
+    IFRS_BASIC_EPS: ("eps", NATURE_FLOW),
 }
 
 _INCOMPATIBLE_PERIOD_PAIRS = (
@@ -145,6 +155,8 @@ def normalize_raw_line(line: KapRawFinancialLine) -> Optional[KapNormalizedFinan
     if raw_value is None:
         return None
     scale = resolve_unit_scale(line)
+    if field == "eps":
+        scale = 1
     if scale is None:
         return None
     currency = _text(line.currency).upper()
@@ -156,15 +168,23 @@ def normalize_raw_line(line: KapRawFinancialLine) -> Optional[KapNormalizedFinan
     nature = _text(line.fact_nature).upper()
     if nature != required_nature:
         return None
+    if field == "eps":
+        rule = _text((line.provenance or {}).get("eps_normalization"))
+        if rule != "EARNINGS_PER_1_TRY_NOMINAL_QUOTE_UNIT":
+            return None
+        normalized = raw_value
+    else:
+        normalized = raw_value * scale
+        rule = f"RAW_TIMES_SCALE_{scale}"
     return KapNormalizedFinancialFact(
         field=field,
         symbol=_text(line.symbol).upper(),
         raw_value=raw_value,
         raw_unit_scale=scale,
         raw_unit_label=_text(line.unit_label),
-        normalized_value=raw_value * scale,
+        normalized_value=normalized,
         currency=currency,
-        normalization_rule=f"RAW_TIMES_SCALE_{scale}",
+        normalization_rule=rule,
         period_kind=period_kind,
         fact_nature=nature,
         statement_type=_text(line.statement_type).upper(),

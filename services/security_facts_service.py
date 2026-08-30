@@ -112,6 +112,7 @@ KAP_FIELD_MAP = {
     "current_ratio": "current_ratio",
     "revenue_growth_yoy": "revenue_growth_yoy",
     "revenue_cagr_3y": "revenue_cagr_3y",
+    "eps": "eps",
 }
 
 SEC_FIELD_MAP = {
@@ -472,7 +473,12 @@ def _ingest_kap(slots: _FactSlots, payload: Mapping[str, Any]) -> None:
             source_as_of=as_of,
             currency=currency,
             period_kind=PERIOD_FY,
-            normalization=_text(payload.get("normalization")) or "KAP_FY_BASE_UNITS",
+            normalization=(
+                _text(payload.get("eps_normalization"))
+                if dest == "eps"
+                else _text(payload.get("normalization"))
+            )
+            or "KAP_FY_BASE_UNITS",
             confidence="HIGH",
         )
 

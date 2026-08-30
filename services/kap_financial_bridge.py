@@ -91,6 +91,8 @@ def kap_security_facts_payload(
         current = payload.get(fact.field)
         if current is None or (current == 0 and fact.normalized_value != 0):
             payload[fact.field] = fact.normalized_value
+        if fact.field == "eps" and fact.normalization_rule:
+            payload["eps_normalization"] = fact.normalization_rule
         payload["currency"] = payload["currency"] or fact.currency
         payload["financial_period_end"] = payload["financial_period_end"] or fact.period_end
     for derived in bundle.derived:

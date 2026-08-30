@@ -194,6 +194,8 @@ class _StackedKapHtmlParser(HTMLParser):
         self._cell_kind = ""
         self._cell_text: list[str] = []
         self._in_label = False
+        self._open_concept = ""
+        self._open_label = ""
 
     def _frame(self) -> Optional[dict[str, object]]:
         return self._stack[-1] if self._stack else None
@@ -202,7 +204,14 @@ class _StackedKapHtmlParser(HTMLParser):
         classes = " ".join(value or "" for key, value in attrs if key == "class")
         if tag == "tr":
             self._stack.append(
-                {"headers": [], "concept": "", "label": "", "values": [], "in_label": False}
+                {
+                    "headers": [],
+                    "concept": "",
+                    "label": "",
+                    "values": [],
+                    "in_label": False,
+                    "row_class": classes,
+                }
             )
             self._cell_kind = ""
             self._cell_text = []
@@ -221,6 +230,10 @@ class _StackedKapHtmlParser(HTMLParser):
         elif "taxonomy-context-value" in classes:
             self._cell_kind = "value"
             self._cell_text = []
+        elif "typed-dimension-field-caption" in classes or "typed-dimension-field-label" in classes:
+            if "content-en" not in classes:
+                self._cell_kind = "label"
+                self._cell_text = []
         elif frame.get("in_label") and "content-tr" in classes and not frame["label"]:
             self._cell_kind = "label"
             self._cell_text = []
@@ -233,6 +246,20 @@ class _StackedKapHtmlParser(HTMLParser):
                 self._headers = headers
             concept = str(frame["concept"] or "")
             values = list(frame["values"])
+            numeric = [item for item in values if item is not None]
+            row_class = str(frame.get("row_class") or "")
+            if not concept and frame["label"] and self._stack:
+                parent = self._stack[-1]
+                if not parent.get("label"):
+                    parent["label"] = frame["label"]
+            if not concept and numeric and self._open_concept and "new-type-row" in row_class:
+                concept = self._open_concept
+                if not frame["label"] and self._open_label:
+                    frame["label"] = self._open_label
+            if concept:
+                self._open_concept = concept
+                if frame["label"]:
+                    self._open_label = str(frame["label"])
             if concept:
                 self.concepts.append(concept)
             if concept and self._headers:
