@@ -38,6 +38,11 @@ REASON_PERSIST_PARTICIPATION_DISABLED = "PERSIST_PARTICIPATION_DISABLED"
 REASON_FIXTURE_MOMENTUM = "FIXTURE_MOMENTUM_FORBIDDEN"
 REASON_US_ISOLATED = "US_SYMBOL_ISOLATED"
 REASON_BROAD_UNIVERSE = "BROAD_UNIVERSE_REFUSED"
+REASON_PILOT_SCOPE = "PILOT_SCOPE_REFUSED"
+REASON_LIVE_UNSAFE = "LIVE_PERSIST_UNSAFE"
+
+PILOT_SYMBOLS = ("ASELS", "BIMAS", "TUPRS")
+STATE_CACHE_PATH = ".cache/bist_refresh/state.json"
 
 PAID_PROVIDER_TOKENS = (
     "FMPClient",
@@ -78,6 +83,36 @@ class BistRefreshState:
 
     def capital_version(self, symbol: str) -> str:
         return dict(self.capital_versions).get(symbol, "")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "known_notification_ids": list(self.known_notification_ids),
+            "latest_kafif_ids": [list(item) for item in self.latest_kafif_ids],
+            "latest_kafif_submitted": [list(item) for item in self.latest_kafif_submitted],
+            "latest_thb_date": self.latest_thb_date,
+            "participation_keys": [list(item) for item in self.participation_keys],
+            "membership_keys": [list(item) for item in self.membership_keys],
+            "capital_versions": [list(item) for item in self.capital_versions],
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Optional[dict[str, Any]]) -> "BistRefreshState":
+        if not payload:
+            return cls()
+        pairs = lambda key: tuple(
+            (str(item[0]), str(item[1]))
+            for item in (payload.get(key) or ())
+            if item
+        )
+        return cls(
+            known_notification_ids=tuple(str(item) for item in payload.get("known_notification_ids") or ()),
+            latest_kafif_ids=pairs("latest_kafif_ids"),
+            latest_kafif_submitted=pairs("latest_kafif_submitted"),
+            latest_thb_date=payload.get("latest_thb_date"),
+            participation_keys=pairs("participation_keys"),
+            membership_keys=pairs("membership_keys"),
+            capital_versions=pairs("capital_versions"),
+        )
 
 
 @dataclass(frozen=True)
@@ -157,6 +192,9 @@ class BistRefreshRun:
     participation_published: int = 0
     participation_skipped: int = 0
     participation_errors: Tuple[str, ...] = ()
+    si_processed: int = 0
+    si_published: int = 0
+    si_skipped: int = 0
     latest_thb_date: Optional[str] = None
     missing_thb_dates: Tuple[str, ...] = ()
     securities: Tuple[BistSymbolRefresh, ...] = ()
@@ -185,6 +223,9 @@ class BistRefreshRun:
             "participation_published": self.participation_published,
             "participation_skipped": self.participation_skipped,
             "participation_errors": list(self.participation_errors),
+            "si_processed": self.si_processed,
+            "si_published": self.si_published,
+            "si_skipped": self.si_skipped,
             "latest_thb_date": self.latest_thb_date,
             "missing_thb_dates": list(self.missing_thb_dates),
             "securities": [row.to_dict() for row in self.securities],

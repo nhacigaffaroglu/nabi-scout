@@ -271,8 +271,6 @@ def run_bist_refresh(
     cache = thb_cache if thb_cache is not None else load_history_cache()
     latest_thb = last_cached_ok_date(cache)
     missing = missing_weekday_dates(cache, as_of=as_of)
-    if allow_live:
-        errors.append("LIVE_FETCH_NOT_ENABLED_THIS_SPRINT")
     master = security_master if security_master is not None else SecurityMasterService()
     results: list[BistSymbolRefresh] = []
     known_ids = set(prior.known_ids())
@@ -290,6 +288,9 @@ def run_bist_refresh(
     part_published = 0
     part_skipped = 0
     part_errors: list[str] = []
+    si_processed = 0
+    si_published = 0
+    si_skipped = 0
 
     for symbol in requested:
         if _us_isolated(symbol, master):
@@ -371,8 +372,13 @@ def run_bist_refresh(
             part_skipped += 1
         if row.error and CHANGE_PARTICIPATION in row.changes:
             part_errors.append(f"{row.symbol}:{row.error}")
+        if row.si_status in {STATUS_CHECKED, STATUS_WOULD_PUBLISH, STATUS_BLOCKED}:
+            si_processed += 1
         if row.published:
             published += 1
+            si_published += 1
+        elif row.si_status in {STATUS_SKIPPED, STATUS_BLOCKED, STATUS_SOURCE_FAILURE}:
+            si_skipped += 1
         known_ids.update(row.latest_notification_ids)
         if row.latest_kafif_id:
             next_kafif = [(key, value) for key, value in next_kafif if key != symbol]
@@ -434,6 +440,9 @@ def run_bist_refresh(
         participation_published=part_published,
         participation_skipped=part_skipped,
         participation_errors=tuple(part_errors),
+        si_processed=si_processed,
+        si_published=si_published,
+        si_skipped=si_skipped,
         latest_thb_date=_iso(latest_thb),
         missing_thb_dates=tuple(item.isoformat() for item in missing),
         securities=tuple(results),

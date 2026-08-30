@@ -23,20 +23,27 @@ class ScheduledJobInventoryTests(unittest.TestCase):
             "daily_fx_refresh.yml": 'cron: "0 4 * * *"',
             "daily_wealth_snapshot.yml": 'cron: "30 6 * * *"',
             "daily_fund_holdings_refresh.yml": 'cron: "30 5 * * *"',
+            "daily_bist_refresh.yml": 'cron: "30 15 * * 1-5"',
         }
         for name, cron in expected.items():
             text = (WORKFLOWS / name).read_text(encoding="utf-8")
             self.assertIn(cron, text, name)
 
-    def test_no_bist_si_or_kap_watcher_job(self) -> None:
+    def test_no_paid_or_second_engine_in_bist_workflow(self) -> None:
         for path in WORKFLOWS.glob("*.yml"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("publish_canonical_security_intelligence", text, path.name)
-            self.assertNotIn("kafif", text.lower(), path.name)
-            self.assertNotIn("thb_history", text, path.name)
+            if path.name != "daily_bist_refresh.yml":
+                self.assertNotIn("kafif", text.lower(), path.name)
+                self.assertNotIn("thb_history", text, path.name)
+                self.assertNotIn("run_bist_refresh.py", text, path.name)
         for path in SCRIPTS.glob("run_daily_*.py"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("publish_canonical_security_intelligence", text, path.name)
+        bist = (WORKFLOWS / "daily_bist_refresh.yml").read_text(encoding="utf-8")
+        self.assertIn("run_bist_refresh.py", bist)
+        self.assertIn('cron: "30 15 * * 1-5"', bist)
+        self.assertNotIn("FMP_API_KEY", bist)
 
     def test_kafif_compare_key_uses_notification_id(self) -> None:
         self.assertIn("source_notification_id", WATCHER_COMPARE_FIELDS)
@@ -102,14 +109,15 @@ class ScheduledJobInventoryTests(unittest.TestCase):
         self.assertTrue(callable(publish_canonical_security_intelligence))
         self.assertNotIn("cron", PUBLISH.read_text(encoding="utf-8"))
 
-    def test_bist_refresh_cli_exists_without_production_cron(self) -> None:
+    def test_bist_refresh_cli_defaults_zero_write(self) -> None:
+        from scripts.run_bist_refresh import parse_args, resolve_execution_mode
+
         cli = (SCRIPTS / "run_bist_refresh.py").read_text(encoding="utf-8")
         self.assertIn("run_bist_refresh", cli)
-        self.assertIn("dry_run=True", cli)
-        self.assertIn("persist_si=False", cli)
-        self.assertIn("persist_participation=False", cli)
-        for path in WORKFLOWS.glob("*.yml"):
-            self.assertNotIn("run_bist_refresh.py", path.read_text(encoding="utf-8"))
+        mode = resolve_execution_mode(parse_args([]))
+        self.assertTrue(mode["dry_run"])
+        self.assertFalse(mode["persist_si"])
+        self.assertFalse(mode["persist_participation"])
 
 
 if __name__ == "__main__":

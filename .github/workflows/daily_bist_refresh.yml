@@ -1,0 +1,71 @@
+name: Daily BIST Canonical Refresh
+
+on:
+  schedule:
+    # 18:30 Europe/Istanbul (UTC+3, no DST) == 15:30 UTC. Weekdays only.
+    - cron: "30 15 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-daily-bist-refresh
+  cancel-in-progress: false
+
+jobs:
+  bist-canonical-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore official source cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/bist_thb_history
+            .cache/bist_katilim
+            .cache/kap_kafif
+            .cache/kap_public
+            .cache/bist_refresh
+          key: bist-refresh-${{ github.ref_name }}
+          restore-keys: |
+            bist-refresh-
+
+      - name: Validate required secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL"; exit 1; }
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY service role)"
+            exit 1
+          fi
+
+      - name: Run BIST canonical refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -eo pipefail
+          python scripts/run_bist_refresh.py \
+            --live \
+            --persist-si \
+            --persist-participation \
+            --symbols ASELS,BIMAS,TUPRS
+        # GitHub cron is UTC 15:30. Business intent is 18:30 Istanbul.
+        # Official Borsa İstanbul + public KAP only. No paid providers.

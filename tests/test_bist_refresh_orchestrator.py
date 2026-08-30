@@ -108,20 +108,71 @@ class _Table:
 
 
 class DiscoveryAndHealthTests(unittest.TestCase):
-    def test_cli_and_job_name_exist_without_cron(self) -> None:
-        self.assertTrue(CLI.is_file())
-        self.assertIn("dry_run=True", CLI.read_text(encoding="utf-8"))
-        self.assertIn("persist_si=False", CLI.read_text(encoding="utf-8"))
-        self.assertIn("persist_participation=False", CLI.read_text(encoding="utf-8"))
-        self.assertEqual(JOB_NAME, "bist_canonical_refresh")
-        for path in WORKFLOWS.glob("*.yml"):
-            text = path.read_text(encoding="utf-8")
-            self.assertNotIn("run_bist_refresh", text, path.name)
-            self.assertNotIn("bist_canonical_refresh", text, path.name)
+    def test_cli_defaults_are_zero_write_until_live_opt_in(self) -> None:
+        from scripts.run_bist_refresh import parse_args, resolve_execution_mode
 
-    def test_today_run_status_is_unknown_for_bist_job(self) -> None:
+        mode = resolve_execution_mode(parse_args([]))
+        self.assertTrue(mode["dry_run"])
+        self.assertFalse(mode["persist_si"])
+        self.assertFalse(mode["persist_participation"])
+        self.assertFalse(mode["live"])
+        ignored = resolve_execution_mode(parse_args(["--persist-si", "--persist-participation"]))
+        self.assertTrue(ignored["dry_run"])
+        self.assertFalse(ignored["persist_si"])
+        self.assertFalse(ignored["persist_participation"])
+        live = resolve_execution_mode(
+            parse_args(["--live", "--persist-si", "--persist-participation"])
+        )
+        self.assertFalse(live["dry_run"])
+        self.assertTrue(live["persist_si"])
+        self.assertTrue(live["persist_participation"])
+        self.assertEqual(JOB_NAME, "bist_canonical_refresh")
+        self.assertNotIn("from tests.fixtures", CLI.read_text(encoding="utf-8"))
+        self.assertNotIn("allocate_new_money", CLI.read_text(encoding="utf-8"))
+        self.assertNotIn("post_transaction", CLI.read_text(encoding="utf-8"))
+
+    def test_workflow_uses_same_cli_and_weekday_cron(self) -> None:
+        workflow = WORKFLOWS / "daily_bist_refresh.yml"
+        text = workflow.read_text(encoding="utf-8")
+        self.assertIn('cron: "30 15 * * 1-5"', text)
+        self.assertIn("18:30", text)
+        self.assertIn("15:30 UTC", text)
+        self.assertIn("workflow_dispatch", text)
+        self.assertIn("run_bist_refresh.py", text)
+        self.assertIn("--live", text)
+        self.assertIn("--persist-si", text)
+        self.assertIn("--persist-participation", text)
+        self.assertIn("ASELS,BIMAS,TUPRS", text)
+        self.assertNotIn("FMP_API_KEY", text)
+        self.assertNotIn("Musaffa", text)
+        self.assertNotIn("Zoya", text)
+        self.assertNotIn("allocate_new_money", text)
         self.assertNotIn("cron", CLI.read_text(encoding="utf-8"))
         self.assertNotIn("schedule:", ENGINE.read_text(encoding="utf-8"))
+
+    def test_live_persist_refuses_non_pilot_without_broad(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from scripts.run_bist_refresh import main
+        from services.bist_refresh_contract import REASON_PILOT_SCOPE
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = main(["--live", "--persist-si", "--persist-participation", "--symbols", "THYAO"])
+        self.assertEqual(code, 0)
+        self.assertIn(REASON_PILOT_SCOPE, buffer.getvalue())
+
+    def test_allow_live_does_not_mark_run_failed(self) -> None:
+        run = run_bist_refresh(
+            ["ASELS"],
+            dry_run=True,
+            allow_live=True,
+            thb_cache=_cursor_cache(date(2026, 8, 28)),
+            as_of=date(2026, 8, 28),
+        )
+        self.assertNotIn("LIVE_FETCH_NOT_ENABLED_THIS_SPRINT", run.errors)
+        self.assertEqual(run.status, "completed")
 
 
 class KapChangeTests(unittest.TestCase):
