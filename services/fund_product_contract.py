@@ -929,6 +929,108 @@ class KapFundMandateEvidence:
         return asdict(self)
 
 
+METHODOLOGY_TURKIYE_FUND_PARTICIPATION = "turkiye_fund_participation"
+METHODOLOGY_TURKIYE_FUND_PARTICIPATION_VERSION = "2026-08-30"
+FRAMEWORK_TURKIYE_PARTICIPATION = "TURKIYE_PARTICIPATION_REGULATORY_FRAMEWORK"
+
+AUTHORITY_SPK = "SPK"
+AUTHORITY_TKBB = "TKBB"
+AUTHORITY_KAP = "KAP"
+AUTHORITY_FUND_MANAGER = "FUND_MANAGER"
+
+MANDATE_CONFIRMED = "MANDATE_CONFIRMED"
+MANDATE_UNRESOLVED = "MANDATE_UNRESOLVED"
+
+GOVERNANCE_CONFIRMED = "CONFIRMED"
+GOVERNANCE_PARTIAL = "PARTIAL"
+GOVERNANCE_MISSING = "MISSING"
+GOVERNANCE_CONFLICT = "CONFLICT"
+
+HOLDINGS_COMPLIANT = "COMPLIANT"
+HOLDINGS_REVIEW = "REVIEW"
+HOLDINGS_MISSING = "MISSING"
+
+PURIFICATION_NOT_REQUIRED = "NOT_REQUIRED"
+PURIFICATION_POLICY_CONFIRMED = "POLICY_CONFIRMED"
+PURIFICATION_FACTOR_AVAILABLE = "FACTOR_AVAILABLE"
+PURIFICATION_POLICY_ONLY = "POLICY_ONLY"
+PURIFICATION_MISSING = "MISSING"
+
+FRESHNESS_ACCEPTABLE = "ACCEPTABLE"
+FRESHNESS_STALE = "STALE"
+
+EVIDENCE_TYPE_REGULATORY_FRAMEWORK = "REGULATORY_FRAMEWORK"
+EVIDENCE_TYPE_MANDATE = "MANDATE"
+EVIDENCE_TYPE_GOVERNANCE = "GOVERNANCE"
+EVIDENCE_TYPE_ICAZET = "ICAZET"
+EVIDENCE_TYPE_HOLDINGS = "HOLDINGS"
+EVIDENCE_TYPE_PURIFICATION = "PURIFICATION"
+
+
+@dataclass(frozen=True)
+class OfficialParticipationEvidenceItem:
+    fund_code: Optional[str]
+    source: str
+    document_title: str
+    document_date: Optional[str]
+    document_version: Optional[str]
+    evidence_type: str
+    raw_text: str
+    source_url: str
+    provenance: tuple[str, ...]
+    reliability: str
+    applies_to_fund: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TurkiyeParticipationFramework:
+    framework_id: str
+    title: str
+    authority: str
+    version: str
+    as_of: Optional[str]
+    source_url: str
+    provenance: tuple[str, ...]
+    summary: str
+    excerpts: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TurkiyeFundParticipationVerdict:
+    fund_code: str
+    identity_resolved: bool
+    framework_applicable: bool
+    mandate_state: str
+    governance_state: str
+    icazet_present: bool
+    equivalent_approval_reason: Optional[str]
+    holdings_state: str
+    contradiction: bool
+    contradiction_reasons: tuple[str, ...]
+    purification_state: str
+    purification_policy_present: bool
+    purification_factor_pct: Optional[float]
+    freshness: str
+    participation_status: str
+    research_allowed: bool
+    theoretically_publishable: bool
+    blockers: tuple[str, ...]
+    evidence: tuple[OfficialParticipationEvidenceItem, ...]
+    methodology_id: str = METHODOLOGY_TURKIYE_FUND_PARTICIPATION
+    methodology_version: str = METHODOLOGY_TURKIYE_FUND_PARTICIPATION_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["evidence"] = [item.to_dict() for item in self.evidence]
+        return payload
+
+
 @dataclass(frozen=True)
 class KapPortfolioReportAudit:
     fund_code: str

@@ -42,10 +42,6 @@ from services.official_kap_pdr_evidence import (
 )
 from services.official_sp_funds_product import default_official_sp_funds_provider
 from services.official_tefas_product import default_tefas_fund_provider
-from services.participation_intelligence_contract import (
-    PARTICIPATION_STATUS_KONTROL_ET,
-    PARTICIPATION_STATUS_UYGUN,
-)
 
 PDR_SRC = Path("services/official_kap_pdr.py")
 TEFAS_SRC = Path("services/official_tefas_product.py")
@@ -267,14 +263,11 @@ class KapPortfolioHoldingsTests(unittest.TestCase):
 
     def test_participation_isolation(self) -> None:
         provider = default_tefas_fund_provider()
+        source = PDR_SRC.read_text(encoding="utf-8")
+        self.assertNotIn("PARTICIPATION_STATUS_UYGUN", source)
+        self.assertNotIn("purification", source.lower())
         for code in PILOT_TEFAS_FUND_CODES:
-            evidence = provider.sharia_evidence(code)
-            self.assertEqual(evidence.participation_status, PARTICIPATION_STATUS_KONTROL_ET)
-            self.assertNotEqual(evidence.participation_status, PARTICIPATION_STATUS_UYGUN)
             self.assertIsNone(provider.purification_evidence(code).latest_factor_pct)
-            source = PDR_SRC.read_text(encoding="utf-8")
-            self.assertNotIn("PARTICIPATION_STATUS_UYGUN", source)
-            self.assertNotIn("purification", source.lower())
 
     def test_sp_funds_bist_us_eight_e_isolation(self) -> None:
         provider = default_tefas_fund_provider()

@@ -62,10 +62,7 @@ from services.official_tefas_performance import (
     ytd_unit_price_return,
 )
 from services.official_tefas_product import default_tefas_fund_provider
-from services.participation_intelligence_contract import (
-    PARTICIPATION_STATUS_KONTROL_ET,
-    PARTICIPATION_STATUS_UYGUN,
-)
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.portfolio_security_decision_contract import DECISION_INSUFFICIENT_DATA
 from services.wealth_new_money_allocation import allocate_new_money
 
@@ -249,13 +246,12 @@ class TurkishFundIntelligenceTests(unittest.TestCase):
             self.assertNotEqual(str(view.dimension(DIM_RISK_EVAL).score), provider.official_risk_value(code))
             self.assertGreaterEqual(view.completeness, 0.55)
             self.assertIsNotNone(view.score)
-            self.assertFalse(view.participation.eligible)
-            self.assertFalse(view.publishable)
+            self.assertTrue(view.participation.eligible)
+            self.assertTrue(view.publishable)
             generic = view.generic_intelligence()
-            self.assertEqual(generic["si_state"], "INSUFFICIENT_DATA")
-            self.assertIsNone(generic["si_score"])
-            self.assertEqual(provider.sharia_evidence(code).participation_status, PARTICIPATION_STATUS_KONTROL_ET)
-            self.assertNotEqual(provider.sharia_evidence(code).participation_status, PARTICIPATION_STATUS_UYGUN)
+            self.assertEqual(generic["si_state"], view.state)
+            self.assertEqual(generic["si_score"], view.score)
+            self.assertEqual(provider.sharia_evidence(code).participation_status, PARTICIPATION_STATUS_UYGUN)
 
     def test_profile_specific_dimensions(self) -> None:
         ais = evaluate_official_fund_intelligence("AIS")
@@ -319,12 +315,15 @@ class TurkishFundIntelligenceTests(unittest.TestCase):
         self.assertNotEqual(partial.score, view.score)
 
     def test_participation_firewall_and_eight_e_new_money(self) -> None:
+        frozen = {"AIS": (70.39, "WATCH"), "ZPE": (66.32, "WATCH"), "IAT": (60.49, "NEUTRAL")}
         for code in PILOT_TEFAS_FUND_CODES:
             view = evaluate_official_fund_intelligence(code)
             self.assertEqual(view.dimension(DIM_PARTICIPATION_MANDATE).status, DIM_STATUS_READY)
-            self.assertIn("PARTICIPATION_KONTROL_ET", view.dimension(DIM_PARTICIPATION_MANDATE).reason_codes)
-            self.assertFalse(view.participation.eligible)
-            self.assertFalse(view.publishable)
+            self.assertNotIn("PARTICIPATION_KONTROL_ET", view.dimension(DIM_PARTICIPATION_MANDATE).reason_codes)
+            self.assertTrue(view.participation.eligible)
+            self.assertTrue(view.publishable)
+            self.assertEqual(view.score, frozen[code][0])
+            self.assertEqual(view.state, frozen[code][1])
             decision = evaluate_official_fund_decision(code)
             self.assertEqual(decision.decision, DECISION_INSUFFICIENT_DATA)
             self.assertFalse(decision.exposure_increase_allowed)

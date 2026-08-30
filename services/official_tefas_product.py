@@ -7,6 +7,8 @@ from typing import Any, Mapping, Optional
 from services.fund_product_contract import (
     FUND_TYPE_MUTUAL,
     IDENTITY_RESOLVED,
+    MANDATE_CONFIRMED,
+    METHODOLOGY_TURKIYE_FUND_PARTICIPATION,
     PILOT_TEFAS_FUND_CODES,
     PROFILE_EQUITY_PARTICIPATION_FUND,
     PROFILE_LIQUIDITY_PARTICIPATION_FUND,
@@ -16,7 +18,9 @@ from services.fund_product_contract import (
     PROFILE_SUKUK_PARTICIPATION_FUND,
     PROVIDER_KAP_FUND,
     PROVIDER_TEFAS,
+    PURIFICATION_NOT_REQUIRED,
     READINESS_NEEDS_MORE_DATA,
+    READINESS_READY_NOW,
     TEFAS_ENDPOINT_PRICES,
     TEFAS_ENDPOINT_RETURNS,
     TEFAS_ENDPOINT_SNAPSHOT,
@@ -55,7 +59,8 @@ from services.official_turkiye_fund_evidence import (
     load_tefas_official_bundle,
     load_tefas_price_rows,
 )
-from services.participation_intelligence_contract import PARTICIPATION_STATUS_KONTROL_ET
+from services.official_turkiye_fund_participation import evaluate_turkiye_fund_participation
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.security_master_contract import INSTRUMENT_OTHER, RESOLUTION_RESOLVED
 
 TEFAS_SNAPSHOT_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_SNAPSHOT}"
@@ -204,37 +209,63 @@ class TefasFundProductProvider:
     def sharia_evidence(self, symbol: str) -> FundShariaEvidence:
         code = self._require(symbol)
         mandate = self.kap_mandate(code)
-        official = bool(mandate.participation_wording)
+        identity = self.turkiye_identity(code)
+        verdict = evaluate_turkiye_fund_participation(
+            code,
+            identity_status=identity.identity_status,
+            official_name=identity.official_name,
+            umbrella_type=mandate.umbrella_type,
+        )
+        uygun = verdict.participation_status == PARTICIPATION_STATUS_UYGUN
+        limitations = ["NO_INVENTED_UYGUN"]
+        if uygun:
+            if verdict.equivalent_approval_reason:
+                limitations.append("EQUIVALENT_ICAZET_MECHANISM")
+        else:
+            limitations.extend(verdict.blockers)
+        excerpts = mandate.participation_wording + tuple(
+            item.raw_text
+            for item in verdict.evidence
+            if item.evidence_type in {"MANDATE", "GOVERNANCE"} and item.fund_code == code
+        )
         return FundShariaEvidence(
             symbol=code,
-            official_mandate_present=official,
-            official_certificate_listed=False,
+            official_mandate_present=verdict.mandate_state == MANDATE_CONFIRMED,
+            official_certificate_listed=uygun,
             official_auditor_report_listed=False,
-            methodology=None,
+            methodology=METHODOLOGY_TURKIYE_FUND_PARTICIPATION if uygun else None,
             auditor=None,
             benchmark_sharia=False,
             source=PROVIDER_KAP_FUND,
             source_url=mandate.source_url,
             evidence_as_of=mandate.as_of,
-            excerpts=mandate.participation_wording,
-            confidence="LOW",
-            eligibility_ready=READINESS_NEEDS_MORE_DATA,
-            participation_status=PARTICIPATION_STATUS_KONTROL_ET if official else None,
-            limitations=("NO_INVENTED_UYGUN", "TURKIYE_PARTICIPATION_METHODOLOGY_PENDING"),
+            excerpts=tuple(dict.fromkeys(excerpts)),
+            confidence="HIGH" if uygun else "LOW",
+            eligibility_ready=READINESS_READY_NOW if uygun else READINESS_NEEDS_MORE_DATA,
+            participation_status=verdict.participation_status,
+            limitations=tuple(dict.fromkeys(limitations)),
         )
 
     def purification_evidence(self, symbol: str) -> FundPurificationEvidence:
         code = self._require(symbol)
         kap = _kap_fund(code, self._kap)
+        identity = self.turkiye_identity(code)
+        verdict = evaluate_turkiye_fund_participation(
+            code,
+            identity_status=identity.identity_status,
+            official_name=identity.official_name,
+            umbrella_type=self.kap_mandate(code).umbrella_type,
+        )
+        required = False if verdict.purification_state == PURIFICATION_NOT_REQUIRED else None
         return FundPurificationEvidence(
             symbol=code,
-            purification_required=None,
+            purification_required=required,
             latest_factor_pct=None,
             factor_period=None,
             source=PROVIDER_KAP_FUND,
             source_url=str(kap.get("ybf_url") or kap.get("ozet_url") or ""),
             as_of=None,
-            methodology=None,
+            methodology=METHODOLOGY_TURKIYE_FUND_PARTICIPATION,
             factors=(),
             limitations=("PURIFICATION_FACTOR_UNAVAILABLE",),
         )

@@ -9,6 +9,7 @@ from services.fund_intelligence_engine import (
     evaluate_official_fund_intelligence,
 )
 from services.fund_product_contract import (
+    PILOT_TEFAS_FUND_CODES,
     READINESS_NEEDS_MORE_DATA,
     READINESS_READY_NOW,
     FundIntelligenceEvaluation,
@@ -34,6 +35,7 @@ from services.portfolio_security_decision_engine import (
 from services.security_master_contract import INSTRUMENT_ETF
 
 REASON_FUND_PARTICIPATION_NOT_ACCEPTABLE = "FUND_PARTICIPATION_NOT_ACCEPTABLE"
+REASON_TURKIYE_FUND_8E_NOT_STARTED = "TURKIYE_FUND_8E_NOT_STARTED"
 
 
 def fund_intelligence_to_context(
@@ -90,6 +92,11 @@ def evaluate_fund_portfolio_decision(
     market: str = "US",
     adverse_participation: bool = False,
 ) -> PortfolioSecurityDecision:
+    if str(view.symbol or "").strip().upper() in PILOT_TEFAS_FUND_CODES:
+        return _turkiye_fund_eight_e_block(
+            str(view.symbol),
+            economic_exposure_available=economic_exposure_available,
+        )
     return evaluate_portfolio_security_decision(
         fund_intelligence_to_context(
             view,
@@ -114,6 +121,11 @@ def evaluate_official_fund_decision(
 ) -> PortfolioSecurityDecision:
     """In-process official evidence only. No holdings fetch. Fail closed."""
     fund = str(symbol or "").strip().upper()
+    if fund in PILOT_TEFAS_FUND_CODES:
+        return _turkiye_fund_eight_e_block(
+            fund,
+            economic_exposure_available=economic_exposure_available,
+        )
     try:
         resolved = provider or default_official_sp_funds_provider()
         if not resolved.supports(fund):
@@ -137,6 +149,32 @@ def evaluate_official_fund_decision(
             participation_acceptable=False,
             economic_exposure_available=economic_exposure_available,
         )
+
+
+def _turkiye_fund_eight_e_block(
+    symbol: str,
+    *,
+    economic_exposure_available: bool,
+) -> PortfolioSecurityDecision:
+    blocked = _blocked_fund_decision(
+        symbol,
+        fund_intelligence_ready=False,
+        participation_acceptable=False,
+        economic_exposure_available=economic_exposure_available,
+    )
+    reasons = (REASON_TURKIYE_FUND_8E_NOT_STARTED,) + blocked.blocking_reasons
+    return PortfolioSecurityDecision(
+        symbol=blocked.symbol,
+        decision=blocked.decision,
+        confidence=blocked.confidence,
+        exposure_increase_allowed=False,
+        participation_status=None,
+        research_allowed=None,
+        security_intelligence_state=None,
+        primary_reasons=reasons[:3],
+        blocking_reasons=reasons,
+        reason_codes=reasons,
+    )
 
 
 def _blocked_fund_decision(

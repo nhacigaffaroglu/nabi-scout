@@ -1,0 +1,86 @@
+{
+  "framework": {
+    "framework_id": "TURKIYE_PARTICIPATION_REGULATORY_FRAMEWORK",
+    "title": "SPK Yatırım Fonlarına İlişkin Rehber madde 1.6 — Unvanında Katılım İfadesi Geçen Fonlara İlişkin Esaslar",
+    "authority": "SPK",
+    "version": "21.11.2024-60/1696",
+    "as_of": "2024-11-21",
+    "source_url": "https://spk.gov.tr/data/61e4a3a01b41c60d1404d7d2/Yat%C4%B1r%C4%B1m%20Fonlar%C4%B1na%20%C4%B0li%C5%9Fkin%20Rehber.pdf",
+    "provenance": ["spk.gov.tr", "Yatirim_Fonlarina_Iliskin_Rehber", "madde_1.6"],
+    "summary": "Funds whose titles contain Katılım must take equities from faizsiz-approved indexes or obtain danışman/danışma kurulu approval. Kira sertifikaları, katılma hesapları, gold/precious metals, and vaad contracts are exempt from that extra instrument-approval rule. If a danışman/danışma kurulu is used, identity and working principles must appear in the izahname annex or on the KAP page. Purification from fund assets requires izahname disclosure plus icazet.",
+    "excerpts": [
+      "Unvanında katılım ifadesi geçen fonların portföylerine dahil edilecek ortaklık paylarının faizsiz/katılım finans ilkelerine uygunluğu onaylanmış olan endekslerde (örneğin Borsa İstanbul A.Ş. tarafından hesaplanan Katılım 30 Endeksi, Katılım 50 Endeksi ve Ziraat Portföy Katılım Endeksi) yer alan ortaklık paylarından seçilmesi ve/veya faizsiz/katılım finans ilkelerine uygunluğunun bir danışman/danışma kurulu tarafından onaylanmış olması zorunludur.",
+      "Unvanında katılım ifadesi geçen fonların portföylerine dahil edilecek kira sertifikaları, katılma hesapları, altın ve diğer kıymetli madenler ile vaad sözleşmeleri haricindeki para ve sermaye piyasası araçları için de söz konusu şartın sağlanması esastır.",
+      "Söz konusu fonlar için bir danışman/danışma kurulundan hizmet alınması halinde; Fon izahnamesinin ekinde veya fonun KAP sayfasında danışmanın kim olduğuna/danışma kurulunun kimlerden oluştuğuna ... yer verilir.",
+      "Fon izahnamesinde mahzurlu gelirin arındırılmasına ilişkin bilgilere yer verilmesi ve bu işleme ilişkin olarak danışman/danışma kurulundan icazet alınması kaydıyla söz konusu tutarın fon malvarlığından veya fon yönetim ücretinden karşılanması mümkündür."
+    ]
+  },
+  "tkbb": {
+    "framework_id": "TKBB_DANISMA_KURULU",
+    "title": "Türkiye Katılım Bankaları Birliği Danışma Kurulu",
+    "authority": "TKBB",
+    "version": "izahname-defined",
+    "as_of": null,
+    "source_url": "https://www.tkbb.org.tr/",
+    "provenance": ["kap_izahname_AIS", "TKBB_Danisma_Kurulu"],
+    "summary": "AIS official izahname defines Danışma Kurulu as the TKBB body that oversees participation-finance standards. This is class-B framework context, not a fund-specific icazet PDF.",
+    "excerpts": [
+      "Danışma Kurulu: Katılım bankacılığı faaliyetlerinin, katılım finans ilke ve standartlarına uygun olarak yerine getirilmesini sağlamak üzere Türkiye Katılım Bankaları Birliği nezdinde kurulan Danışma Kurulu."
+    ]
+  },
+  "funds": {
+    "AIS": {
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9b82727b019bb660fb5d0028",
+      "izahname_date": "2026-01-13",
+      "ybf_date": "2026-01-13",
+      "mandate_excerpts": [
+        "Bu fon, katılım fonu statüsündedir",
+        "Fon toplam değerinin tamamı faizsiz/katılım finans ilkelerine uygun şekilde, devamlı olarak vadesine en fazla 184 gün kalmış, likiditesi yüksek, faize dayalı olmayan para ve sermaye piyasası araçlarına yatırılır.",
+        "Fon portföyü ... İcazet Belgesi çerçevesinde yönetilir."
+      ],
+      "governance_excerpts": [
+        "Danışma Komitesi: Fonun kuruluş, işleyişi, sunduğu ürün ve hizmetlerin İslami finans ilke ve esaslarına uygunluğu konusunda danışmanlık hizmeti sağlayan komite.",
+        "İcazet Belgesi: Fonun kuruluşu, işleyişi ve sunduğu ürün ile hizmetlerin katılım finans ilke ve esaslarına uygun olarak yapılandırıldığını belgeleyen ve Danışma Komitesi tarafından verilen uygunluk belgesi.",
+        "Fon portföyü, ... İcazet Belgesi çerçevesinde yönetilir.",
+        "Portföye ... Danışma Komitesi’nin icazet verdiği varlıklar ... dahil edilebilir."
+      ],
+      "purification_excerpts": [
+        "Fon’un faizsiz/katılım finans ilkelerine uygunluğunun tespiti için alınabilecek danışmanlık ve icazet belgesi giderleri"
+      ],
+      "icazet_document_url": null
+    },
+    "ZPE": {
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f0a0a58019f477f884711be",
+      "izahname_date": "2021-12-17",
+      "ybf_date": "2026-07-09",
+      "mandate_excerpts": [
+        "Bu fon, Portföy yönetiminde katılım prensiplerine uygunluğu esas almış hisse senedi fonu statüsündedir",
+        "portföy yönetiminde katılım prensiplerine uygunluk esas alınacaktır.",
+        "Fon toplam değerinin en az %80’i devamlı olarak ... BIST Katılım 100 Endeksine (XK100) dahil yerli ortaklık payları ve BIST Katılım 30 Endeksini (XK030) veya XK100 endeksini takip etmek üzere kurulan borsa yatırım fonları"
+      ],
+      "governance_excerpts": [
+        "Danışma Komitesi: İslami Standartlar ve Finans Prensipleri kapsamında; Fon portföyüne alınabilecek varlık ve İşlem türü hakkında icazet veren Kurul",
+        "BIST Katılım 100 Endeksine (XK100) dahil yerli ortaklık payları ile Danışma Komitesinin icazet verdiği ortaklık payları",
+        "Katılım Fonu Katılma Payları ile Danışma Kurulunun İcazet Verdiği Menkul Kıymet Yatırım Fonu"
+      ],
+      "purification_excerpts": [],
+      "icazet_document_url": null
+    },
+    "IAT": {
+      "izahname_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9cc9d32c019d47e757080f9d",
+      "izahname_date": "2022-07-08",
+      "ybf_date": "2026-08-30",
+      "mandate_excerpts": [
+        "Bu fon, katılım fonu statüsündedir",
+        "Fon portföyünün en az %80’i devamlı olarak T.C. Hazine ve Maliye Bakanlığı tarafından ihraç edilen kira sertifikaları ve özel sektör kira sertifikalarına yatırılır.",
+        "Fon faiz geliri elde etmeyi amaçlamamaktadır."
+      ],
+      "governance_excerpts": [
+        "Danışma Komitesi: Fon’un kuruluş ve işleyiş esaslarıyla faizsiz/katılım finans ilke ve esaslarına uygun hale getirildiğini belgeleyen İcazet Belgesini düzenleyen, İslâm fıkhı ve İslâm iktisadı uzman en az iki üyeden oluşan komitedir.",
+        "Fonun KAP sayfasında Danışma Komitesinin kimlerden oluştuğuna, Danışma Komitesi üyelerinin faizsiz/katılım finans alanındaki bilgi ve tecrübesine ilişkin bilgiler ile Danışma Komitesinin çalışma ilkelerine ... yer verilir."
+      ],
+      "purification_excerpts": [],
+      "icazet_document_url": null
+    }
+  }
+}

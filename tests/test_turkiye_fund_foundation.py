@@ -31,10 +31,7 @@ from services.official_sp_funds_product import (
 )
 from services.official_tefas import parse_tefas_price_history
 from services.official_tefas_product import default_tefas_fund_provider
-from services.participation_intelligence_contract import (
-    PARTICIPATION_STATUS_KONTROL_ET,
-    PARTICIPATION_STATUS_UYGUN,
-)
+from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 
 TEFAS_SRC = Path("services/official_tefas_product.py")
 KAP_SRC = Path("services/official_kap_fund.py")
@@ -165,12 +162,11 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertEqual(year.first_date, "2025-08-28")
         self.assertEqual(year.last_date, "2026-08-28")
 
-    def test_participation_evidence_is_not_uygun(self) -> None:
+    def test_participation_evidence_uses_official_methodology(self) -> None:
         for code in PILOT_TEFAS_FUND_CODES:
             evidence = self.provider.sharia_evidence(code)
             self.assertTrue(evidence.official_mandate_present)
-            self.assertEqual(evidence.participation_status, PARTICIPATION_STATUS_KONTROL_ET)
-            self.assertNotEqual(evidence.participation_status, PARTICIPATION_STATUS_UYGUN)
+            self.assertEqual(evidence.participation_status, PARTICIPATION_STATUS_UYGUN)
             self.assertIn("NO_INVENTED_UYGUN", evidence.limitations)
             self.assertIsNone(self.provider.purification_evidence(code).latest_factor_pct)
 
