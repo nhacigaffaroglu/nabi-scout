@@ -27,11 +27,11 @@
         "portfolio_manager": "Ak Portföy Yönetimi A.Ş."
       },
       "portfolio_report": {
-        "title": "Portföy Dağılım Raporu - 2026 Haziran Aylık Rapor",
-        "period": "2026-06",
-        "disclosure_url": "https://www.kap.org.tr/tr/Bildirim/1625691",
-        "file_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9f0a0859019f3b4b3ccf6c33",
-        "file_name": "AIS_2026.06.pdf"
+        "title": "Portföy Dağılım Raporu - 2026 Temmuz Aylık Rapor",
+        "period": "2026-07",
+        "disclosure_url": "https://www.kap.org.tr/tr/Bildirim/1644043",
+        "file_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f52dddd019fd289d7530906",
+        "file_name": "AIS_2026.07.pdf"
       }
     },
     "ZPE": {
@@ -60,12 +60,11 @@
         "portfolio_manager": "Ziraat Portföy Yönetimi A.Ş."
       },
       "portfolio_report": {
-        "title": null,
-        "period": null,
-        "disclosure_url": null,
-        "file_url": null,
-        "file_name": null,
-        "note": "KAP publishes Portföy Dağılım Raporu for this fund type; latest disclosure id was not statically listed."
+        "title": "Portföy Dağılım Raporu - 2026 Temmuz Aylık Rapor",
+        "period": "2026-07",
+        "disclosure_url": "https://www.kap.org.tr/tr/Bildirim/1646036",
+        "file_url": "https://www.kap.org.tr/tr/api/file/download/4028328c9f52dc3f019fea6cb6290eb7",
+        "file_name": "FonAylık_ZPE-KATILIM HS SND F.pdf"
       }
     },
     "IAT": {
@@ -94,12 +93,11 @@
         "portfolio_manager": "İş Portföy Yönetimi A.Ş."
       },
       "portfolio_report": {
-        "title": null,
-        "period": null,
-        "disclosure_url": null,
-        "file_url": null,
-        "file_name": null,
-        "note": "KAP publishes Portföy Dağılım Raporu for this fund type; latest disclosure id was not statically listed."
+        "title": "Portföy Dağılım Raporu - 2026 Temmuz Aylık Rapor",
+        "period": "2026-07",
+        "disclosure_url": "https://www.kap.org.tr/tr/Bildirim/1643690",
+        "file_url": "https://www.kap.org.tr/tr/api/file/download/4028328d9f52dddd019fd0d7b9086dfd",
+        "file_name": "IAT_2026.07.pdf"
       }
     }
   }

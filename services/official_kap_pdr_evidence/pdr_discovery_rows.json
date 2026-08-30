@@ -1,0 +1,83 @@
+{
+  "source": "https://www.kap.org.tr/tr/api/disclosure/funds/byCriteria",
+  "subject": "Portföy Dağılım Raporu",
+  "subject_oid": "8aca490d502e34b801502e380044002b",
+  "query": {
+    "fromDate": "2026-07-01",
+    "toDate": "2026-08-15"
+  },
+  "rows": [
+    {
+      "publishDate": "06.08.2026 09:16:20",
+      "fundCode": "AIS",
+      "kapTitle": "AK PORTFÖY PARA PİYASASI KATILIM FONU",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 7,
+      "disclosureIndex": 1644043,
+      "attachmentCount": 1
+    },
+    {
+      "publishDate": "10.08.2026",
+      "fundCode": "ZPE",
+      "kapTitle": "ZİRAAT PORTFÖY KATILIM HİSSE SENEDİ FONU (HİSSE SENEDİ YOĞUN FON)",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 7,
+      "disclosureIndex": 1646036,
+      "attachmentCount": 1
+    },
+    {
+      "publishDate": "05.08.2026",
+      "fundCode": "IAT",
+      "kapTitle": "İŞ PORTFÖY KİRA SERTİFİKALARI KATILIM (TL) FONU",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 7,
+      "disclosureIndex": 1643690,
+      "attachmentCount": 1
+    },
+    {
+      "publishDate": "08.07.2026 14:16:29",
+      "fundCode": "ZPE",
+      "kapTitle": "ZİRAAT PORTFÖY KATILIM HİSSE SENEDİ FONU (HİSSE SENEDİ YOĞUN FON)",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 6,
+      "disclosureIndex": 1628321,
+      "attachmentCount": 1
+    },
+    {
+      "publishDate": "07.07.2026",
+      "fundCode": "AIS",
+      "kapTitle": "AK PORTFÖY PARA PİYASASI KATILIM FONU",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 6,
+      "disclosureIndex": 1625691,
+      "attachmentCount": 1
+    },
+    {
+      "publishDate": "13.08.2026 11:11:26",
+      "fundCode": "OJK",
+      "kapTitle": "OTHER FUND",
+      "disclosureClass": "DG",
+      "disclosureType": "FON",
+      "subject": "Portföy Dağılım Raporu",
+      "year": 2026,
+      "period": 7,
+      "disclosureIndex": 1648986,
+      "attachmentCount": 1
+    }
+  ]
+}

@@ -39,6 +39,7 @@ from services.official_tefas import (
     parse_tefas_returns,
     parse_tefas_snapshot,
 )
+from services.official_kap_pdr_evidence import load_captured_pdr_holdings
 from services.official_turkiye_fund_evidence import (
     load_kap_official_bundle,
     load_tefas_official_bundle,
@@ -227,6 +228,10 @@ class TefasFundProductProvider:
         code = self._require(symbol)
         kap = _kap_fund(code, self._kap)
         return parse_kap_portfolio_report_audit(fund_code=code, report=dict(kap.get("portfolio_report") or {}))
+
+    def pdr_holdings(self, symbol: str):
+        code = self._require(symbol)
+        return load_captured_pdr_holdings(code)
 
     def official_risk_value(self, symbol: str) -> Optional[str]:
         code = self._require(symbol)

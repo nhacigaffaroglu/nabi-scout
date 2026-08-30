@@ -869,6 +869,150 @@ class KapPortfolioReportAudit:
         return asdict(self)
 
 
+ASSET_GROUP_EQUITY = "EQUITY"
+ASSET_GROUP_LEASE_CERTIFICATE = "LEASE_CERTIFICATE"
+ASSET_GROUP_PARTICIPATION_ACCOUNT = "PARTICIPATION_ACCOUNT"
+ASSET_GROUP_FUND = "FUND"
+ASSET_GROUP_CASH = "CASH"
+ASSET_GROUP_REPO = "REPO"
+ASSET_GROUP_DERIVATIVE = "DERIVATIVE"
+ASSET_GROUP_OTHER = "OTHER"
+ASSET_GROUP_UNKNOWN = "UNKNOWN"
+
+KAP_PDR_ASSET_GROUPS = (
+    ASSET_GROUP_EQUITY,
+    ASSET_GROUP_LEASE_CERTIFICATE,
+    ASSET_GROUP_PARTICIPATION_ACCOUNT,
+    ASSET_GROUP_FUND,
+    ASSET_GROUP_CASH,
+    ASSET_GROUP_REPO,
+    ASSET_GROUP_DERIVATIVE,
+    ASSET_GROUP_OTHER,
+    ASSET_GROUP_UNKNOWN,
+)
+
+PDR_SUBJECT = "Portföy Dağılım Raporu"
+# Official KAP Detaylı Sorgulama subject oid. Not a disclosure id.
+PDR_SUBJECT_OID = "8aca490d502e34b801502e380044002b"
+KAP_FUNDS_BY_CRITERIA = "/tr/api/disclosure/funds/byCriteria"
+
+PDR_LOOKTHROUGH_DIVERSIFICATION = "diversification"
+PDR_LOOKTHROUGH_CONCENTRATION = "concentration"
+PDR_LOOKTHROUGH_MATURITY = "maturity"
+PDR_LOOKTHROUGH_ISSUER = "issuer_concentration"
+PDR_LOOKTHROUGH_SECURITY_MASTER = "security_master_overlap"
+
+
+@dataclass(frozen=True)
+class KapPdrDiscovery:
+    fund_code: str
+    year: Optional[int]
+    period: Optional[int]
+    report_period: Optional[str]
+    publish_date: Optional[str]
+    disclosure_index: Optional[int]
+    subject: Optional[str]
+    disclosure_class: Optional[str]
+    attachment_name: Optional[str]
+    attachment_file_id: Optional[str]
+    source_url: str
+    file_url: Optional[str]
+    resolved: bool
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPdrHolding:
+    fund_code: str
+    report_period: Optional[str]
+    report_date: Optional[str]
+    asset_group: str
+    asset_group_raw: Optional[str]
+    security_name_raw: Optional[str]
+    issuer_raw: Optional[str]
+    isin: Optional[str]
+    official_code: Optional[str]
+    maturity_date: Optional[str]
+    currency: Optional[str]
+    quantity: Optional[float]
+    nominal: Optional[float]
+    unit_price: Optional[float]
+    market_value: Optional[float]
+    portfolio_weight: Optional[float]
+    fund_total_value: Optional[float]
+    source_notification_id: Optional[str]
+    source_attachment: Optional[str]
+    provenance: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPdrWeightReconciliation:
+    reported_weight_sum: float
+    known_weight: float
+    unknown_weight: float
+    residual_weight: float
+    weight_reconciled: bool
+    renormalized: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPdrSecurityMasterOverlap:
+    fund_code: str
+    matched_holdings: int
+    unmatched_holdings: int
+    matched_weight: float
+    unresolved_weight: float
+    matched_symbols: tuple[str, ...]
+    unmatched_codes: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPdrLookthroughReadiness:
+    fund_code: str
+    diversification_ready: bool
+    concentration_ready: bool
+    maturity_ready: bool
+    issuer_concentration_ready: bool
+    security_master_overlap_ready: bool
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class KapPdrHoldingsFile:
+    fund_code: str
+    report_period: Optional[str]
+    report_date: Optional[str]
+    fund_total_value: Optional[float]
+    source_notification_id: Optional[str]
+    source_attachment: Optional[str]
+    holdings: tuple[KapPdrHolding, ...]
+    weights: KapPdrWeightReconciliation
+    source: str
+    source_url: str
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["holdings"] = [row.to_dict() for row in self.holdings]
+        payload["weights"] = self.weights.to_dict()
+        return payload
+
+
 class FundProductProvider(Protocol):
     """Official product provider. TEFAS later implements the same surface."""
 

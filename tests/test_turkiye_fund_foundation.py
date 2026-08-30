@@ -184,10 +184,10 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertFalse(ais.country)
         self.assertFalse(ais.lookthrough)
         self.assertIn("ISIN KODU", ais.exact_fields)
-        self.assertIn("1625691", ais.latest_report_url or "")
+        self.assertIn("1644043", ais.latest_report_url or "")
         zpe = self.provider.portfolio_report_audit("ZPE")
-        self.assertIsNone(zpe.latest_report_url)
-        self.assertIn("NO_HOLDINGS_PARSER", zpe.limitations)
+        self.assertIn("1646036", zpe.latest_report_url or "")
+        self.assertNotIn("NO_HOLDINGS_PARSER", zpe.limitations)
 
     def test_no_fund_intelligence_or_eight_e(self) -> None:
         source = TEFAS_SRC.read_text(encoding="utf-8")

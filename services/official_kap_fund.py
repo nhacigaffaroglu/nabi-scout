@@ -247,7 +247,6 @@ def parse_kap_portfolio_report_audit(
     limitations = []
     if not found:
         limitations.append("LATEST_DISCLOSURE_ID_NOT_STATIC")
-    limitations.append("NO_HOLDINGS_PARSER")
     limitations.append("COUNTRY_FIELD_NOT_IN_PDR_TEMPLATE")
     return KapPortfolioReportAudit(
         fund_code=code,
