@@ -252,8 +252,28 @@ def assess_equity_participation(
     fmp_client: Any = None,
     persistence_available: bool = False,
     screening_context: Optional[str] = None,
+    identity_source: Optional[str] = None,
+    official_bist_membership: Optional[Any] = None,
+    official_bist_kafif: Optional[Any] = None,
+    financial_period: str = "",
+    financial_period_end: str = "",
 ) -> ParticipationAssessmentResult:
     normalized_symbol = _normalize_symbol(symbol)
+    if official_bist_membership is not None or official_bist_kafif is not None:
+        from services.bist_official_participation_policy import (
+            resolve_canonical_bist_official_participation,
+        )
+
+        official_result = resolve_canonical_bist_official_participation(
+            symbol=normalized_symbol,
+            identity_source=identity_source or "",
+            membership=official_bist_membership,
+            kafif=official_bist_kafif,
+            financial_period=financial_period,
+            financial_period_end=financial_period_end,
+        )
+        if official_result is not None:
+            return official_result
     normalized_cik = _normalize_cik(cik)
     resolved_screening_context = normalize_screening_context(
         screening_context or DEFAULT_EQUITY_SCREENING_CONTEXT

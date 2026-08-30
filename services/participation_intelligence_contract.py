@@ -24,7 +24,15 @@ PARTICIPATION_SOURCE_ISSUER_METHODOLOGY = "issuer_methodology"
 PARTICIPATION_SOURCE_HOLDINGS_DERIVED = "holdings_derived"
 PARTICIPATION_SOURCE_NABI_LOOKTHROUGH = "nabi_lookthrough"
 PARTICIPATION_SOURCE_PROVIDER = "provider"
+PARTICIPATION_SOURCE_BIST_OFFICIAL = "bist_official"
 PARTICIPATION_SOURCE_UNKNOWN = "unknown"
+
+# Distinct from MSCI/SEC-derived methodology and from configured/manual evidence.
+AUTHORITY_BIST_OFFICIAL = "BIST_OFFICIAL"
+AUTHORITY_MSCI = "MSCI"
+AUTHORITY_SEC_DERIVED = "SEC_DERIVED"
+AUTHORITY_MANUAL = "MANUAL"
+AUTHORITY_EXTERNAL = "EXTERNAL"
 
 ASSET_KIND_EQUITY = "equity"
 ASSET_KIND_FUND = "fund"
@@ -125,6 +133,9 @@ class ParticipationAssessment:
 
     def is_configured_only(self) -> bool:
         return self.source == PARTICIPATION_SOURCE_CONFIGURED
+
+    def is_bist_official(self) -> bool:
+        return self.source == PARTICIPATION_SOURCE_BIST_OFFICIAL
 
     def requires_review(self) -> bool:
         if self.status == PARTICIPATION_STATUS_KONTROL_ET:

@@ -18,12 +18,11 @@ from services.bist_katilim_tum_parser import (
 )
 from services.bist_katilim_tum_source import BistKatilimTumSource
 from services.bist_official_participation_contract import (
+    DECISION_AUTHORITY_BIST_OFFICIAL,
     EVIDENCE_OFFICIAL_ELIGIBILITY,
     PERIOD_COMPARABLE,
     PERIOD_MISMATCH,
     SHADOW_IDENTITY_REJECTED,
-    SHADOW_INSUFFICIENT,
-    SHADOW_METHODOLOGY_DECISION_REQUIRED,
 )
 from services.bist_official_participation_resolver import (
     audit_katilim_universe,
@@ -40,7 +39,11 @@ from services.kap_kafif_parser import (
     parse_tr_decimal,
 )
 from services.kap_kafif_source import KapKafifSource
-from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.participation_intelligence_contract import (
+    CONFIDENCE_HIGH,
+    PARTICIPATION_STATUS_KONTROL_ET,
+    PARTICIPATION_STATUS_UYGUN,
+)
 from services.portfolio_security_decision_contract import (
     DECISION_INSUFFICIENT_DATA,
     PortfolioSecurityContext,
@@ -141,7 +144,7 @@ class MappingAndResolverTests(unittest.TestCase):
         self.assertEqual(audits["bist_katilim_tum_membership"].mapping_status, MAPPING_UNMAPPED)
         self.assertNotIn("UYGUN", " ".join(item.note for item in audits.values()))
 
-    def test_official_evidence_is_not_nabi_verdict(self) -> None:
+    def test_official_member_complete_kafif_is_uygun(self) -> None:
         snapshot = parse_bist_katilim_csv(compact_katilim_csv())
         kafif = parse_public_kafif_html(bimas_kafif_html(), symbol="BIMAS", disclosure_id="1651659")
         evidence = resolve_official_bist_participation_evidence(
@@ -154,7 +157,9 @@ class MappingAndResolverTests(unittest.TestCase):
         )
         self.assertEqual(evidence.official_eligibility, EVIDENCE_OFFICIAL_ELIGIBILITY)
         self.assertTrue(evidence.kafif_evidence_complete)
-        self.assertEqual(evidence.nabi_participation_shadow, SHADOW_METHODOLOGY_DECISION_REQUIRED)
+        self.assertEqual(evidence.nabi_participation_shadow, PARTICIPATION_STATUS_UYGUN)
+        self.assertEqual(evidence.decision_authority, DECISION_AUTHORITY_BIST_OFFICIAL)
+        self.assertEqual(evidence.confidence, CONFIDENCE_HIGH)
         self.assertEqual(evidence.period_vs_financial_report, PERIOD_COMPARABLE)
         self.assertFalse(evidence.persisted)
 
@@ -165,7 +170,7 @@ class MappingAndResolverTests(unittest.TestCase):
             membership=membership_for_symbol(None, "ASELS", source_unavailable=True),
             kafif=None,
         )
-        self.assertEqual(missing.nabi_participation_shadow, SHADOW_INSUFFICIENT)
+        self.assertEqual(missing.nabi_participation_shadow, PARTICIPATION_STATUS_KONTROL_ET)
         self.assertFalse(missing.kafif_evidence_complete)
 
     def test_period_mismatch(self) -> None:

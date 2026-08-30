@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 from services.bist_katilim_tum_contract import (
-    MEMBERSHIP_MEMBER,
     MEMBERSHIP_SOURCE_UNAVAILABLE,
     BistKatilimMembership,
     BistKatilimTumSnapshot,
@@ -13,15 +12,12 @@ from services.bist_katilim_tum_contract import (
 from services.bist_katilim_tum_parser import canonicalize_bist_series_code
 from services.bist_official_participation_contract import (
     EVIDENCE_INCOMPLETE,
-    EVIDENCE_OFFICIAL_ELIGIBILITY,
     EVIDENCE_UNAVAILABLE,
     LIMITATION_READ_ONLY,
     PERIOD_COMPARABLE,
     PERIOD_MISMATCH,
     PERIOD_UNKNOWN,
     SHADOW_IDENTITY_REJECTED,
-    SHADOW_INSUFFICIENT,
-    SHADOW_METHODOLOGY_DECISION_REQUIRED,
     SHADOW_NOT_COMPUTED,
     BistKatilimUniverseAudit,
     BistOfficialParticipationEvidence,
@@ -70,9 +66,13 @@ def resolve_official_bist_participation_evidence(
     financial_period: str = "",
     financial_period_end: str = "",
 ) -> BistOfficialParticipationEvidence:
+    from services.bist_official_participation_policy import (
+        apply_bist_official_participation_policy,
+    )
+
     canon = canonicalize_bist_series_code(symbol)
     if not _identity_is_bist(canon, identity_source):
-        return BistOfficialParticipationEvidence(
+        raw = BistOfficialParticipationEvidence(
             symbol=canon,
             identity_source=identity_source,
             membership=None,
@@ -84,33 +84,23 @@ def resolve_official_bist_participation_evidence(
             limitation="BIST membership/KAFİF evidence rejects non-BIST identity.",
             persisted=False,
         )
+        return apply_bist_official_participation_policy(raw)
 
     period_vs = compare_kafif_to_financial_period(
         kafif,
         financial_period=financial_period,
         financial_period_end=financial_period_end,
     )
-    kafif_complete = bool(kafif is not None and kafif.complete)
     source_down = membership is not None and membership.status == MEMBERSHIP_SOURCE_UNAVAILABLE
-    if source_down and kafif is None:
-        official = EVIDENCE_UNAVAILABLE
-        shadow = SHADOW_INSUFFICIENT
-    elif membership is not None and membership.status == MEMBERSHIP_MEMBER and kafif_complete:
-        official = EVIDENCE_OFFICIAL_ELIGIBILITY
-        # Existing NABI methodology does not authorize BIST/KAFİF to emit Uygun.
-        shadow = SHADOW_METHODOLOGY_DECISION_REQUIRED
-    else:
-        official = EVIDENCE_INCOMPLETE
-        shadow = SHADOW_INSUFFICIENT
-
-    return BistOfficialParticipationEvidence(
+    official = EVIDENCE_UNAVAILABLE if source_down and kafif is None else EVIDENCE_INCOMPLETE
+    raw = BistOfficialParticipationEvidence(
         symbol=canon,
         identity_source=identity_source or SOURCE_BIST,
         membership=membership,
         kafif=kafif,
         official_eligibility=official,
-        kafif_evidence_complete=kafif_complete,
-        nabi_participation_shadow=shadow,
+        kafif_evidence_complete=bool(kafif is not None and kafif.complete),
+        nabi_participation_shadow=SHADOW_NOT_COMPUTED,
         period_vs_financial_report=period_vs,
         financial_report_period=financial_period,
         limitation=LIMITATION_READ_ONLY,
@@ -118,9 +108,9 @@ def resolve_official_bist_participation_evidence(
         provenance={
             "official_vs_nabi_not_collapsed": True,
             "nabi_status_not_persisted": True,
-            "shadow": SHADOW_NOT_COMPUTED if shadow != SHADOW_METHODOLOGY_DECISION_REQUIRED else shadow,
         },
     )
+    return apply_bist_official_participation_policy(raw)
 
 
 def audit_katilim_universe(
