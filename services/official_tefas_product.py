@@ -1,4 +1,4 @@
-"""Official TEFAS/KAP fund product provider. No Fund Intelligence scoring."""
+"""Official TEFAS/KAP fund product provider. Intrinsic FI only. No 8E / New Money."""
 
 from __future__ import annotations
 
@@ -8,6 +8,12 @@ from services.fund_product_contract import (
     FUND_TYPE_MUTUAL,
     IDENTITY_RESOLVED,
     PILOT_TEFAS_FUND_CODES,
+    PROFILE_EQUITY_PARTICIPATION_FUND,
+    PROFILE_LIQUIDITY_PARTICIPATION_FUND,
+    PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_SHORT_TERM_PARTICIPATION,
+    PROFILE_SUKUK_LEASE_CERTIFICATE,
+    PROFILE_SUKUK_PARTICIPATION_FUND,
     PROVIDER_KAP_FUND,
     PROVIDER_TEFAS,
     READINESS_NEEDS_MORE_DATA,
@@ -20,6 +26,8 @@ from services.fund_product_contract import (
     FundShariaEvidence,
     KapFundMandateEvidence,
     KapPortfolioReportAudit,
+    OfficialFundMandate,
+    OfficialFundPerformance,
     TefasPriceSeries,
     TurkiyeFundIdentity,
 )
@@ -39,7 +47,9 @@ from services.official_tefas import (
     parse_tefas_returns,
     parse_tefas_snapshot,
 )
+from services.official_kap_pdr import pdr_rows_to_official_holdings
 from services.official_kap_pdr_evidence import load_captured_pdr_holdings
+from services.official_tefas_performance import performance_from_tefas_series
 from services.official_turkiye_fund_evidence import (
     load_kap_official_bundle,
     load_tefas_official_bundle,
@@ -59,7 +69,7 @@ def _kap_fund(code: str, bundle: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class TefasFundProductProvider:
-    """Canonical TEFAS/KAP official-facts provider. Does not score Fund Intelligence."""
+    """Canonical TEFAS/KAP official-facts provider for intrinsic Fund Intelligence."""
 
     provider_id = PROVIDER_TEFAS
 
@@ -159,7 +169,7 @@ class TefasFundProductProvider:
             source=PROVIDER_TEFAS,
             source_url=TEFAS_SNAPSHOT_URL,
             as_of=None,
-            limitations=("NO_FUND_INTELLIGENCE_SCORE",),
+            limitations=("NO_EIGHT_E", "NO_NEW_MONEY", "KAP_MANAGEMENT_FEE_NOT_TER"),
             raw_fields=raw,
         )
 
@@ -174,6 +184,22 @@ class TefasFundProductProvider:
             ybf_url=str(kap.get("ybf_url") or ""),
             as_of=str((kap.get("ybf") or {}).get("as_of") or "") or None,
         )
+
+    def mandate(self, symbol: str) -> OfficialFundMandate:
+        return mandate_from_kap(self.kap_mandate(symbol))
+
+    def performance(self, symbol: str) -> OfficialFundPerformance:
+        code = self._require(symbol)
+        return performance_from_tefas_series(
+            self.price_history(code, period_months=12),
+            official_risk_value=self.official_risk_value(code),
+        )
+
+    def holdings(self, symbol: str):
+        file = self.pdr_holdings(symbol)
+        if file is None:
+            return None
+        return pdr_rows_to_official_holdings(file)
 
     def sharia_evidence(self, symbol: str) -> FundShariaEvidence:
         code = self._require(symbol)
@@ -247,6 +273,32 @@ class TefasFundProductProvider:
             return int(raw) if raw is not None else None
         except (TypeError, ValueError):
             return None
+
+
+def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
+    """Map official KAP profile facts onto the shared OfficialFundMandate."""
+    profile = kap.official_profile
+    if profile == PROFILE_SHORT_TERM_PARTICIPATION:
+        layer, vehicle = "cash", PROFILE_LIQUIDITY_PARTICIPATION_FUND
+    elif profile == PROFILE_PARTICIPATION_EQUITY:
+        layer, vehicle = "equity", PROFILE_EQUITY_PARTICIPATION_FUND
+    elif profile == PROFILE_SUKUK_LEASE_CERTIFICATE:
+        layer, vehicle = "sukuk", PROFILE_SUKUK_PARTICIPATION_FUND
+    else:
+        raise ValueError(f"unsupported_kap_official_profile:{profile}")
+    mandate = OfficialFundMandate(
+        symbol=kap.fund_code,
+        primary_layer=layer,
+        region="TR",
+        vehicle=vehicle,
+        confidence="HIGH",
+        source=kap.source,
+        source_url=kap.source_url,
+        evidence_excerpt=kap.strategy_text or kap.official_name or kap.fund_code,
+        limitations=kap.limitations,
+    )
+    mandate.validate()
+    return mandate
 
 
 def default_tefas_fund_provider() -> TefasFundProductProvider:

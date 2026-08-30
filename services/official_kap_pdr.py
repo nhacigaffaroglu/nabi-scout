@@ -7,7 +7,7 @@ weight rules. Does not score Fund Intelligence or Participation.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Mapping, Optional, Sequence
 
 from services.bist_symbol_mapping import normalize_bist_symbol
@@ -1032,7 +1032,7 @@ def pdr_rows_to_official_holdings(file: KapPdrHoldingsFile) -> OfficialHoldingsF
             OfficialHolding(
                 fund_symbol=file.fund_code,
                 as_of=as_of,
-                ticker=row.official_code or "",
+                ticker=row.official_code or row.isin or row.issuer_raw or row.security_name_raw or "",
                 cusip_raw=row.isin or "",
                 security_name=row.security_name_raw or row.issuer_raw or "",
                 weight_pct=float(row.portfolio_weight),
@@ -1045,6 +1045,7 @@ def pdr_rows_to_official_holdings(file: KapPdrHoldingsFile) -> OfficialHoldingsF
                 asset_type=row.asset_group,
                 metadata={
                     "issuer": row.issuer_raw,
+                    "issuer_columns": {"issuer": row.issuer_raw} if row.issuer_raw else {},
                     "asset_group_raw": row.asset_group_raw,
                     "maturity_date": row.maturity_date,
                     "currency": row.currency,
@@ -1190,3 +1191,56 @@ def coverage_ratio(file: KapPdrHoldingsFile, predicate) -> float:
     denom = sum(abs(item) for item in weights) or 1.0
     numer = sum(abs(float(row.portfolio_weight or 0.0)) for row in file.holdings if row.portfolio_weight is not None and predicate(row))
     return round(numer / denom, 4)
+
+
+def issuer_weight_map(file: KapPdrHoldingsFile) -> dict[str, float]:
+    buckets: dict[str, float] = {}
+    for row in file.holdings:
+        if row.portfolio_weight is None or not row.issuer_raw:
+            continue
+        name = str(row.issuer_raw).strip()
+        buckets[name] = buckets.get(name, 0.0) + float(row.portfolio_weight)
+    return {name: round(weight, 4) for name, weight in buckets.items()}
+
+
+def issuer_concentration_stats(file: KapPdrHoldingsFile) -> tuple[Optional[float], Optional[float], int]:
+    weights = sorted(issuer_weight_map(file).values(), reverse=True)
+    if not weights:
+        return None, None, 0
+    largest = weights[0]
+    top10 = round(sum(weights[:10]), 4)
+    return largest, top10, len(weights)
+
+
+def weighted_average_maturity_days(
+    file: KapPdrHoldingsFile,
+    *,
+    as_of: Optional[date] = None,
+) -> Optional[float]:
+    if as_of is None:
+        if file.report_date:
+            try:
+                as_of = date.fromisoformat(file.report_date[:10])
+            except ValueError:
+                as_of = None
+        if as_of is None and file.report_period:
+            try:
+                as_of = date.fromisoformat(file.report_period + "-01")
+            except ValueError:
+                as_of = None
+    if as_of is None:
+        return None
+    total_w = 0.0
+    weighted = 0.0
+    for row in file.holdings:
+        if row.portfolio_weight is None or not row.maturity_date:
+            continue
+        try:
+            maturity = date.fromisoformat(row.maturity_date[:10])
+        except ValueError:
+            continue
+        total_w += float(row.portfolio_weight)
+        weighted += float(row.portfolio_weight) * float((maturity - as_of).days)
+    if total_w <= 0:
+        return None
+    return round(weighted / total_w, 4)

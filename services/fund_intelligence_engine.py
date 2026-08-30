@@ -29,6 +29,7 @@ from services.fund_product_contract import (
     DIM_DURATION,
     DIM_ISSUER_CONCENTRATION,
     DIM_LIQUIDITY_EVAL,
+    DIM_MATURITY,
     DIM_MOMENTUM_EVAL,
     DIM_PARTICIPATION_MANDATE,
     DIM_PERFORMANCE_EVAL,
@@ -42,6 +43,7 @@ from services.fund_product_contract import (
     DIM_TRACKING_EVAL,
     DIM_YIELD,
     EQUITY_ETF_WEIGHTS,
+    EQUITY_PARTICIPATION_FUND_WEIGHTS,
     FUND_EVAL_ENGINE_VERSION,
     FUND_EVAL_FACTS_VERSION,
     FundDimensionResult,
@@ -55,19 +57,31 @@ from services.fund_product_contract import (
     FundShariaEvidence,
     OfficialFundPerformance,
     OfficialFundYield,
+    LIQUIDITY_PARTICIPATION_FUND_WEIGHTS,
+    MANAGEMENT_FEE_BAD_PCT,
+    MANAGEMENT_FEE_GOOD_PCT,
     MIN_READY_SCORED_DIMENSIONS,
     MIN_READY_WEIGHT_COVERAGE,
     OfficialFundMandate,
     PROFILE_EQUITY_ETF,
+    PROFILE_EQUITY_PARTICIPATION_FUND,
+    PROFILE_LIQUIDITY_PARTICIPATION_FUND,
     PROFILE_REIT_ETF,
     PROFILE_SUKUK_ETF,
+    PROFILE_SUKUK_PARTICIPATION_FUND,
     READINESS_READY_NOW,
     REIT_ETF_WEIGHTS,
     RETURN_RISK_FAMILY,
+    RISK_FACT_HISTORICAL_MAX_DRAWDOWN,
+    RISK_FACT_HISTORICAL_VOLATILITY,
+    RISK_FACT_OFFICIAL_RISK_VALUE,
     SUKUK_ETF_WEIGHTS,
+    SUKUK_PARTICIPATION_FUND_WEIGHTS,
+    TURKISH_FI_PROFILES,
 )
 from services.nabi_score_v4 import inverse, scale
 from services.participation_intelligence_contract import (
+    PARTICIPATION_STATUS_KONTROL_ET,
     PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
@@ -82,6 +96,9 @@ from services.security_intelligence_contract import (
 
 
 def profile_for_mandate(mandate: Optional[OfficialFundMandate]) -> str:
+    vehicle = str(mandate.vehicle or "").strip() if mandate else ""
+    if vehicle in TURKISH_FI_PROFILES:
+        return vehicle
     layer = str(mandate.primary_layer or "").strip().lower() if mandate else ""
     if layer == "sukuk":
         return PROFILE_SUKUK_ETF
@@ -91,6 +108,12 @@ def profile_for_mandate(mandate: Optional[OfficialFundMandate]) -> str:
 
 
 def weights_for_profile(profile: str, *, region: str = "") -> dict[str, float]:
+    if profile == PROFILE_LIQUIDITY_PARTICIPATION_FUND:
+        return dict(LIQUIDITY_PARTICIPATION_FUND_WEIGHTS)
+    if profile == PROFILE_EQUITY_PARTICIPATION_FUND:
+        return dict(EQUITY_PARTICIPATION_FUND_WEIGHTS)
+    if profile == PROFILE_SUKUK_PARTICIPATION_FUND:
+        return dict(SUKUK_PARTICIPATION_FUND_WEIGHTS)
     if profile == PROFILE_SUKUK_ETF:
         return dict(SUKUK_ETF_WEIGHTS)
     if profile == PROFILE_REIT_ETF:
@@ -187,6 +210,13 @@ def _cost_score(expense_ratio: Optional[float]) -> Optional[float]:
     if expense_ratio is None:
         return None
     return inverse(expense_ratio, 0.15, 0.80)
+
+
+def _management_fee_score(management_fee_pct: Optional[float]) -> Optional[float]:
+    """KAP management fee only. Mutual-fund band, not ETF TER 0.15–0.80."""
+    if management_fee_pct is None:
+        return None
+    return inverse(management_fee_pct, MANAGEMENT_FEE_GOOD_PCT, MANAGEMENT_FEE_BAD_PCT)
 
 
 def _concentration_score(top_weight: Optional[float], top10: Optional[float]) -> Optional[float]:
@@ -286,10 +316,8 @@ def evaluate_official_fund_intelligence(
     use_official_fixed_income: bool = True,
     exposure: Optional[FundExposureEvidence] = None,
 ) -> FundIntelligenceEvaluation:
-    from services.official_sp_funds_product import default_official_sp_funds_provider
-
     fund = str(symbol or "").strip().upper()
-    resolved = provider or default_official_sp_funds_provider()
+    resolved = provider or _default_official_provider(fund)
     nav_performance = performance
     if nav_performance is None and hasattr(resolved, "performance"):
         nav_performance = resolved.performance(fund)
@@ -313,6 +341,25 @@ def evaluate_official_fund_intelligence(
     exposure_view = exposure
     if exposure_view is None and hasattr(resolved, "exposure"):
         exposure_view = resolved.exposure(fund)
+    maturity_ready = False
+    maturity_days = None
+    issuer_largest = None
+    issuer_top10 = None
+    issuer_ready = official_issuer_present
+    if hasattr(resolved, "pdr_holdings"):
+        pdr_file = resolved.pdr_holdings(fund)
+        if pdr_file is not None:
+            from services.official_kap_pdr import (
+                issuer_concentration_stats,
+                pdr_lookthrough_readiness,
+                weighted_average_maturity_days,
+            )
+
+            ready = pdr_lookthrough_readiness(pdr_file)
+            maturity_ready = ready.maturity_ready
+            issuer_ready = issuer_ready or ready.issuer_concentration_ready
+            maturity_days = weighted_average_maturity_days(pdr_file)
+            issuer_largest, issuer_top10, _ = issuer_concentration_stats(pdr_file)
     return evaluate_fund_intelligence(
         facts=resolved.facts(fund),
         mandate=resolved.mandate(fund),
@@ -327,7 +374,23 @@ def evaluate_official_fund_intelligence(
         fixed_income=fi_view,
         exposure=exposure_view,
         official_country_weights=bool(exposure_view is not None and exposure_view.country_reliable),
+        maturity_ready=maturity_ready,
+        maturity_days=maturity_days,
+        issuer_largest_weight=issuer_largest,
+        issuer_top10_weight=issuer_top10,
+        issuer_concentration_ready=issuer_ready,
     )
+
+
+def _default_official_provider(symbol: str):
+    from services.official_tefas_product import default_tefas_fund_provider
+
+    tefas = default_tefas_fund_provider()
+    if tefas.supports(symbol):
+        return tefas
+    from services.official_sp_funds_product import default_official_sp_funds_provider
+
+    return default_official_sp_funds_provider()
 
 
 def evaluate_fund_intelligence(
@@ -350,6 +413,11 @@ def evaluate_fund_intelligence(
     official_issuer_present: bool = False,
     fixed_income: Optional[FundFixedIncomeRiskEvidence] = None,
     exposure: Optional[FundExposureEvidence] = None,
+    maturity_ready: bool = False,
+    maturity_days: Optional[float] = None,
+    issuer_largest_weight: Optional[float] = None,
+    issuer_top10_weight: Optional[float] = None,
+    issuer_concentration_ready: bool = False,
 ) -> FundIntelligenceEvaluation:
     if official_yield is not None and official_yield.sec_yield_30d is not None:
         official_yield_present = True
@@ -360,16 +428,35 @@ def evaluate_fund_intelligence(
     region = mandate.region if mandate else ""
     scored_weights = weights_for_profile(profile, region=region)
     participation = evaluate_fund_participation_gate(sharia)
-    dimensions: list[FundDimensionResult] = [
-        _ready(DIM_PARTICIPATION_MANDATE, None, "official_sharia")
-        if participation.eligible
-        else FundDimensionResult(
-            name=DIM_PARTICIPATION_MANDATE,
-            status=DIM_STATUS_MISSING if participation.status != "ADVERSE" else DIM_STATUS_READY,
-            missing_facts=() if participation.eligible else ("official_sharia",),
-            reason_codes=(participation.limitation,) if participation.limitation else (),
-        )
-    ]
+    turkish_kontrol = (
+        profile in TURKISH_FI_PROFILES
+        and sharia is not None
+        and sharia.participation_status == PARTICIPATION_STATUS_KONTROL_ET
+        and bool(sharia.official_mandate_present)
+        and participation.status != "ADVERSE"
+    )
+    if participation.eligible:
+        dimensions = [_ready(DIM_PARTICIPATION_MANDATE, None, "official_sharia")]
+    elif turkish_kontrol:
+        dimensions = [
+            FundDimensionResult(
+                name=DIM_PARTICIPATION_MANDATE,
+                status=DIM_STATUS_READY,
+                score=None,
+                confidence=0.6,
+                facts_used=("official_kap_participation_wording",),
+                reason_codes=("PARTICIPATION_KONTROL_ET",),
+            )
+        ]
+    else:
+        dimensions = [
+            FundDimensionResult(
+                name=DIM_PARTICIPATION_MANDATE,
+                status=DIM_STATUS_MISSING if participation.status != "ADVERSE" else DIM_STATUS_READY,
+                missing_facts=() if participation.eligible else ("official_sharia",),
+                reason_codes=(participation.limitation,) if participation.limitation else (),
+            )
+        ]
     if historical_performance_present:
         lead, horizon = (None, None) if performance is None else performance.performance_lead()
         perf_score = None
@@ -378,7 +465,8 @@ def evaluate_fund_intelligence(
         dimensions.append(_ready(DIM_PERFORMANCE_EVAL, perf_score, horizon or "official_nav_return"))
     else:
         dimensions.append(_missing(DIM_PERFORMANCE_EVAL, "official_return_history"))
-    if profile != PROFILE_SUKUK_ETF:
+    momentum_profiles = {PROFILE_EQUITY_ETF, PROFILE_REIT_ETF, PROFILE_EQUITY_PARTICIPATION_FUND}
+    if profile in momentum_profiles:
         if performance is not None:
             momentum, momentum_horizon = performance.momentum_lead()
         else:
@@ -391,17 +479,31 @@ def evaluate_fund_intelligence(
             dimensions.append(_missing(DIM_MOMENTUM_EVAL, "official_short_horizon"))
     if official_risk_series_present:
         risk_score = None
+        risk_facts = []
         if performance is not None:
             metric = performance.drawdown if performance.drawdown is not None else performance.volatility
+            if performance.drawdown is not None:
+                risk_facts.append(RISK_FACT_HISTORICAL_MAX_DRAWDOWN)
+            if performance.volatility is not None:
+                risk_facts.append(RISK_FACT_HISTORICAL_VOLATILITY)
+            if performance.official_risk_value is not None:
+                risk_facts.append(RISK_FACT_OFFICIAL_RISK_VALUE)
             if metric is not None:
+                # RISK score uses historical drawdown, else historical volatility.
+                # TEFAS official_risk_value is stored, never substituted.
                 risk_score = inverse(abs(metric), 8.0, 40.0)
-        dimensions.append(_ready(DIM_RISK_EVAL, risk_score, "official_drawdown"))
+        dimensions.append(_ready(DIM_RISK_EVAL, risk_score, *(risk_facts or ("official_drawdown",))))
     else:
         dimensions.append(_missing(DIM_RISK_EVAL, "official_drawdown_series"))
     if facts.expense_ratio is not None:
-        dimensions.append(_ready(DIM_COST_EVAL, _cost_score(facts.expense_ratio), "expense_ratio"))
+        if profile in TURKISH_FI_PROFILES:
+            dimensions.append(
+                _ready(DIM_COST_EVAL, _management_fee_score(facts.expense_ratio), "kap_management_fee")
+            )
+        else:
+            dimensions.append(_ready(DIM_COST_EVAL, _cost_score(facts.expense_ratio), "expense_ratio"))
     else:
-        dimensions.append(_missing(DIM_COST_EVAL, "expense_ratio"))
+        dimensions.append(_missing(DIM_COST_EVAL, "expense_ratio" if profile not in TURKISH_FI_PROFILES else "kap_management_fee"))
     if _lookthrough_ready(lookthrough) and holdings_reliable(lookthrough):
         dimensions.append(
             _ready(
@@ -437,7 +539,49 @@ def evaluate_fund_intelligence(
     else:
         dimensions.append(_missing(DIM_LIQUIDITY_EVAL, "net_assets", "market_price"))
     tracking = _tracking_dimension(performance)
-    if profile == PROFILE_EQUITY_ETF:
+    if profile in TURKISH_FI_PROFILES:
+        dimensions.append(_na(DIM_TRACKING_EVAL, "NO_OFFICIAL_TRACKING_DIFFERENCE"))
+        dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "COUNTRY_NOT_IN_OFFICIAL_PDR"))
+        dimensions.append(_na(DIM_CURRENCY_EXPOSURE, "FX_NOT_IN_OFFICIAL_PDR"))
+        dimensions.append(_na(DIM_CURRENCY_DENOMINATION, "OPTIONAL_TURKISH_FUND"))
+        dimensions.append(_na(DIM_DEVELOPED_EMERGING, "OPTIONAL_TURKISH_FUND"))
+        dimensions.append(_na(DIM_YIELD, "NO_OFFICIAL_YIELD"))
+        dimensions.append(_na(DIM_CREDIT_QUALITY, "CREDIT_NOT_INFERRED"))
+        dimensions.append(_na(DIM_DURATION, "USE_MATURITY_NOT_DURATION"))
+        dimensions.append(_na(DIM_RATE_RISK, "NO_OFFICIAL_DV01"))
+        dimensions.append(_na(DIM_CREDIT_RISK, "NO_OFFICIAL_CREDIT_SPREAD"))
+        dimensions.append(_na(DIM_REAL_ESTATE_CONCENTRATION, "NOT_REIT"))
+        if profile in {PROFILE_LIQUIDITY_PARTICIPATION_FUND, PROFILE_SUKUK_PARTICIPATION_FUND}:
+            if maturity_ready:
+                maturity_score = None
+                if profile == PROFILE_LIQUIDITY_PARTICIPATION_FUND and maturity_days is not None:
+                    maturity_score = inverse(maturity_days, 5.0, 45.0)
+                dimensions.append(
+                    _ready(
+                        DIM_MATURITY,
+                        maturity_score,
+                        "official_pdr_maturity_date",
+                        "kap_wam_45_day_cap" if maturity_score is not None else "maturity_coverage",
+                    )
+                )
+            else:
+                dimensions.append(_missing(DIM_MATURITY, "official_pdr_maturity_date"))
+        else:
+            dimensions.append(_na(DIM_MATURITY, "EQUITY_PARTICIPATION_PROFILE"))
+        if profile == PROFILE_SUKUK_PARTICIPATION_FUND:
+            if issuer_concentration_ready and issuer_largest_weight is not None:
+                dimensions.append(
+                    _ready(
+                        DIM_ISSUER_CONCENTRATION,
+                        _concentration_score(issuer_largest_weight, issuer_top10_weight),
+                        "official_pdr_issuer",
+                    )
+                )
+            else:
+                dimensions.append(_missing(DIM_ISSUER_CONCENTRATION, "official_pdr_issuer"))
+        else:
+            dimensions.append(_na(DIM_ISSUER_CONCENTRATION, "NOT_SUKUK_PARTICIPATION"))
+    elif profile == PROFILE_EQUITY_ETF:
         dimensions.append(tracking)
         if region == "US":
             dimensions.append(_na(DIM_COUNTRY_CONCENTRATION, "US_EQUITY_PROFILE"))
@@ -576,12 +720,12 @@ def evaluate_fund_intelligence(
         for name in RETURN_RISK_FAMILY
         if name in applicable_weights
     )
-    threshold_met = (
-        participation.eligible
-        and len(ready_scored) >= MIN_READY_SCORED_DIMENSIONS
+    evidence_threshold_met = (
+        len(ready_scored) >= MIN_READY_SCORED_DIMENSIONS
         and coverage >= MIN_READY_WEIGHT_COVERAGE
         and return_risk_ready
     )
+    threshold_met = (participation.eligible or turkish_kontrol) and evidence_threshold_met
     score = None
     state = STATE_INSUFFICIENT_DATA
     if participation.status == "ADVERSE":
@@ -601,24 +745,27 @@ def evaluate_fund_intelligence(
         else:
             state = STATE_AVOID
     confidence = 0.0
-    if participation.eligible:
+    if threshold_met:
         confidence = min(1.0, coverage)
-    if not threshold_met:
-        confidence = min(confidence, 0.45)
+    elif participation.eligible:
+        confidence = min(coverage, 0.45)
     provenance = (
-        "official_sp_funds_product",
+        "official_tefas_kap" if profile in TURKISH_FI_PROFILES else "official_sp_funds_product",
         "official_fund_holdings" if lookthrough is not None else "product_facts_only",
         "official_nport_fixed_income" if fixed_income is not None else "nport_fixed_income_absent",
         "official_nport_exposure" if exposure is not None else "nport_exposure_absent",
         "purification_metadata_only",
     )
+    as_of = facts.as_of or facts.holdings_as_of
+    if as_of is None and performance is not None:
+        as_of = performance.as_of
     return FundIntelligenceEvaluation(
         symbol=facts.symbol,
         fund_type_profile=profile,
         state=state,
         score=None if not threshold_met else (None if score is None else round(score, 2)),
         confidence=round(confidence, 4),
-        as_of=facts.as_of or facts.holdings_as_of,
+        as_of=as_of,
         facts_version=FUND_EVAL_FACTS_VERSION,
         engine_version=FUND_EVAL_ENGINE_VERSION,
         provenance=provenance,
@@ -628,4 +775,5 @@ def evaluate_fund_intelligence(
         publishable=participation.eligible and state != STATE_INSUFFICIENT_DATA,
         purification_factor_pct=None if purification is None else purification.latest_factor_pct,
         purification_required=None if purification is None else purification.purification_required,
+        completeness=round(coverage, 4),
     )

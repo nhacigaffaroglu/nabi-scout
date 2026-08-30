@@ -189,12 +189,14 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertIn("1646036", zpe.latest_report_url or "")
         self.assertNotIn("NO_HOLDINGS_PARSER", zpe.limitations)
 
-    def test_no_fund_intelligence_or_eight_e(self) -> None:
+    def test_no_eight_e_or_new_money(self) -> None:
         source = TEFAS_SRC.read_text(encoding="utf-8")
-        self.assertNotIn("evaluate_official_fund_intelligence", source)
         self.assertNotIn("evaluate_official_fund_decision", source)
         self.assertNotIn("allocate_new_money", source)
-        self.assertIn("NO_FUND_INTELLIGENCE_SCORE", self.provider.facts("AIS").limitations)
+        facts = self.provider.facts("AIS")
+        self.assertIn("NO_EIGHT_E", facts.limitations)
+        self.assertIn("NO_NEW_MONEY", facts.limitations)
+        self.assertNotIn("NO_FUND_INTELLIGENCE_SCORE", facts.limitations)
 
     def test_sp_funds_isolation(self) -> None:
         sp = default_official_sp_funds_provider()

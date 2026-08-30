@@ -480,6 +480,16 @@ FUND_DIMENSION_STATUSES = (DIM_STATUS_READY, DIM_STATUS_MISSING, DIM_STATUS_NOT_
 PROFILE_EQUITY_ETF = "EQUITY_ETF"
 PROFILE_SUKUK_ETF = "SUKUK_ETF"
 PROFILE_REIT_ETF = "REIT_ETF"
+PROFILE_LIQUIDITY_PARTICIPATION_FUND = "LIQUIDITY_PARTICIPATION_FUND"
+PROFILE_EQUITY_PARTICIPATION_FUND = "EQUITY_PARTICIPATION_FUND"
+PROFILE_SUKUK_PARTICIPATION_FUND = "SUKUK_PARTICIPATION_FUND"
+TURKISH_FI_PROFILES = frozenset(
+    {
+        PROFILE_LIQUIDITY_PARTICIPATION_FUND,
+        PROFILE_EQUITY_PARTICIPATION_FUND,
+        PROFILE_SUKUK_PARTICIPATION_FUND,
+    }
+)
 
 DIM_PARTICIPATION_MANDATE = "PARTICIPATION_MANDATE"
 DIM_PERFORMANCE_EVAL = "PERFORMANCE"
@@ -502,6 +512,7 @@ DIM_RATE_RISK = "RATE_RISK"
 DIM_CREDIT_RISK = "CREDIT_RISK"
 DIM_CURRENCY_DENOMINATION = "CURRENCY_DENOMINATION"
 DIM_DEVELOPED_EMERGING = "DEVELOPED_EMERGING"
+DIM_MATURITY = "MATURITY"
 
 FUND_EVAL_ENGINE_VERSION = "fund_intelligence_1g.1"
 FUND_EVAL_FACTS_VERSION = "fund_facts_1d.1"
@@ -547,6 +558,58 @@ REIT_ETF_WEIGHTS = {
     DIM_LIQUIDITY_EVAL: 0.10,
     DIM_REAL_ESTATE_CONCENTRATION: 0.15,
 }
+
+# Turkish participation-fund weights. Defined from mandate economics, not pilot scores.
+# Missing READY dimensions are excluded, never redistributed.
+# LIQUIDITY is omitted: TEFAS AUM / investor count is fund scale, not a liquidity rule.
+# TRACKING is omitted: TEFAS does not publish an official tracking-difference series.
+# COUNTRY / CREDIT / PROPERTY / SHARIA-of-security are omitted: not in official PDR fields.
+#
+# AIS / LIQUIDITY_PARTICIPATION_FUND: short-term / money-market participation.
+# RISK + MATURITY (official 45-day WAM cap) are the liquidity-character evidence.
+# No MOMENTUM: short-horizon unit-price change would double-count PERFORMANCE.
+LIQUIDITY_PARTICIPATION_FUND_WEIGHTS = {
+    DIM_PERFORMANCE_EVAL: 0.20,
+    DIM_RISK_EVAL: 0.20,
+    DIM_COST_EVAL: 0.15,
+    DIM_DIVERSIFICATION_EVAL: 0.10,
+    DIM_CONCENTRATION_EVAL: 0.15,
+    DIM_MATURITY: 0.20,
+}
+# ZPE / EQUITY_PARTICIPATION_FUND: participation equity.
+# PERFORMANCE leads on 1Y; MOMENTUM leads on 3M (existing MOMENTUM_LEAD_HORIZONS).
+EQUITY_PARTICIPATION_FUND_WEIGHTS = {
+    DIM_PERFORMANCE_EVAL: 0.20,
+    DIM_MOMENTUM_EVAL: 0.15,
+    DIM_RISK_EVAL: 0.15,
+    DIM_COST_EVAL: 0.15,
+    DIM_DIVERSIFICATION_EVAL: 0.20,
+    DIM_CONCENTRATION_EVAL: 0.15,
+}
+# IAT / SUKUK_PARTICIPATION_FUND: lease-certificate / sukuk.
+# No official duration, yield, or credit rating — those stay MISSING and are unweighted.
+# MATURITY is official PDR date coverage, not Macaulay duration.
+# No MOMENTUM: same separation as SUKUK_ETF.
+SUKUK_PARTICIPATION_FUND_WEIGHTS = {
+    DIM_PERFORMANCE_EVAL: 0.15,
+    DIM_RISK_EVAL: 0.15,
+    DIM_COST_EVAL: 0.10,
+    DIM_DIVERSIFICATION_EVAL: 0.10,
+    DIM_CONCENTRATION_EVAL: 0.10,
+    DIM_MATURITY: 0.20,
+    DIM_ISSUER_CONCENTRATION: 0.20,
+}
+
+# KAP publishes management fee only. Not TER. Mutual-fund band, not ETF 0.15–0.80.
+MANAGEMENT_FEE_GOOD_PCT = 0.50
+MANAGEMENT_FEE_BAD_PCT = 3.50
+
+TEFAS_VOLATILITY_CONVENTION = "SQRT_252"
+TEFAS_LOOKBACK_RULE = "PREVIOUS_VALID_OBSERVATION"
+TEFAS_DRAWDOWN_SEMANTICS = "AVAILABLE_WINDOW_HISTORICAL"
+RISK_FACT_OFFICIAL_RISK_VALUE = "OFFICIAL_RISK_VALUE"
+RISK_FACT_HISTORICAL_VOLATILITY = "HISTORICAL_VOLATILITY"
+RISK_FACT_HISTORICAL_MAX_DRAWDOWN = "HISTORICAL_MAX_DRAWDOWN"
 
 MIN_READY_SCORED_DIMENSIONS = 4
 MIN_READY_WEIGHT_COVERAGE = 0.55
@@ -654,6 +717,12 @@ class OfficialFundPerformance:
     source_url: str = ""
     provenance: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
+    drawdown_peak_date: Optional[str] = None
+    drawdown_trough_date: Optional[str] = None
+    drawdown_window_start: Optional[str] = None
+    drawdown_window_end: Optional[str] = None
+    volatility_convention: str = ""
+    official_risk_value: Optional[str] = None
 
     def resolved_symbol(self) -> str:
         return self.fund_symbol or self.symbol
@@ -713,6 +782,7 @@ class FundIntelligenceEvaluation:
     publishable: bool
     purification_factor_pct: Optional[float] = None
     purification_required: Optional[bool] = None
+    completeness: float = 0.0
 
     def dimension(self, name: str) -> Optional[FundDimensionResult]:
         for row in self.dimensions:
@@ -724,7 +794,19 @@ class FundIntelligenceEvaluation:
         return {row.name: row.status for row in self.dimensions}
 
     def generic_intelligence(self) -> dict[str, Any]:
-        """8E consumes Fund Intelligence through the same SI state fields."""
+        """8E consumes Fund Intelligence through the same SI state fields.
+
+        Research-only scores (Participation not eligible) do not leak attractiveness.
+        """
+        if not self.participation.eligible:
+            adverse = self.participation.status == "ADVERSE"
+            return {
+                "si_state": "AVOID" if adverse else "INSUFFICIENT_DATA",
+                "si_score": None,
+                "si_confidence": 0.0,
+                "si_data_quality": "INSUFFICIENT",
+                "si_as_of": self.as_of,
+            }
         return {
             "si_state": self.state,
             "si_score": self.score,
