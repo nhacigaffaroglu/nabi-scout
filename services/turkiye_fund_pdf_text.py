@@ -38,18 +38,38 @@ def extract_pdf_text(payload: bytes) -> str:
         raise ValueError("kap_file_is_not_pdf")
     reader = PdfReader(io.BytesIO(data))
     pages: list[str] = []
+    layout_pages: list[str] = []
     for page in reader.pages:
         text = str(page.extract_text() or "")
-        if not text.strip():
-            try:
-                text = str(page.extract_text(extraction_mode="layout") or "")
-            except TypeError:
-                text = ""
+        layout = ""
+        try:
+            layout = str(page.extract_text(extraction_mode="layout") or "")
+        except TypeError:
+            layout = ""
         pages.append(text)
-    text = "\n".join(pages).strip()
-    if not text:
+        layout_pages.append(layout)
+    default = "\n".join(pages).strip()
+    layout = "\n".join(layout_pages).strip()
+    chosen = _prefer_official_pdf_text(default, layout)
+    if not chosen:
         raise ValueError("kap_pdf_text_empty")
-    return text
+    return chosen
+
+
+def _prefer_official_pdf_text(default: str, layout: str) -> str:
+    """Prefer the official extract with more table structure (ISINs), else longer text."""
+    import re
+
+    isin = re.compile(r"\b[A-Z]{2}[A-Z0-9]{10}\b")
+    default_n = len(isin.findall(default))
+    layout_n = len(isin.findall(layout))
+    if layout_n > default_n + 1:
+        return layout
+    if default_n > layout_n + 1:
+        return default
+    if len(layout) > len(default) * 1.25:
+        return layout
+    return default or layout
 
 
 def try_extract_pdf_text(payload: bytes) -> tuple[Optional[str], Optional[str]]:

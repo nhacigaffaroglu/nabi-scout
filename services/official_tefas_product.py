@@ -221,6 +221,7 @@ class TefasFundProductProvider:
         return parse_kap_mandate(
             fund_code=code,
             ozet_fields=dict(kap.get("ozet_fields") or {}),
+            ybf_text=str(kap.get("ybf_text") or ""),
             ybf_payload=dict(kap.get("ybf") or {}),
             source_url=str(kap.get("ozet_url") or ""),
             ybf_url=str(kap.get("ybf_url") or ""),
@@ -339,11 +340,7 @@ class TefasFundProductProvider:
         return parse_kap_portfolio_report_audit(fund_code=code, report=dict(kap.get("portfolio_report") or {}))
 
     def pdr_holdings(self, symbol: str):
-        code = self._require(symbol)
-        file = try_load_captured_pdr_holdings(code)
-        if file is None:
-            raise FileNotFoundError(f"captured PDR text missing for {code}")
-        return file
+        return try_load_captured_pdr_holdings(self._require(symbol))
 
     def official_risk_value(self, symbol: str) -> Optional[str]:
         code = self._require(symbol)

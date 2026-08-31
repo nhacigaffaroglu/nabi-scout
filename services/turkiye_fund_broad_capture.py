@@ -10,8 +10,13 @@ import time
 from datetime import date
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from services.fund_product_contract import IDENTITY_RESOLVED, IDENTITY_UNRESOLVED
-from services.official_kap_fund import parse_kap_ybf_text
+from services.fund_product_contract import IDENTITY_RESOLVED, IDENTITY_UNRESOLVED, PILOT_TEFAS_FUND_CODES
+from services.official_kap_fund import (
+    OZET_LABEL_FOUNDER,
+    OZET_LABEL_UMBRELLA_NAME,
+    OZET_LABEL_UMBRELLA_TYPE,
+    parse_kap_ybf_text,
+)
 from services.official_kap_pdr import (
     asset_group_weights,
     discover_latest_pdr,
@@ -35,7 +40,6 @@ from services.turkiye_fund_pdr_window import latest_applicable_pdr_period, pdr_r
 from services.turkiye_fund_pdf_text import sha256_hex, try_extract_pdf_text, unwrap_kap_file_bytes
 from services.turkiye_fund_source_capture import (
     CACHE_DIR,
-    TEFAS_PRICE_URL,
     TEFAS_RETURNS_URL,
     TEFAS_SNAPSHOT_URL,
     CaptureRunStats,
@@ -47,7 +51,11 @@ from services.turkiye_fund_source_capture import (
     write_cached_pdr_text,
     write_evidence_pack,
 )
+from services.turkiye_fund_tefas_history import capture_tefas_history
+from services.turkiye_fund_text_recovery import recover_official_document_text
 from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+EVIDENCE_RECOVERY_VERSION = 8
 
 KAP_BILDIRIM = "https://www.kap.org.tr/tr/Bildirim/{index}"
 
@@ -85,6 +93,7 @@ def pdr_parser_quality(file) -> dict[str, Any]:
         "issuer_coverage": round(issuer_n / total, 4),
         "maturity_coverage": round(maturity_n / total, 4),
         "currency_coverage": round(currency_n / total, 4),
+        "isin_coverage": round(sum(1 for row in holdings if row.isin) / total, 4),
         "asset_groups": asset_group_weights(file),
         "renormalized": bool(getattr(weights, "renormalized", False)),
     }
@@ -97,8 +106,8 @@ def _fetch_pdf_text(
     referer: str = "",
     published_at: str = "",
 ) -> tuple[Optional[str], Optional[str], bool]:
-    identity = cache_identity(kind="kap_pdf_text", key=file_oid, published_at=published_at)
-    cached = read_cached_payload("kap_pdf_text", identity)
+    identity = cache_identity(kind="kap_pdf_text_v6", key=file_oid, published_at=published_at)
+    cached = read_cached_payload("kap_pdf_text_v6", identity)
     if cached and cached.get("text"):
         session.stats.cache_hits += 1
         session.stats.unchanged_documents += 1
@@ -111,7 +120,7 @@ def _fetch_pdf_text(
         return None, error, False
     digest = sha256_hex(pdf)
     load_or_store(
-        kind="kap_pdf_text",
+        kind="kap_pdf_text_v6",
         key=file_oid,
         published_at=published_at,
         fetcher=lambda: {"text": text, "sha256": digest, "bytes": len(pdf)},
@@ -161,39 +170,42 @@ def capture_tefas_returns(session: OfficialCaptureSession, fund_code: str) -> Op
     return dict(payload)
 
 
-def capture_tefas_prices(
-    session: OfficialCaptureSession,
-    fund_code: str,
+def _attach_tefas(
+    pack: dict[str, Any],
     *,
-    start: str,
-    end: str,
-) -> Optional[dict[str, Any]]:
-    code = normalize_fund_code(fund_code)
-    key = f"{code}|{start}|{end}"
-
-    def _fetch() -> dict[str, Any]:
-        payload = session.http_json(
-            TEFAS_PRICE_URL,
-            {"fonKodu": code, "baslangicTarihi": start, "bitisTarihi": end},
-            referer="https://www.tefas.gov.tr/",
-        )
-        error = payload.get("errorMessage")
-        rows = list(payload.get("resultList") or [])
-        if error or not rows:
-            return {"fonKodu": code, "available": False, "error": error or "empty_resultList"}
-        return {"fonKodu": code, "available": True, "rows": rows}
-
+    session: OfficialCaptureSession,
+    code: str,
+    day: date,
+    fetch_prices: bool,
+    reasons: list[str],
+    errors: list[str],
+) -> None:
+    """Official TEFAS snapshot/history does not depend on KAP özet success."""
     try:
-        payload, _hit = load_or_store(
-            kind="tefas_prices",
-            key=key,
-            published_at=f"{start}|{end}",
-            fetcher=_fetch,
-            stats=session.stats,
-        )
+        snap = capture_tefas_snapshot(session, code)
+        pack["tefas_snapshot"] = {k: v for k, v in snap.items() if k != "cache_hit"}
+        if not snap.get("tefas_present"):
+            reasons.append("TEFAS_INACTIVE")
     except Exception as exc:  # noqa: BLE001
-        return {"fonKodu": code, "available": False, "error": str(exc)[:240]}
-    return dict(payload)
+        errors.append(f"TEFAS_SNAPSHOT:{exc}"[:240])
+        reasons.append("SOURCE_ERROR")
+    returns = capture_tefas_returns(session, code)
+    pack["tefas_returns"] = returns
+    if fetch_prices:
+        prices = capture_tefas_history(session, code, as_of=day)
+        pack["tefas_prices"] = {
+            "available": bool(prices and prices.get("available")),
+            "error": (prices or {}).get("error"),
+            "row_count": int((prices or {}).get("row_count") or len(list((prices or {}).get("rows") or []))),
+            "periyod": (prices or {}).get("periyod"),
+            "latest_date": (prices or {}).get("latest_date"),
+            "pilot_frozen": bool((prices or {}).get("pilot_frozen")),
+        }
+        if not (prices and prices.get("available")):
+            reasons.append("HISTORY_INSUFFICIENT")
+            pack["tefas_price_rows"] = []
+        else:
+            pack["tefas_price_rows"] = list(prices.get("rows") or [])
 
 
 def capture_one_fund(
@@ -203,10 +215,27 @@ def capture_one_fund(
     catalog_rows: Sequence[Mapping[str, Any]],
     as_of: Optional[date] = None,
     fetch_prices: bool = True,
+    allow_ocr: bool = False,
 ) -> dict[str, Any]:
     """Capture official evidence for one fund. Failures stay on this fund."""
     day = _as_of(as_of)
     code = identity.fund_code
+    if code in PILOT_TEFAS_FUND_CODES:
+        pack = {
+            "fund_code": code,
+            "source_as_of": day.isoformat(),
+            "calculated_at": day.isoformat(),
+            "official_name": identity.fund_name,
+            "identity_status": IDENTITY_RESOLVED,
+            "tefas_status": identity.tefas_status,
+            "errors": [],
+            "review_reasons": [],
+            "production_persist": False,
+            "evidence_recovery_version": EVIDENCE_RECOVERY_VERSION,
+            "pilot_frozen": True,
+        }
+        write_evidence_pack(code, pack)
+        return pack
     errors: list[str] = []
     reasons: list[str] = []
     pack: dict[str, Any] = {
@@ -221,6 +250,7 @@ def capture_one_fund(
         "errors": errors,
         "review_reasons": reasons,
         "production_persist": False,
+        "evidence_recovery_version": EVIDENCE_RECOVERY_VERSION,
     }
     if identity.tefas_status != TEFAS_STATUS_ACTIVE:
         reasons.append("TEFAS_INACTIVE")
@@ -236,6 +266,11 @@ def capture_one_fund(
     if not slug:
         reasons.append("IDENTITY_UNRESOLVED")
         pack["identity_status"] = IDENTITY_UNRESOLVED
+        _attach_tefas(
+            pack, session=session, code=code, day=day, fetch_prices=fetch_prices, reasons=reasons, errors=errors
+        )
+        pack["review_reasons"] = list(dict.fromkeys(reasons))
+        pack["errors"] = list(dict.fromkeys(errors))
         write_evidence_pack(code, pack)
         return pack
 
@@ -254,6 +289,11 @@ def capture_one_fund(
         reasons.append("SOURCE_ERROR")
         reasons.append("IDENTITY_UNRESOLVED")
         pack["identity_status"] = IDENTITY_UNRESOLVED
+        _attach_tefas(
+            pack, session=session, code=code, day=day, fetch_prices=fetch_prices, reasons=reasons, errors=errors
+        )
+        pack["review_reasons"] = list(dict.fromkeys(reasons))
+        pack["errors"] = list(dict.fromkeys(errors))
         write_evidence_pack(code, pack)
         return pack
 
@@ -261,6 +301,11 @@ def capture_one_fund(
         reasons.append("IDENTITY_UNRESOLVED")
         pack["identity_status"] = IDENTITY_UNRESOLVED
         pack["ozet"] = {"fund_code": ozet.get("fund_code")}
+        _attach_tefas(
+            pack, session=session, code=code, day=day, fetch_prices=fetch_prices, reasons=reasons, errors=errors
+        )
+        pack["review_reasons"] = list(dict.fromkeys(reasons))
+        pack["errors"] = list(dict.fromkeys(errors))
         write_evidence_pack(code, pack)
         return pack
 
@@ -287,30 +332,59 @@ def capture_one_fund(
         pack["genel_items"] = {
             key: value
             for key, value in dict(genel.get("items") or {}).items()
-            if key in {"kpy81_acc1_ISIN", "kpy81_acc1_kurucu_unvan", "kpy81_acc1_fon_sem_tur"}
+            if key
+            in {
+                "kpy81_acc1_ISIN",
+                "kpy81_acc1_kurucu_unvan",
+                "kpy81_acc1_fon_sem_tur",
+                "kpy81_acc1_fon_sem_unvan",
+            }
         }
+        _fill_ozet_from_genel(pack)
     except Exception as exc:  # noqa: BLE001
         errors.append(f"KAP_GENEL:{exc}"[:240])
         reasons.append("SOURCE_ERROR")
 
     ybf_oid = ozet.get("ybf_file_oid")
     izahname_oid = ozet.get("izahname_file_oid")
+    ybf_doc = (ozet.get("documents") or {}).get("BILGI_FORMU") or {}
+    izah_doc = (ozet.get("documents") or {}).get("IZAHNAME") or {}
     ybf_text = None
     izahname_text = None
+    ybf_recovery = None
+    izah_recovery = None
     if ybf_oid:
-        ybf_text, ybf_meta, _hit = _safe_pdf(session, ybf_oid, referer=pack["ozet_url"], errors=errors, reasons=reasons)
+        ybf_recovery = recover_official_document_text(
+            session,
+            file_oid=str(ybf_oid),
+            disclosure_index=ybf_doc.get("disclosure_index"),
+            document_type="YBF",
+            published_at=str(pack.get("source_as_of") or ""),
+            referer=pack["ozet_url"] or "",
+            allow_ocr=allow_ocr,
+        )
+        ybf_text = ybf_recovery.get("text") if ybf_recovery.get("text_available") else None
         pack["ybf_url"] = kap_file_url(ybf_oid)
-        pack["ybf_sha256"] = ybf_meta
-        if ybf_text is None and ybf_meta:
-            errors.append(f"YBF_TEXT:{ybf_meta}"[:240])
+        pack["ybf_sha256"] = ybf_recovery.get("text_hash")
+        pack["ybf_recovery"] = {k: v for k, v in ybf_recovery.items() if k != "text"}
+        if ybf_text is None:
+            errors.append(f"YBF_TEXT:{ybf_recovery.get('pdf_error') or ybf_recovery.get('ocr_error') or 'unavailable'}"[:240])
     else:
         reasons.append("YBF_MISSING")
     if izahname_oid:
-        izahname_text, izah_meta, _hit = _safe_pdf(
-            session, izahname_oid, referer=pack["ozet_url"], errors=errors, reasons=reasons
+        izah_recovery = recover_official_document_text(
+            session,
+            file_oid=str(izahname_oid),
+            disclosure_index=izah_doc.get("disclosure_index"),
+            document_type="IZAHNAME",
+            published_at=str(pack.get("source_as_of") or ""),
+            referer=pack["ozet_url"] or "",
+            allow_ocr=allow_ocr,
         )
+        izahname_text = izah_recovery.get("text") if izah_recovery.get("text_available") else None
         pack["izahname_url"] = kap_file_url(izahname_oid)
-        pack["izahname_sha256"] = izah_meta
+        pack["izahname_sha256"] = izah_recovery.get("text_hash")
+        pack["izahname_recovery"] = {k: v for k, v in izah_recovery.items() if k != "text"}
 
     if ybf_text:
         pack["ybf_facts"] = parse_kap_ybf_text(ybf_text)
@@ -324,7 +398,10 @@ def capture_one_fund(
                 None,
             ),
             "management_fee_annual_pct": (pack["ybf_facts"] or {}).get("management_fee_annual_pct"),
+            "text_origin": (ybf_recovery or {}).get("text_origin"),
         }
+        if (ybf_recovery or {}).get("text_origin") != "OCR_FROM_OFFICIAL_DOCUMENT":
+            pack["ybf_text"] = ybf_text
     elif ybf_oid:
         reasons.append("YBF_MISSING")
 
@@ -398,34 +475,9 @@ def capture_one_fund(
             reasons.append("SOURCE_ERROR")
             reasons.append("PDR_MISSING")
 
-    try:
-        snap = capture_tefas_snapshot(session, code)
-        pack["tefas_snapshot"] = {k: v for k, v in snap.items() if k != "cache_hit"}
-        if not snap.get("tefas_present"):
-            reasons.append("TEFAS_INACTIVE")
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"TEFAS_SNAPSHOT:{exc}"[:240])
-        reasons.append("SOURCE_ERROR")
-
-    returns = capture_tefas_returns(session, code)
-    pack["tefas_returns"] = returns
-    if returns and not returns.get("available"):
-        # Official point-in-time returns unavailable; daily history is separate.
-        pass
-
-    if fetch_prices:
-        start = date(day.year - 1, day.month, min(day.day, 28)).isoformat()
-        prices = capture_tefas_prices(session, code, start=start, end=day.isoformat())
-        pack["tefas_prices"] = {
-            "available": bool(prices and prices.get("available")),
-            "error": (prices or {}).get("error"),
-            "row_count": len(list((prices or {}).get("rows") or [])),
-        }
-        if not (prices and prices.get("available")):
-            reasons.append("HISTORY_INSUFFICIENT")
-            pack["tefas_price_rows"] = []
-        else:
-            pack["tefas_price_rows"] = list(prices.get("rows") or [])
+    _attach_tefas(
+        pack, session=session, code=code, day=day, fetch_prices=fetch_prices, reasons=reasons, errors=errors
+    )
 
     pack["review_reasons"] = list(dict.fromkeys(reasons))
     pack["errors"] = list(dict.fromkeys(errors))
@@ -448,6 +500,28 @@ def _safe_pdf(
         errors.append(f"KAP_FILE:{file_oid}:{exc}"[:240])
         reasons.append(reason_on_fail)
         return None, None, False
+
+
+def _fill_ozet_from_genel(pack: dict[str, Any]) -> None:
+    """Prefer KAP genel item values when özet RSC captured the label as the value."""
+    mapping = {
+        "kpy81_acc1_kurucu_unvan": OZET_LABEL_FOUNDER,
+        "kpy81_acc1_fon_sem_unvan": OZET_LABEL_UMBRELLA_NAME,
+        "kpy81_acc1_fon_sem_tur": OZET_LABEL_UMBRELLA_TYPE,
+    }
+    fields = dict(pack.get("ozet_fields") or {})
+    items = dict(pack.get("genel_items") or {})
+    for key, label in mapping.items():
+        value = str(items.get(key) or "").strip()
+        current = str(fields.get(label) or "").strip()
+        if value and (not current or current == label):
+            fields[label] = value
+    pack["ozet_fields"] = fields
+    if fields.get(OZET_LABEL_UMBRELLA_TYPE):
+        pack["umbrella_type"] = fields.get(OZET_LABEL_UMBRELLA_TYPE)
+    if fields.get(OZET_LABEL_UMBRELLA_NAME):
+        pack["umbrella_name"] = fields.get(OZET_LABEL_UMBRELLA_NAME)
+    pack["founder"] = pack.get("founder") or fields.get(OZET_LABEL_FOUNDER)
 
 
 def _strategy_paragraph(text: str) -> Optional[str]:
@@ -497,6 +571,7 @@ def capture_universe(
     resume: bool = True,
     limit: Optional[int] = None,
     fetch_prices: bool = True,
+    allow_ocr: bool = False,
     on_fund: Optional[Callable[[str, dict[str, Any]], None]] = None,
 ) -> tuple[dict[str, dict[str, Any]], CaptureRunStats]:
     active = [row for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE]
@@ -505,6 +580,7 @@ def capture_universe(
     sess = session or OfficialCaptureSession(live=live, min_gap_sec=0.35 if live else 0.0)
     started = time.monotonic()
     packs: dict[str, dict[str, Any]] = {}
+    day = _as_of(as_of)
     for identity in active:
         sess.stats.funds_attempted += 1
         if resume:
@@ -517,6 +593,26 @@ def capture_universe(
                 if on_fund:
                     on_fund(identity.fund_code, existing)
                 continue
+            if existing and _pack_needs_tefas_only(existing):
+                reasons = list(existing.get("review_reasons") or [])
+                errors = list(existing.get("errors") or [])
+                _attach_tefas(
+                    existing,
+                    session=sess,
+                    code=identity.fund_code,
+                    day=day,
+                    fetch_prices=fetch_prices,
+                    reasons=reasons,
+                    errors=errors,
+                )
+                existing["review_reasons"] = list(dict.fromkeys(reasons))
+                existing["errors"] = list(dict.fromkeys(errors))
+                write_evidence_pack(identity.fund_code, existing)
+                sess.stats.funds_ok += 1
+                packs[identity.fund_code] = existing
+                if on_fund:
+                    on_fund(identity.fund_code, existing)
+                continue
         try:
             pack = capture_one_fund(
                 identity,
@@ -524,6 +620,7 @@ def capture_universe(
                 catalog_rows=catalog_rows,
                 as_of=as_of,
                 fetch_prices=fetch_prices,
+                allow_ocr=allow_ocr,
             )
             packs[identity.fund_code] = pack
             sess.stats.funds_ok += 1
@@ -547,10 +644,14 @@ def capture_universe(
 
 
 def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIdentity) -> bool:
+    if pack.get("evidence_recovery_version") != EVIDENCE_RECOVERY_VERSION:
+        return False
     if pack.get("fund_code") != identity.fund_code:
         return False
     if pack.get("production_persist"):
         return False
+    if pack.get("pilot_frozen") and identity.fund_code in PILOT_TEFAS_FUND_CODES:
+        return True
     if "SOURCE_ERROR" in tuple(pack.get("review_reasons") or ()):
         return False
     if pack.get("identity_status") != IDENTITY_RESOLVED:
@@ -563,3 +664,15 @@ def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIden
     }:
         return False
     return bool(ybf or pack.get("pdr_file_oid"))
+
+
+def _pack_needs_tefas_only(pack: Mapping[str, Any]) -> bool:
+    """KAP failed but the fund code is known; fill official TEFAS history without re-hitting KAP."""
+    if pack.get("evidence_recovery_version") != EVIDENCE_RECOVERY_VERSION:
+        return False
+    if pack.get("pilot_frozen") or pack.get("production_persist"):
+        return False
+    if pack.get("tefas_price_rows"):
+        return False
+    reasons = tuple(pack.get("review_reasons") or ())
+    return "SOURCE_ERROR" in reasons or pack.get("identity_status") != IDENTITY_RESOLVED

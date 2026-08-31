@@ -53,6 +53,12 @@ PROVENANCE_KAP_PDR = "kap_pdr_official"
 _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
 _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
 _BIST_CODE_RE = re.compile(r"\b([A-Z0-9]{2,6}\.[EF])\b")
+_TICKER_ROW_RE = re.compile(r"\b([A-Z]{3,6}(?:-[A-Z0-9]{2,10})?)\s+(TL|TRY|USD|EUR|AU1)\b")
+_FTD_TAIL_RE = re.compile(r"(-?\d+,\d+)\s+(-?\d+,\d+)\s+(-?\d+,\d+)\s*$")
+_PAGE_NOISE_RE = re.compile(
+    r"temmuz-\d{4}|kamuyu aydinlatma|sayfa\s*\d|menkul kiymet\s+cinsi|doviz\s+ihracci",
+    flags=re.I,
+)
 _TR_DATE_RE = re.compile(r"\b(\d{2}[./]\d{2}[./]\d{2,4})\b")
 _FILE_RE = re.compile(
     r"/tr/api/file/download/([0-9a-f]+).*?([\w.\- ]+\.pdf)",
@@ -83,6 +89,8 @@ _SECTION_MAP = (
     ("gümüş", ASSET_GROUP_PRECIOUS_METALS),
     ("gumus", ASSET_GROUP_PRECIOUS_METALS),
     ("hisse senet", ASSET_GROUP_EQUITY),
+    ("borsa y.fon", ASSET_GROUP_FUND),
+    ("borsa yatirim fonu", ASSET_GROUP_FUND),
     ("borsa yatırım fonu", ASSET_GROUP_FUND),
     ("yatırım fonu", ASSET_GROUP_FUND),
     ("katılma pay", ASSET_GROUP_FUND),
@@ -313,8 +321,32 @@ def discover_latest_pdr(
     )
 
 
+def is_valid_isin(token: Any) -> bool:
+    """Reject header glue such as TOPLAMTOPLAM. Keep ISO-shaped official tokens."""
+    text = str(token or "").strip().upper()
+    if len(text) != 12 or not text[:2].isalpha() or not text[2:].isalnum():
+        return False
+    if not text[-1].isdigit():
+        return False
+    if any(bad in text for bad in ("TOPLAM", "MENKUL", "KIYMET", "GRUPTO")):
+        return False
+    return True
+
+
+def _isin_tokens(text: str) -> list[str]:
+    return [token for token in _ISIN_RE.findall(text) if is_valid_isin(token)]
+
+
 def _plain(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _has_ftd_tail(line: str) -> bool:
+    match = _FTD_TAIL_RE.search(_plain(line))
+    if not match:
+        return False
+    values = [parse_tr_number(part) for part in match.groups()]
+    return all(item is not None and abs(item) <= 100.5 for item in values)
 
 
 def _is_header(line: str) -> bool:
@@ -331,13 +363,20 @@ def _section_from_line(line: str) -> Optional[str]:
     group = normalize_pdr_asset_group(line)
     if group == ASSET_GROUP_UNKNOWN:
         return None
-    if len(_plain(line)) > 80 and _ISIN_RE.search(line):
+    if len(_plain(line)) > 80 and _isin_tokens(line):
         return None
     return re.sub(r"^#+\s*", "", line.strip())
 
 
 def _numbers(text: str) -> list[str]:
     return _NUM_TOKEN.findall(text)
+
+
+def _numbers_without_isins(text: str) -> list[str]:
+    cleaned = str(text or "")
+    for isin in _isin_tokens(cleaned):
+        cleaned = cleaned.replace(isin, " ")
+    return _numbers(cleaned)
 
 
 def _holding(
@@ -407,12 +446,13 @@ def _parse_isin_row(
 ) -> Optional[KapPdrHolding]:
     if "GRUP TOPLAMI" in line.upper() or _is_header(line):
         return None
-    isins = _ISIN_RE.findall(line)
+    text = _plain(line)
+    isins = _isin_tokens(text)
     if not isins:
         return None
     isin = isins[0]
     ccy = None
-    ccy_match = re.search(r"\b(TL|TRY|USD|EUR)\b", line)
+    ccy_match = re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", line)
     if ccy_match:
         ccy = ccy_match.group(1)
     maturity = parse_tr_date(line)
@@ -437,13 +477,19 @@ def _parse_isin_row(
     if issuer:
         issuer = re.sub(r"\s+\b(TL|TRY|USD|EUR)\b\s*$", "", issuer).strip() or issuer
     if not issuer:
-        tail = re.search(rf"^(?P<head>.+?)\s+{re.escape(isin)}\s*$", line)
-        if tail:
-            issuer = _plain(re.sub(r"[\d.,:\-|]+", " ", tail.group("head")))
-            issuer = re.sub(r"\s+", " ", issuer).strip() or None
-            if issuer and not name:
-                name = issuer
-    nums = _numbers(line)
+        head = text.split(isin)[0] if isin else ""
+        if "HAZİNE" in head:
+            issuer = "HAZİNE"
+        else:
+            tail = re.search(rf"^(?P<head>.+?)\s+{re.escape(isin)}\s*$", line)
+            if tail:
+                issuer = _plain(re.sub(r"[\d.,:\-|]+", " ", tail.group("head")))
+                issuer = re.sub(r"\s+", " ", issuer).strip() or None
+                if issuer and not name:
+                    name = issuer
+            elif _plain(head):
+                issuer = _plain(re.sub(r"\b(TL|TRY|USD|EUR|AU1)\b", " ", head)) or None
+    nums = _numbers_without_isins(text)
     weight = None
     market_value = None
     nominal = None
@@ -501,7 +547,7 @@ def _parse_deposit_row(
     source_notification_id: Optional[str],
     source_attachment: Optional[str],
 ) -> Optional[KapPdrHolding]:
-    if _ISIN_RE.search(line) or "GRUP TOPLAMI" in line.upper():
+    if _isin_tokens(line) or "GRUP TOPLAMI" in line.upper():
         return None
     if not re.search(r"\bTL\b", line):
         return None
@@ -582,6 +628,61 @@ def _parse_zpe_equity_row(
     )
 
 
+def _parse_ticker_row(
+    line: str,
+    *,
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    section: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> Optional[KapPdrHolding]:
+    """Named/ticker rows where ISIN is wrapped onto a later official line."""
+    text = _plain(line)
+    match = _TICKER_ROW_RE.search(text)
+    if not match or not _has_ftd_tail(text):
+        return None
+    if "GRUP TOPLAMI" in text.upper() or _is_header(text):
+        return None
+    ticker = match.group(1)
+    ccy = match.group(2)
+    isins = _isin_tokens(text)
+    nums = [parse_tr_number(tok) for tok in _numbers_without_isins(text)]
+    values = [item for item in nums if item is not None]
+    weight = values[-1] if len(values) >= 3 and all(abs(item) <= 100.5 for item in values[-3:]) else None
+    market_value = next((item for item in reversed(values[:-3]) if item is not None and abs(item) >= 1), None)
+    issuer = None
+    if "HAZİNE" in text:
+        issuer = "HAZİNE"
+    else:
+        head = re.split(r"\b(?:TL|TRY|USD|EUR|AU1)\b", text, maxsplit=1)
+        if len(head) > 1:
+            rest = re.split(r"\d", head[1], maxsplit=1)[0]
+            issuer = _plain(rest) or None
+    return _holding(
+        fund_code=fund_code,
+        report_period=report_period,
+        report_date=report_date,
+        asset_group_raw=section,
+        security_name_raw=ticker,
+        issuer_raw=issuer,
+        isin=isins[0] if isins else None,
+        official_code=isins[0] if isins else ticker,
+        maturity_date=parse_tr_date(text),
+        currency=ccy,
+        quantity=None,
+        nominal=next((item for item in values if item is not None and abs(item) >= 100), None),
+        unit_price=None,
+        market_value=market_value,
+        portfolio_weight=weight,
+        fund_total_value=fund_total_value,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
+
 def _parse_zpe_other_row(
     line: str,
     *,
@@ -600,9 +701,9 @@ def _parse_zpe_other_row(
     if len(nums) < 3:
         return None
     isin = None
-    found = _ISIN_RE.search(text)
+    found = _isin_tokens(text)
     if found:
-        isin = found.group(1)
+        isin = found[0]
     code_match = re.search(r"\b(\dAyaKadarVD-[A-Z]{2,4}-TRY)\b", text)
     official = isin or (code_match.group(1) if code_match else None)
     if not official:
@@ -740,6 +841,80 @@ def reconstruct_split_table_rows(text: str) -> list[str]:
     return rows
 
 
+def _is_page_noise(line: str) -> bool:
+    if _isin_tokens(line) or _BIST_CODE_RE.search(line):
+        return False
+    folded = _fold(line)
+    if _PAGE_NOISE_RE.search(folded):
+        return True
+    if "ihracci kurum" in folded and "isin kodu" in folded:
+        return True
+    if "menkul kiymet" in folded and "cinsi" in folded:
+        return True
+    return False
+
+
+def _is_holding_row_start(line: str) -> bool:
+    text = _plain(line)
+    if not text or "GRUP TOPLAMI" in text.upper() or _is_header(text) or _is_page_noise(text):
+        return False
+    first = text.split()[0].rstrip(".,;:")
+    if is_valid_isin(first):
+        return True
+    if _TICKER_ROW_RE.match(text) and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text):
+        return True
+    if re.match(r"^(ALTIN|G[UÜ]M[UÜ][SŞ])\b", text, flags=re.I) and re.search(r"\b(TL|TRY|AU1)\b", text):
+        return True
+    if _has_ftd_tail(text) and re.search(r"\b(TL|TRY)\b", text) and not _isin_tokens(text):
+        return True
+    return False
+
+
+def _is_trailing_identity_wrap(line: str) -> bool:
+    """Identity fields printed on the next line after a complete FTD weight row."""
+    text = _plain(line)
+    if not text or _has_ftd_tail(text) or _BIST_CODE_RE.search(text):
+        return False
+    if "GRUP TOPLAMI" in text.upper() or _is_header(text):
+        return False
+    if _TICKER_ROW_RE.match(text) or _is_holding_row_start(text):
+        return False
+    money = [parse_tr_number(tok) for tok in _numbers(text) if "," in tok]
+    if any(item is not None and abs(item) > 100 for item in money):
+        return False
+    if _isin_tokens(text):
+        return True
+    folded = _fold(text)
+    return any(token in folded for token in ("portfoy", "yonetimi", "a.s.", "varlik kiralama", "finans"))
+
+
+def _is_wrap_continuation(line: str, buf: str) -> bool:
+    """Issuer/ISIN wrapped onto the next PDF line of the same official row."""
+    text = _plain(line)
+    prior = _plain(buf)
+    if not text or not prior:
+        return False
+    if "GRUP TOPLAMI" in text.upper() or _is_header(text) or _is_page_noise(text):
+        return False
+    if _has_ftd_tail(text):
+        return False
+    if _BIST_CODE_RE.search(text):
+        return False
+    first = text.split()[0].rstrip(".,;:")
+    if is_valid_isin(first) and (_has_ftd_tail(text) or len(_numbers(text)) >= 4):
+        return False
+    if _TICKER_ROW_RE.match(text) and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text) and len(_numbers(text)) >= 3:
+        return False
+    money = [parse_tr_number(tok) for tok in _numbers(text) if "," in tok]
+    if any(item is not None and abs(item) > 100 for item in money):
+        return False
+    prior_isins = _isin_tokens(prior)
+    line_isins = _isin_tokens(text)
+    if prior_isins and line_isins and line_isins[0] not in prior_isins:
+        return False
+    return True
+
+
 def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
     """Merge wrapped official rows and split jammed multi-holding lines."""
     chunks: list[tuple[Optional[str], str]] = []
@@ -763,13 +938,13 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if not text or text.upper().startswith("GRUP TOPLAMI"):
             return
         text = re.split(r"GRUP TOPLAMI", text, flags=re.I)[0].strip()
-        if not text:
+        if not text or _is_page_noise(text):
             return
         parts = [part.strip() for part in _ISIN_HOLDING_SPLIT.split(text) if part.strip()]
         if not parts:
             parts = [text]
         for part in parts:
-            if part.upper().startswith("GRUP TOPLAMI"):
+            if part.upper().startswith("GRUP TOPLAMI") or _is_page_noise(part):
                 continue
             chunks.append((section, part))
 
@@ -780,8 +955,10 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if re.search(r"IV-?FON TOPLAM|4 - TOPLAM DE[ĞG]ER|VII-PORTF|7 - PORTF|8 - [İI]TFALAR|9 - PORTF", line, flags=re.I):
             flush()
             break
+        if _is_page_noise(line):
+            continue
         header = _section_from_line(line)
-        if header and not _ISIN_RE.search(line) and not _BIST_CODE_RE.search(line):
+        if header and not _isin_tokens(line) and not _BIST_CODE_RE.search(line) and not _TICKER_ROW_RE.match(_plain(line)):
             flush()
             section = header
             continue
@@ -792,15 +969,31 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             flush()
             chunks.append((section, line))
             continue
+        if "GRUP TOPLAMI" in line.upper() and not _isin_tokens(line):
+            flush()
+            continue
         if (
-            not _ISIN_RE.search(line)
+            buf
+            and _has_ftd_tail(buf)
+            and _is_holding_row_start(line)
+            and not _is_wrap_continuation(line, buf)
+        ):
+            flush()
+            buf = line
+            continue
+        if _is_wrap_continuation(line, buf):
+            buf = f"{buf} {line}".strip()
+            continue
+        if (
+            not _isin_tokens(line)
             and re.search(r"\b(TL|TRY)\b", line)
             and _TR_DATE_RE.search(line)
+            and _has_ftd_tail(line)
         ):
             buf = f"{buf} {line}".strip() if buf else line
             flush()
             continue
-        if _ISIN_RE.search(line) and buf and _ISIN_RE.search(buf) and re.search(r"\b(TL|TRY)\b", buf):
+        if _isin_tokens(line) and buf and _isin_tokens(buf) and re.search(r"\b(TL|TRY|AU1)\b", buf):
             flush()
             buf = line
             continue
@@ -876,10 +1069,23 @@ def parse_kap_pdr_text(
         if zpe:
             holdings.append(zpe)
             continue
+        ticker = _parse_ticker_row(
+            line,
+            fund_code=code,
+            report_period=report_period,
+            report_date=report_date,
+            section=section,
+            fund_total_value=fund_total,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+        if ticker:
+            holdings.append(ticker)
+            continue
         if section and normalize_pdr_asset_group(section) in {
             ASSET_GROUP_PARTICIPATION_ACCOUNT,
             ASSET_GROUP_REPO,
-        } and not _ISIN_RE.search(line):
+        } and not _isin_tokens(line):
             other = _parse_zpe_other_row(
                 line,
                 fund_code=code,
@@ -906,7 +1112,7 @@ def parse_kap_pdr_text(
             if deposit:
                 holdings.append(deposit)
                 continue
-        if _ISIN_RE.search(line):
+        if _isin_tokens(line):
             parsed = _parse_isin_row(
                 _plain(line),
                 fund_code=code,
@@ -977,17 +1183,23 @@ def parse_kap_pdr_text(
             )
             if other:
                 holdings.append(other)
-    holdings.extend(
-        _parse_ftd_overlay(
-            body,
-            fund_code=code,
-            report_period=report_period,
-            report_date=report_date,
-            fund_total_value=fund_total,
-            source_notification_id=source_notification_id,
-            source_attachment=source_attachment,
-        )
-    )
+    seen_overlay = {
+        _fold(row.security_name_raw)
+        for row in holdings
+        if row.security_name_raw
+    }
+    for extra in _parse_ftd_overlay(
+        body,
+        fund_code=code,
+        report_period=report_period,
+        report_date=report_date,
+        fund_total_value=fund_total,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    ):
+        if _fold(extra.security_name_raw) in seen_overlay:
+            continue
+        holdings.append(extra)
     if not holdings:
         raise KapPdrError(f"PDR produced no holdings for {code}")
     weights = reconcile_pdr_weights(holdings)

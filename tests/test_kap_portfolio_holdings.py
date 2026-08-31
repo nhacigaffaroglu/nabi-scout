@@ -336,6 +336,48 @@ class KapPortfolioHoldingsTests(unittest.TestCase):
         self.assertEqual(zpe.weights.reported_weight_sum, 100.0)
         self.assertAlmostEqual(iat.weights.reported_weight_sum, 99.99, places=2)
 
+    def test_wrapped_pdr_layout_no_forced_reconciliation(self) -> None:
+        from services.official_kap_pdr import is_valid_isin
+
+        self.assertTrue(is_valid_isin("TRXDRP012213"))
+        self.assertFalse(is_valid_isin("TOPLAMTOPLAM"))
+        wrapped = """
+III-FON PORTFÖY DEĞERİ TABLOSU
+HİSSE SENETLERİ
+ALTIN                  TL     HAZİNE                        TRXDRP012213 26.000,00 1.769.040,00 50,98 4,37 5,04
+ALTIN                  TL     HAZİNE                        TRXDRP012213 25.000,00 1.701.000,00 49,02 4,20 4,84
+  GRUP TOPLAMI 100,00 8,57 9,88
+KİRA SERTİFİKALARI
+TRDZKBV82629           TL       ZKB      19/08/26    16 TRDZKBV82629 1.000.000,00 1.181.586,29 4,57 2,92 3,36
+                              VARLIK                        TRDZKBV82629
+                             KİRALAMA
+                                A.Ş.
+TRD270127T13          AU1     HAZİNE     27/01/27    177 TRD270127T13 18.503.052,67 71,53 45,70 52,68
+TRD180827T17          AU1     HAZİNE     18/08/27    380 TRD180827T17 6.183.634,50 23,90 15,28 17,61
+KATILIM HESABI
+MİSYON YATIRIM         TL                03/08/26     0 1.143.705,00 100,00 2,82 3,26
+BANKASI A.Ş.
+Borsa Y.Fonu Türk
+GLDTR                TL     QNB 2.484.000,00 24,84 6,14 7,07
+GLDTR                TL     QNB 3.622.500,00 36,23 8,95 10,31
+GMSTR                TL     QNB 852.800,00 8,53 2,11 2,43
+PRR-INVEO            TL    GEDİK 3.040.229,45 30,40 7,51 8,66
+IV-FON TOPLAM DEĞERİ TABLOSU
+FON TOPLAM DEĞERİ 35.122.410,69 100,00 %
+B-)HAZIR DEĞERLER 3.548,03 0,01 %
+C-)ALACAKLAR 37.868,72 0,11 %
+E-)BORÇLAR -5.400.553,97 -15,38 %
+"""
+        file = parse_kap_pdr_text(wrapped, fund_code="BAI", report_period="2026-07")
+        self.assertFalse(file.weights.renormalized)
+        self.assertTrue(file.weights.weight_reconciled)
+        self.assertAlmostEqual(file.weights.reported_weight_sum, 100.0, places=2)
+        self.assertTrue(any(row.official_code == "GLDTR" for row in file.holdings))
+        self.assertTrue(any((row.portfolio_weight or 0) < 0 for row in file.holdings))
+        ais = load_captured_pdr_holdings("AIS")
+        self.assertEqual(len(ais.holdings), 120)
+        self.assertTrue(ais.weights.weight_reconciled)
+
 
 if __name__ == "__main__":
     unittest.main()

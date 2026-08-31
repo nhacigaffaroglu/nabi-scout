@@ -54,7 +54,8 @@ def _sentences(text: str) -> tuple[str, ...]:
 def excerpts_for_tokens(text: str, tokens: Sequence[str], *, limit: int = 8) -> tuple[str, ...]:
     folded_tokens = tuple(_fold(token) for token in tokens)
     found: list[str] = []
-    for sentence in _sentences(text):
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    for sentence in _sentences(compact):
         blob = _fold(sentence)
         if any(token in blob for token in folded_tokens):
             if sentence not in found:

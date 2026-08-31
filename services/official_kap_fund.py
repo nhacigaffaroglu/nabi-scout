@@ -73,7 +73,7 @@ def parse_kap_ozet_html(html: str) -> dict[str, str]:
 
 
 def parse_kap_ybf_text(text: str) -> dict[str, Any]:
-    body = str(text or "")
+    body = re.sub(r"\s+", " ", str(text or "")).strip()
     isin_match = re.search(r"ISIN\s+KODU:\s*([A-Z0-9]+)", body, flags=re.I)
     fee_match = re.search(
         r"Yönetim ücreti[^\n%]{0,80}.*?(\d+(?:[.,]\d+)?)\s*$",
@@ -112,7 +112,7 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
             re.search(r"en az %80.*BIST Katılım 100", body, flags=re.I | re.S)
         ),
         "min_80_kira_sertifikasi": bool(
-            re.search(r"en az %80.*kira sertifikalar", body, flags=re.I | re.S)
+            re.search(r"en az %80.{0,400}kira.{0,80}sertifikalar", body, flags=re.I | re.S)
         ),
         "precious_metals_mandate": bool(
             re.search(

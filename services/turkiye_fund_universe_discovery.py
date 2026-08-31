@@ -226,6 +226,7 @@ def select_representative_sample(
         DISCOVERY_SUKUK,
         DISCOVERY_PRECIOUS_METALS,
         DISCOVERY_REAL_ESTATE,
+        DISCOVERY_MULTI_ASSET,
         DISCOVERY_OTHER,
     ):
         taken = 0

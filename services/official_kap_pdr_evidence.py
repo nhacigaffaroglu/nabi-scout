@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from services.official_kap_pdr import (
+    KapPdrError,
     discover_latest_pdr,
     parse_kap_pdr_text,
     report_period_label,
@@ -90,5 +91,5 @@ def load_captured_pdr_holdings(fund_code: str, *, as_of=None):
 def try_load_captured_pdr_holdings(fund_code: str, *, as_of=None):
     try:
         return load_captured_pdr_holdings(fund_code, as_of=as_of)
-    except (FileNotFoundError, ValueError, OSError):
+    except (FileNotFoundError, ValueError, OSError, KapPdrError):
         return None

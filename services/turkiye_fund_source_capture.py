@@ -27,7 +27,7 @@ from services.official_kap_pdr import KAP_HOST
 from services.official_tefas import TEFAS_HOST, normalize_fund_code
 from services.official_turkiye_fund_evidence import EVIDENCE_DIR
 
-USER_AGENT = "NABI-Scout/FUND-5 (official TEFAS/KAP research; polite read-only)"
+USER_AGENT = "NABI-Scout/FUND-6 (official TEFAS/KAP research; polite read-only)"
 CACHE_DIR = Path(".cache/turkiye_fund_universe")
 KAP_PDR_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
 TEFAS_SNAPSHOT_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_SNAPSHOT}"
@@ -170,6 +170,7 @@ class OfficialCaptureSession:
     last_request_at: float = 0.0
     timeout_sec: int = REQUEST_TIMEOUT_SEC
     min_gap_sec: float = MIN_REQUEST_GAP_SEC
+    tefas_warmed: bool = False
 
     def _pace(self) -> None:
         if self.min_gap_sec <= 0:

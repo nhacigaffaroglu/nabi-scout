@@ -375,6 +375,16 @@ class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
         self.assertEqual(parsed["fund_code"], "BAI")
         self.assertEqual(parsed["ybf_file_oid"], "oid-ybf")
         self.assertTrue(parsed["resolved"])
+        nested = (
+            ozet
+            + '"children":"Fonun Bağlı Olduğu Şemsiye Fonun Türü"}],["$","div",null,{"children":["$","p",null,'
+            '{"className":"x","children":"Katılım Şemsiye Fonu"}]}'
+        )
+        nested_parsed = parse_kap_ozet_rsc(nested)
+        self.assertEqual(
+            nested_parsed["ozet_fields"]["Fonun Bağlı Olduğu Şemsiye Fonun Türü"],
+            "Katılım Şemsiye Fonu",
+        )
         bildirim = parse_kap_bildirim_rsc(
             '{"attachments":[{"objId":"4028328d9f52dddd019fd289d7530906","fileName":"BAI_2026.07.pdf","fileExtension":"pdf"}]}'
         )
@@ -434,8 +444,25 @@ class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
             "documents": {"BILGI_FORMU": {"file_oid": "oid"}},
             "kap_disclosure_index": 1,
             "production_persist": False,
+            "evidence_recovery_version": 8,
         }
         self.assertTrue(_pack_is_reusable(reusable, identity))
+        frozen = {
+            "fund_code": "AIS",
+            "identity_status": "RESOLVED",
+            "production_persist": False,
+            "evidence_recovery_version": 8,
+            "pilot_frozen": True,
+            "review_reasons": [],
+        }
+        ais = TurkiyeFundUniverseIdentity(
+            fund_code="AIS",
+            fund_name="AK PORTFÖY KISA VADELİ KİRA SERTİFİKALARI KATILIM FONU",
+            isin=None,
+            founder="AK PORTFÖY",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+        )
+        self.assertTrue(_pack_is_reusable(frozen, ais))
         failed = {**reusable, "review_reasons": ["SOURCE_ERROR"]}
         self.assertFalse(_pack_is_reusable(failed, identity))
 
@@ -513,6 +540,241 @@ class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
 
     def _scanner_result(self):
         return run_turkiye_fund_scanner(persist=False, sample_only=True)
+
+
+class TurkiyeFund6OfficialRecoveryTests(unittest.TestCase):
+    def test_kap_html_before_ocr(self) -> None:
+        from services.turkiye_fund_text_recovery import LAYER_NOTIFICATION_HTML, recover_official_document_text
+
+        ocr_calls = {"n": 0}
+
+        class _Session:
+            def http_get_text(self, url, **kwargs):
+                return (
+                    "<html><body>Bu fon, katılım fonu statüsündedir. "
+                    "Danışma Komitesi kararları bağlayıcıdır.</body></html>"
+                )
+
+            def kap_rsc(self, url):
+                return '{"attachments":[]}'
+
+            def http_get_bytes(self, *args, **kwargs):
+                raise AssertionError("file download should not run when HTML body exists")
+
+        recovered = recover_official_document_text(
+            _Session(),
+            file_oid="oid",
+            disclosure_index="1627340",
+            document_type="YBF",
+            ocr_fn=lambda _img: ocr_calls.__setitem__("n", ocr_calls["n"] + 1) or "x",
+        )
+        self.assertEqual(recovered["source_layer"], LAYER_NOTIFICATION_HTML)
+        self.assertTrue(recovered["text_available"])
+        self.assertEqual(ocr_calls["n"], 0)
+        self.assertEqual(recovered["notification_id"], "1627340")
+
+        title_only = recover_official_document_text(
+            type(
+                "S",
+                (),
+                {
+                    "http_get_text": lambda self, url, **k: (
+                        "<html><title>BV PORTFÖY ALTIN KATILIM FONU</title>"
+                        "<body>Yatırımcı Bilgi Formu Kira Sertifikaları Katılım Fonu</body></html>"
+                    ),
+                    "kap_rsc": lambda self, url: "{}",
+                    "http_get_bytes": lambda self, *a, **k: b"%PDF-1.4 empty",
+                },
+            )(),
+            file_oid="oid",
+            disclosure_index="1627340",
+            document_type="YBF",
+            ocr_fn=lambda _img: "should-not-count-title",
+            allow_ocr=False,
+        )
+        self.assertNotEqual(title_only.get("source_layer"), LAYER_NOTIFICATION_HTML)
+        self.assertFalse(title_only.get("text_available"))
+
+    def test_spaced_ybf_layout_still_extracts_mandate_facts(self) -> None:
+        from services.official_kap_fund import parse_kap_ybf_text
+        from services.turkiye_fund_evidence_extract import extract_mandate_excerpts
+
+        spaced = (
+            "Bu    fon,    katılım     fonu     statüsündedir. "
+            "Fon portföyünün              en              az              %80’i              "
+            "devamlı              olarak              yerli              kira              "
+            "olduğu günlerde saat 13:30 sertifikalarına (sukuk) yatırılacaktır."
+        )
+        facts = parse_kap_ybf_text(spaced)
+        self.assertTrue(facts["katilim_fonu_status"])
+        self.assertTrue(facts["min_80_kira_sertifikasi"])
+        excerpts = extract_mandate_excerpts(spaced)
+        self.assertTrue(any("katılım fonu statüsündedir" in item.casefold() for item in excerpts))
+
+    def test_image_only_pdf_ocr_last_resort(self) -> None:
+        from services.turkiye_fund_ocr import TEXT_ORIGIN_OCR, ocr_official_pdf
+        from services.turkiye_fund_text_recovery import LAYER_NOTIFICATION_HTML, recover_official_document_text
+        import services.turkiye_fund_ocr as ocr_mod
+        import services.turkiye_fund_text_recovery as recovery_mod
+
+        html_only = recover_official_document_text(
+            type("S", (), {
+                "http_get_text": lambda self, url, **k: "<html>Yatırımcı Bilgi Formu</html>",
+                "kap_rsc": lambda self, url: "{}",
+                "http_get_bytes": lambda self, *a, **k: b"%PDF-1.4 empty",
+            })(),
+            file_oid="oid",
+            disclosure_index="1",
+            document_type="YBF",
+            ocr_fn=lambda _img: "should-not-run-on-wrapper-html-if-file-fails",
+            allow_ocr=False,
+        )
+        self.assertNotEqual(html_only.get("source_layer"), LAYER_NOTIFICATION_HTML)
+
+        original = ocr_mod.extract_pdf_images
+        ocr_mod.extract_pdf_images = lambda payload, max_images=24: [b"fake-image"]
+        recovery_mod.ocr_official_pdf = ocr_official_pdf
+        try:
+            text, origin = ocr_official_pdf(b"%PDF", ocr_fn=lambda _img: "Danışma Kurulu icazet belgesi")
+        finally:
+            ocr_mod.extract_pdf_images = original
+        self.assertEqual(origin, TEXT_ORIGIN_OCR)
+        self.assertIn("Danışma Kurulu", text or "")
+
+    def test_document_version_not_mixed(self) -> None:
+        from services.turkiye_fund_text_recovery import recover_official_document_text
+
+        class _Session:
+            def http_get_text(self, url, **kwargs):
+                if "111" in url:
+                    return (
+                        "<html><body>Bu fon, katılım fonu statüsündedir v1. "
+                        "Portföy yönetiminde katılım prensiplerine uygunluk esastır.</body></html>"
+                    )
+                return (
+                    "<html><body>Bu fon, katılım fonu statüsündedir v2. "
+                    "Danışma Komitesi kararları bağlayıcıdır.</body></html>"
+                )
+
+            def kap_rsc(self, url):
+                return "{}"
+
+            def http_get_bytes(self, *args, **kwargs):
+                raise AssertionError("unused")
+
+        first = recover_official_document_text(
+            _Session(), file_oid="a", disclosure_index="111", document_type="YBF"
+        )
+        second = recover_official_document_text(
+            _Session(), file_oid="b", disclosure_index="222", document_type="IZAHNAME"
+        )
+        self.assertNotEqual(first["notification_id"], second["notification_id"])
+        self.assertNotEqual(first["text_hash"], second["text_hash"])
+        self.assertIn("v1", first["text"])
+        self.assertIn("v2", second["text"])
+
+    def test_official_tefas_periyod_contract_and_no_fabricated_history(self) -> None:
+        from services.turkiye_fund_tefas_history import (
+            HISTORY_SOURCE_UNAVAILABLE,
+            TEFAS_HISTORY_PERIOD_1Y,
+            capture_tefas_history,
+            normalize_tefas_history_rows,
+            tefas_history_payload,
+        )
+
+        payload = tefas_history_payload("BAI", periyod=TEFAS_HISTORY_PERIOD_1Y)
+        self.assertEqual(payload, {"fonKodu": "BAI", "dil": "TR", "periyod": 12})
+        self.assertNotIn("baslangicTarihi", payload)
+        rows = normalize_tefas_history_rows(
+            [
+                {"fonKodu": "BAI", "tarih": "2026-08-28", "fiyat": 1.0},
+                {"fonKodu": "BAI", "tarih": "2026-08-31", "fiyat": 1.01},
+            ],
+            fund_code="BAI",
+            source_as_of="2026-08-31",
+            capture_time="2026-08-31T00:00:00+00:00",
+        )
+        self.assertEqual([row["tarih"] for row in rows], ["2026-08-28", "2026-08-31"])
+        self.assertNotIn("2026-08-29", [row["tarih"] for row in rows])
+        self.assertNotIn("2026-08-30", [row["tarih"] for row in rows])
+
+        class _Session:
+            stats = None
+            tefas_warmed = False
+            posts = []
+
+            def http_get_text(self, url, **kwargs):
+                self.tefas_warmed = True
+                return "<html>tefas</html>"
+
+            def http_json(self, url, payload, **kwargs):
+                self.posts.append((url, dict(payload), dict(kwargs)))
+                return {"errorMessage": "Sistem Hatası!!", "resultList": None}
+
+        failed = capture_tefas_history(_Session(), "ZZZ", force=True)
+        self.assertFalse(failed["available"])
+        self.assertTrue(failed["error"])
+        self.assertEqual(failed["rows"], [])
+
+    def test_incremental_history_cache(self) -> None:
+        from services.turkiye_fund_source_capture import load_or_store
+        from services.turkiye_fund_tefas_history import rows_content_identity
+
+        rows = [{"fonKodu": "QQQ", "tarih": "2026-08-31", "fiyat": 1.0, "source": "TEFAS"}]
+        digest = rows_content_identity(rows)
+        unique = f"QQQ-unit-test-cache-{uuid.uuid4()}"
+        first, hit1 = load_or_store(
+            kind="tefas_prices_period",
+            key=unique,
+            fetcher=lambda: {"available": True, "rows": rows, "latest_date": "2026-08-31", "content_identity": digest},
+        )
+        second, hit2 = load_or_store(
+            kind="tefas_prices_period",
+            key=unique,
+            fetcher=lambda: {"available": True, "rows": [], "latest_date": "2099-01-01"},
+        )
+        self.assertFalse(hit1)
+        self.assertTrue(hit2)
+        self.assertEqual(first["latest_date"], second["latest_date"])
+
+    def test_no_title_only_uygun_and_participation_freeze(self) -> None:
+        name_only = evaluate_turkiye_fund_participation(
+            "BAI",
+            name_only=True,
+            official_name="BV PORTFÖY ALTIN KATILIM FONU",
+        )
+        self.assertEqual(name_only.participation_status, PARTICIPATION_STATUS_KONTROL_ET)
+        by_code = {row.fund_code: row for row in run_turkiye_fund_scanner(persist=False, sample_only=True).rows}
+        for code, (score, state) in FROZEN.items():
+            self.assertEqual(by_code[code].fi_score, score)
+            self.assertEqual(by_code[code].fi_state, state)
+
+    def test_zero_eight_e_new_money_paid_and_persist(self) -> None:
+        result = run_turkiye_fund_scanner(persist=False, sample_only=False, evidence_packs={})
+        self.assertEqual(result.eight_e_calls, 0)
+        self.assertEqual(result.new_money_calls, 0)
+        self.assertEqual(result.trades, 0)
+        self.assertEqual(result.portfolio_writes, 0)
+        self.assertEqual(result.production_writes, ())
+        with self.assertRaises(ValueError):
+            run_turkiye_fund_scanner(persist=True)
+        capture = Path("services/turkiye_fund_broad_capture.py").read_text(encoding="utf-8")
+        history = Path("services/turkiye_fund_tefas_history.py").read_text(encoding="utf-8")
+        recovery = Path("services/turkiye_fund_text_recovery.py").read_text(encoding="utf-8")
+        blob = capture + history + recovery
+        self.assertNotIn("allocate_new_money", blob)
+        self.assertNotIn("evaluate_official_fund_decision", blob)
+        self.assertNotIn("financialmodelingprep", blob)
+        self.assertIn("periyod", history)
+        self.assertNotIn("baslangicTarihi", history)
+        self.assertNotIn("baslangicTarihi", capture)
+
+    def test_representative_sample_includes_multi_asset(self) -> None:
+        from services.turkiye_fund_universe_discovery import DISCOVERY_MULTI_ASSET, select_representative_sample
+
+        source = Path("services/turkiye_fund_universe_discovery.py").read_text(encoding="utf-8")
+        self.assertIn("DISCOVERY_MULTI_ASSET", source)
+        self.assertIn(DISCOVERY_MULTI_ASSET, source)
 
 
 if __name__ == "__main__":

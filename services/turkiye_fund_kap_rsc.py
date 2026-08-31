@@ -33,21 +33,15 @@ _ITEM = re.compile(
     r'"itemName":"(?P<itemName>[^"]*)","itemKey":"(?P<itemKey>[^"]*)","value":"(?P<value>[^"]*)"'
 )
 _OZET_VALUE = re.compile(
-    r'"kpy81_acc1_(?P<field>kurucu_unvan|fon_sem_unvan|fon_sem_tur|fon_sure)[^"]*".{0,400}?'
-    r'"children":"(?P<value>[^"]+)"',
+    r'"children":"(?P<label>Kurucunun Ünvanı|Fonun Süresi|'
+    r'Fonun Bağlı Olduğu Şemsiye Fonun Ünvanı|Fonun Bağlı Olduğu Şemsiye Fonun Türü)"'
+    r'.{0,800}?"children":"(?P<value>[^"]{2,160})"',
     flags=re.S,
 )
 
 DOC_KIND_YBF = "BILGI_FORMU"
 DOC_KIND_IZAHNAME = "IZAHNAME"
 DOC_KIND_ICTUZUK = "ICTUZUK"
-
-_OZET_FIELD_MAP = {
-    "kurucu_unvan": OZET_LABEL_FOUNDER,
-    "fon_sem_unvan": OZET_LABEL_UMBRELLA_NAME,
-    "fon_sem_tur": OZET_LABEL_UMBRELLA_TYPE,
-    "fon_sure": "Fonun Süresi",
-}
 
 
 def parse_kap_ozet_rsc(text: str) -> dict[str, Any]:
@@ -65,9 +59,9 @@ def parse_kap_ozet_rsc(text: str) -> dict[str, Any]:
         }
     ozet_fields: dict[str, str] = {}
     for match in _OZET_VALUE.finditer(body):
-        label = _OZET_FIELD_MAP.get(match.group("field"))
+        label = str(match.group("label") or "").strip()
         value = str(match.group("value") or "").strip()
-        if label and value and label not in ozet_fields:
+        if label and value and value != label and label not in ozet_fields:
             ozet_fields[label] = value
     if info.get("title") and OZET_LABEL_FOUNDER not in ozet_fields:
         ozet_fields[OZET_LABEL_FOUNDER] = info["title"]
