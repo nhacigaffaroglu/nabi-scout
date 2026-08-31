@@ -24,6 +24,7 @@ class ScheduledJobInventoryTests(unittest.TestCase):
             "daily_wealth_snapshot.yml": 'cron: "30 6 * * *"',
             "daily_fund_holdings_refresh.yml": 'cron: "30 5 * * *"',
             "daily_bist_refresh.yml": 'cron: "30 15 * * 1-5"',
+            "daily_turkiye_fund_refresh.yml": 'cron: "0 16 * * 1-5"',
         }
         for name, cron in expected.items():
             text = (WORKFLOWS / name).read_text(encoding="utf-8")
@@ -44,6 +45,15 @@ class ScheduledJobInventoryTests(unittest.TestCase):
         self.assertIn("run_bist_refresh.py", bist)
         self.assertIn('cron: "30 15 * * 1-5"', bist)
         self.assertNotIn("FMP_API_KEY", bist)
+        turkiye = (WORKFLOWS / "daily_turkiye_fund_refresh.yml").read_text(encoding="utf-8")
+        self.assertIn("run_turkiye_fund_refresh.py", turkiye)
+        self.assertIn("--live", turkiye)
+        self.assertIn("--persist-fund-intelligence", turkiye)
+        self.assertIn("--persist-participation", turkiye)
+        self.assertNotIn("run_bist_refresh.py", turkiye)
+        self.assertNotIn("FMP_API_KEY", turkiye)
+        self.assertNotIn("post_transaction", turkiye)
+        self.assertNotIn("allocate_new_money", turkiye)
 
     def test_kafif_compare_key_uses_notification_id(self) -> None:
         self.assertIn("source_notification_id", WATCHER_COMPARE_FIELDS)

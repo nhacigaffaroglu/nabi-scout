@@ -52,6 +52,26 @@ class WealthAssetClassificationTests(unittest.TestCase):
                 self.assertEqual(market, "US")
                 self.assertEqual(status, "RESOLVED")
 
+    def test_turkish_funds_resolve_as_fund_tr_not_cash(self) -> None:
+        from services.wealth_asset_classification import display_name_for
+        from services.wealth_contract import ASSET_CLASS_CASH, ASSET_CLASS_FUND
+
+        for symbol in ("AIS", "ZPE", "IAT"):
+            asset_class, market, kind, status = resolve_asset_metadata(symbol, currency="TRY")
+            with self.subTest(symbol=symbol):
+                self.assertEqual(asset_class, ASSET_CLASS_FUND)
+                self.assertEqual(market, "TR")
+                self.assertEqual(kind, "fund")
+                self.assertEqual(status, "RESOLVED")
+                self.assertNotEqual(asset_class, ASSET_CLASS_CASH)
+                self.assertNotEqual(kind, "cash")
+                self.assertTrue(display_name_for(symbol))
+
+        spus, spus_market, spus_kind, _ = resolve_asset_metadata("SPUS", currency="USD")
+        self.assertEqual(spus, ASSET_CLASS_ETF)
+        self.assertEqual(spus_market, "US")
+        self.assertEqual(spus_kind, "etf")
+
 
 class CandidateOnboardingSemanticsTests(unittest.TestCase):
     def test_canonical_selection_prefers_priced_row(self) -> None:

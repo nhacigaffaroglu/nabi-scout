@@ -4,6 +4,9 @@
 Default is dry-run with zero writes. Production writes require explicit
 --live plus --persist-participation and/or --persist-fund-intelligence.
 Credentials never enable writes.
+
+Scheduled live job (GitHub Actions): weekdays 19:00 Europe/Istanbul
+(UTC+3, no DST) == 16:00 UTC. After BIST 18:30 Istanbul. Pilot AIS,ZPE,IAT.
 """
 
 from __future__ import annotations

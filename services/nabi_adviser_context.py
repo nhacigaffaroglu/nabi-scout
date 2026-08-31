@@ -922,6 +922,55 @@ def _compose_comparison(
     return answer, public_rows, first_decision, first_research, first_fit, first_status
 
 
+def _turkiye_fund_adviser_overlay(
+    parsed: ParsedAdviserQuestion,
+    *,
+    portfolio_view: Any,
+    client: Any,
+    turkiye_fund_contexts: Sequence[Any],
+    new_money: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    from services.fund_product_contract import PILOT_TEFAS_FUND_CODES
+    from services.turkiye_fund_portfolio_integration import (
+        format_turkiye_fund_adviser_narrative,
+        load_turkiye_fund_portfolio_contexts_from_client,
+        turkiye_fund_adviser_facts,
+    )
+
+    symbol = normalize_symbol(parsed.focus_symbol)
+    if not symbol or symbol not in PILOT_TEFAS_FUND_CODES:
+        return None, None
+    context = None
+    for row in turkiye_fund_contexts or ():
+        if getattr(row, "fund_code", None) == symbol:
+            context = row
+            break
+    if context is None and client is not None:
+        loaded = load_turkiye_fund_portfolio_contexts_from_client(
+            client,
+            portfolio_view=portfolio_view,
+            fund_codes=(symbol,),
+        )
+        context = loaded[0] if loaded else None
+    if context is None:
+        return None, None
+    allocated = 0
+    for rec in new_money.get("recommendations") or ():
+        if isinstance(rec, Mapping):
+            rec_symbol = rec.get("symbol")
+            rec_amount = rec.get("allocated_amount")
+        else:
+            rec_symbol = getattr(rec, "symbol", None)
+            rec_amount = getattr(rec, "allocated_amount", 0)
+        if normalize_symbol(rec_symbol) == symbol:
+            allocated = rec_amount or 0
+            break
+    return (
+        format_turkiye_fund_adviser_narrative(context, allocation_try=allocated),
+        turkiye_fund_adviser_facts(context, allocation_try=allocated),
+    )
+
+
 def _compose_canonical_answer(
     parsed: ParsedAdviserQuestion,
     *,
@@ -938,6 +987,7 @@ def _compose_canonical_answer(
     prior: Mapping[str, Any],
     security_decisions: Sequence[PortfolioSecurityDecision] = (),
     blockers: Sequence[str] = (),
+    turkiye_fund_answer: Optional[str] = None,
 ) -> str:
     intent = parsed.intent
     by_8e = _index_security_decisions(security_decisions)
@@ -1008,6 +1058,8 @@ def _compose_canonical_answer(
         INTENT_SYMBOL_EXPLAIN,
         INTENT_RESEARCH_EXPLAIN,
     }:
+        if turkiye_fund_answer:
+            return turkiye_fund_answer
         symbol = parsed.focus_symbol or (focus.symbol if focus is not None else None)
         if symbol is None and focus_8e is None:
             return "Sembol için kanonik karar yok; " + INSUFFICIENT_DATA + "."
@@ -1118,6 +1170,7 @@ def build_nabi_adviser_context(
     security_decisions: Sequence[PortfolioSecurityDecision] = (),
     portfolio_security_client: Any = None,
     user_id: Optional[str] = None,
+    turkiye_fund_contexts: Sequence[Any] = (),
 ) -> NabiAdviserContext:
     prior = dict(conversation_state or {})
     parsed = parse_adviser_question(question, prior)
@@ -1308,6 +1361,13 @@ def build_nabi_adviser_context(
         if parsed.focus_symbol
         else None
     )
+    turkiye_answer, turkiye_facts = _turkiye_fund_adviser_overlay(
+        parsed,
+        portfolio_view=portfolio_view,
+        client=portfolio_security_client,
+        turkiye_fund_contexts=turkiye_fund_contexts,
+        new_money=new_money,
+    )
     canonical = _compose_canonical_answer(
         parsed,
         rec=rec,
@@ -1327,6 +1387,7 @@ def build_nabi_adviser_context(
         prior=prior,
         security_decisions=resolved_decisions,
         blockers=blockers,
+        turkiye_fund_answer=turkiye_answer,
     )
     limitations = list(rec.limitations)
     limitations.extend(blockers)
@@ -1345,6 +1406,7 @@ def build_nabi_adviser_context(
         wealth_context={
             "dashboard_primary": view.dashboard_primary,
             "wealth_action": view.wealth_action,
+            **({"turkiye_fund": turkiye_facts} if turkiye_facts else {}),
         },
         goal_context=goal,
         new_money_context=new_money,

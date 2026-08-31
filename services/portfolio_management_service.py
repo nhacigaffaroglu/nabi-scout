@@ -22,6 +22,7 @@ from services.wealth_contract import (
     compute_buy_cost_basis,
     normalize_symbol,
 )
+from services.fund_product_contract import PILOT_TEFAS_FUND_CODES
 from services.wealth_asset_classification import resolve_asset_metadata
 from services.wealth_core_service import WealthCoreService
 
@@ -137,6 +138,14 @@ class PortfolioManagementService:
         normalized_class = str(asset_class or ASSET_CLASS_EQUITY).strip().lower()
         if normalized_class not in ASSET_CLASS_OPTIONS:
             raise WealthValidationError(f"Desteklenmeyen varlık sınıfı: {asset_class}")
+
+        if sym in PILOT_TEFAS_FUND_CODES:
+            if normalized_class == ASSET_CLASS_CASH:
+                raise WealthValidationError(
+                    "Türk fonları nakit değil. AIS/ZPE/IAT FUND/TR olarak kaydedilir."
+                )
+            normalized_class = ASSET_CLASS_FUND
+            currency = "TRY"
 
         if normalized_class == ASSET_CLASS_CASH:
             asset = self.wealth.ensure_cash_asset(currency.strip().upper())

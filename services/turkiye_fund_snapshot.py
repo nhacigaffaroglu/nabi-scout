@@ -235,10 +235,20 @@ def fund_intelligence_snapshot(
     exposure: Optional[OfficialFundEconomicClassification] = None,
     research_allowed: bool = False,
     participation_status: Optional[str] = None,
+    unit_price: Optional[float] = None,
+    unit_price_as_of: Optional[str] = None,
+    unit_price_currency: str = "TRY",
 ) -> TurkiyeFundLayerSnapshot:
     stamp = _now_iso(calculated_at)
     generic = view.generic_intelligence()
     scores = {row.name: row.score for row in view.dimensions if row.score is not None}
+    try:
+        canonical_price = float(unit_price) if unit_price is not None else None
+    except (TypeError, ValueError):
+        canonical_price = None
+    if canonical_price is not None and (canonical_price <= 0 or canonical_price != canonical_price):
+        canonical_price = None
+    price_as_of = str(unit_price_as_of or source_as_of.get("tefas_price") or "").strip() or None
     semantic = {
         "symbol": view.symbol,
         "as_of": view.as_of,
@@ -251,6 +261,8 @@ def fund_intelligence_snapshot(
         "confidence": view.confidence,
         "participation_status": participation_status,
         "research_allowed": research_allowed,
+        "unit_price": canonical_price,
+        "unit_price_as_of": price_as_of,
     }
     exposure_payload = None
     if exposure is not None:
@@ -280,6 +292,10 @@ def fund_intelligence_snapshot(
             "instrument": TURKIYE_FUND_8E_INSTRUMENT,
             "market": TURKIYE_FUND_8E_MARKET,
             "economic_exposure": exposure_payload,
+            "unit_price": canonical_price,
+            "unit_price_currency": unit_price_currency if canonical_price is not None else None,
+            "unit_price_as_of": price_as_of,
+            "unit_price_source": "TEFAS" if canonical_price is not None else None,
         },
         "strengths": [],
         "weaknesses": [],

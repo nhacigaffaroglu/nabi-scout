@@ -1,0 +1,70 @@
+name: Daily Türkiye Fund Canonical Refresh
+
+on:
+  schedule:
+    # 19:00 Europe/Istanbul (UTC+3, no DST) == 16:00 UTC. Weekdays only.
+    # After BIST canonical refresh at 18:30 Istanbul (15:30 UTC).
+    - cron: "0 16 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-daily-turkiye-fund-refresh
+  cancel-in-progress: false
+
+jobs:
+  turkiye-fund-canonical-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore official source cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/turkiye_fund_refresh
+          key: turkiye-fund-refresh-${{ github.ref_name }}
+          restore-keys: |
+            turkiye-fund-refresh-
+
+      - name: Validate required secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL"; exit 1; }
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY service role)"
+            exit 1
+          fi
+
+      - name: Run Türkiye fund canonical refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -eo pipefail
+          python scripts/run_turkiye_fund_refresh.py \
+            --live \
+            --persist-fund-intelligence \
+            --persist-participation
+        # GitHub cron is UTC 16:00. Business intent is 19:00 Istanbul.
+        # Official TEFAS + KAP captured evidence only. Pilot AIS,ZPE,IAT.
+        # Default CLI remains dry-run; this scheduled job passes explicit live+persist flags.
+        # Does not create buys/sells or persist New Money / 8E decisions.
+        # Does not run BIST or US fund-holdings refresh.

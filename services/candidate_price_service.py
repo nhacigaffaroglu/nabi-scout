@@ -11,6 +11,10 @@ from services.candidate_identity import (
     select_persisted_price_candidate,
 )
 from services.portfolio_intelligence_contract import PriceQuote
+from services.turkiye_fund_price_reader import (
+    is_turkiye_fund_holding_identity,
+    quote_turkiye_fund_unit_price,
+)
 from services.wealth_price_service import is_cash_asset, normalize_currency
 
 __all__ = (
@@ -42,7 +46,7 @@ class CandidatePriceService:
     ) -> None:
         seen: set[str] = set()
         for symbol, asset_class, currency in assets:
-            if is_cash_asset(symbol, asset_class):
+            if is_cash_asset(symbol, asset_class) and not is_turkiye_fund_holding_identity(symbol):
                 continue
             sym = str(symbol or "").strip().upper()
             if not sym or sym in seen:
@@ -58,6 +62,16 @@ class CandidatePriceService:
         *,
         market: Optional[str] = None,
     ) -> PriceQuote:
+        turkish = quote_turkiye_fund_unit_price(
+            symbol,
+            client=self._client,
+            currency=currency,
+        )
+        if turkish is not None:
+            canonical = str(symbol or "").strip().upper()
+            self._cache[canonical] = turkish
+            return turkish
+
         if is_cash_asset(symbol, asset_class):
             asset_currency = normalize_currency(currency)
             return PriceQuote(

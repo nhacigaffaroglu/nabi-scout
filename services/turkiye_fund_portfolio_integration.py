@@ -58,6 +58,7 @@ class TurkiyeFundPortfolioContext:
     instrument: str
     market: str
     is_holding: bool
+    quantity: Optional[float]
     market_value: Optional[float]
     portfolio_weight: Optional[float]
     participation_status: str
@@ -123,21 +124,24 @@ def apply_portfolio_intelligence_fund_handoff(
 def holding_facts(
     portfolio_view: Any,
     fund_code: str,
-) -> tuple[bool, Optional[float], Optional[float]]:
+) -> tuple[bool, Optional[float], Optional[float], Optional[float]]:
     if portfolio_view is None:
-        return False, None, None
+        return False, None, None, None
     qty, value, weight, _market = aggregate_holding(
         iter_all_position_rows(portfolio_view),
         fund_code,
     )
     is_holding = qty is not None and float(qty) > 0
-    return is_holding, value, weight
+    if not is_holding:
+        return False, None, None, None
+    return True, qty, value, weight
 
 
 def context_from_canonical(
     read: TurkiyeFundCanonicalRead,
     *,
     is_holding: bool = False,
+    quantity: Optional[float] = None,
     market_value: Optional[float] = None,
     portfolio_weight: Optional[float] = None,
 ) -> TurkiyeFundPortfolioContext:
@@ -147,8 +151,9 @@ def context_from_canonical(
         instrument=TURKIYE_FUND_8E_INSTRUMENT,
         market=TURKIYE_FUND_8E_MARKET,
         is_holding=is_holding,
-        market_value=market_value,
-        portfolio_weight=portfolio_weight,
+        quantity=quantity if is_holding else None,
+        market_value=market_value if is_holding else None,
+        portfolio_weight=portfolio_weight if is_holding else None,
         participation_status=read.participation.status,
         research_allowed=bool(read.participation.research_allowed),
         fi_score=read.fund_intelligence.score,
@@ -170,6 +175,7 @@ def unavailable_context(fund_code: str, reason: str) -> TurkiyeFundPortfolioCont
         instrument=TURKIYE_FUND_8E_INSTRUMENT,
         market=TURKIYE_FUND_8E_MARKET,
         is_holding=False,
+        quantity=None,
         market_value=None,
         portfolio_weight=None,
         participation_status="",
@@ -194,7 +200,7 @@ def load_turkiye_fund_portfolio_contexts(
 ) -> tuple[TurkiyeFundPortfolioContext, ...]:
     rows: list[TurkiyeFundPortfolioContext] = []
     for code in fund_codes:
-        held, value, weight = holding_facts(portfolio_view, code)
+        held, qty, value, weight = holding_facts(portfolio_view, code)
         try:
             read = read_turkiye_fund_canonical(
                 participation_repo=participation_repo,
@@ -210,6 +216,7 @@ def load_turkiye_fund_portfolio_contexts(
             context_from_canonical(
                 read,
                 is_holding=held,
+                quantity=qty,
                 market_value=value,
                 portfolio_weight=weight,
             )
@@ -225,7 +232,7 @@ def load_turkiye_fund_portfolio_contexts_from_client(
 ) -> tuple[TurkiyeFundPortfolioContext, ...]:
     rows: list[TurkiyeFundPortfolioContext] = []
     for code in fund_codes:
-        held, value, weight = holding_facts(portfolio_view, code)
+        held, qty, value, weight = holding_facts(portfolio_view, code)
         try:
             read = load_turkiye_fund_canonical_from_client(
                 client,
@@ -240,6 +247,7 @@ def load_turkiye_fund_portfolio_contexts_from_client(
             context_from_canonical(
                 read,
                 is_holding=held,
+                quantity=qty,
                 market_value=value,
                 portfolio_weight=weight,
             )
@@ -381,6 +389,70 @@ def format_turkiye_fund_explanation(
         allocation_try=allocated,
         block_reason=block,
         summary_tr=summary,
+    )
+
+
+def turkiye_fund_adviser_facts(
+    context: TurkiyeFundPortfolioContext,
+    *,
+    allocation_try: Decimal | int | str = 0,
+) -> dict[str, Any]:
+    allocated = Decimal(str(allocation_try or 0))
+    if context.unavailable_reason:
+        block = context.unavailable_reason
+    elif not context.increase_allowed:
+        block = REASON_EXPOSURE_INCREASE_NOT_ALLOWED
+    else:
+        block = ""
+    return {
+        "fund_identity": {
+            "fund_code": context.fund_code,
+            "instrument": context.instrument,
+            "market": context.market,
+        },
+        "holding_state": "held" if context.is_holding else "not_held",
+        "quantity": context.quantity,
+        "market_value_try": context.market_value,
+        "portfolio_weight": context.portfolio_weight,
+        "participation_status": context.participation_status,
+        "fi_score": context.fi_score,
+        "fi_state": context.fi_state,
+        "economic_exposure": context.primary_exposure,
+        "eight_e": context.eight_e,
+        "increase_allowed": context.increase_allowed,
+        "new_money_allocation_try": float(allocated),
+        "new_money_block_reason": block,
+    }
+
+
+def format_turkiye_fund_adviser_narrative(
+    context: TurkiyeFundPortfolioContext,
+    *,
+    allocation_try: Decimal | int | str = 0,
+) -> str:
+    if context.unavailable_reason:
+        return (
+            f"{context.fund_code} için kanonik snapshot yok ({context.unavailable_reason}). "
+            "mevcut durumda yeni para tahsisi yapılmıyor."
+        )
+    status = str(context.participation_status or "").strip()
+    if status.lower() == "uygun":
+        participation_phrase = "uygun"
+    else:
+        participation_phrase = status.lower() or "—"
+    score_txt = f"{float(context.fi_score):.2f}" if context.fi_score is not None else "—"
+    increase = "true" if context.increase_allowed else "false"
+    if context.increase_allowed:
+        money = "yeni para tahsisi değerlendirilebilir."
+    else:
+        money = "mevcut durumda yeni para tahsisi yapılmıyor."
+    allocated = Decimal(str(allocation_try or 0))
+    if not context.increase_allowed and allocated == 0:
+        money = "mevcut durumda yeni para tahsisi yapılmıyor."
+    return (
+        f"{context.fund_code} katılım açısından {participation_phrase}. "
+        f"Fund Intelligence {score_txt} {context.fi_state}. "
+        f"Portföy kararı {context.eight_e} ve increase_allowed={increase} olduğu için {money}"
     )
 
 

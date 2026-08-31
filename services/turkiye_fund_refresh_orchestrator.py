@@ -194,6 +194,8 @@ def compute_turkiye_fund_snapshots(
             target_table="security_intelligence_snapshots",
         )
     else:
+        facts = _safe_call(lambda: resolved.facts(fund_code))
+        unit_price = getattr(facts, "nav", None) if facts is not None else None
         fi_row = fund_intelligence_snapshot(
             view,
             source_as_of=sources,
@@ -201,6 +203,9 @@ def compute_turkiye_fund_snapshots(
             exposure=exposure,
             research_allowed=bool(getattr(verdict, "research_allowed", False)),
             participation_status=getattr(verdict, "participation_status", None),
+            unit_price=unit_price,
+            unit_price_as_of=sources.get("tefas_price"),
+            unit_price_currency="TRY",
         )
 
     decision = _safe_call(lambda: evaluate_official_fund_decision(fund_code, provider=resolved))

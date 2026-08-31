@@ -70,12 +70,14 @@ class TurkiyeFundLayerCounts:
     errors: int = 0
 
     def to_dict(self) -> dict[str, Any]:
+        skipped = self.no_change + self.blocked
         return {
             "processed": self.processed,
             "published": self.published,
             "would_publish": self.would_publish,
             "no_change": self.no_change,
             "blocked": self.blocked,
+            "skipped": skipped,
             "errors": self.errors,
         }
 
@@ -211,7 +213,9 @@ class TurkiyeFundRefreshRun:
             "cli_live": self.cli_live,
             "symbols": list(self.symbols),
             "fund_codes": list(self.symbols),
+            "funds": [row.to_dict() for row in self.funds],
             "changes_detected": self.changes_detected,
+            "source_changes_detected": self.changes_detected,
             "processed": self.processed,
             "published": self.published,
             "would_publish": self.would_publish,
@@ -219,7 +223,7 @@ class TurkiyeFundRefreshRun:
             "blocked": self.blocked,
             "errors": list(self.errors),
             "writes": self.writes,
+            "write_count": self.writes,
             "participation": self.participation.to_dict(),
             "fund_intelligence": self.fund_intelligence.to_dict(),
-            "funds": [row.to_dict() for row in self.funds],
         }

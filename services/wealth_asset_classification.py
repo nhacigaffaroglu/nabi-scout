@@ -14,8 +14,14 @@ from services.wealth_contract import (
 KNOWN_ETF_SYMBOLS = frozenset({"SPUS", "SPSK", "HLAL", "SPRE", "SPWO"})
 KNOWN_EQUITY_US = frozenset({"UPS", "AVGO", "CRM", "TSLA", "AAPL", "MRVL", "VISN"})
 KNOWN_EQUITY_TR = BIST_PORTFOLIO_SYMBOLS
+KNOWN_TURKIYE_FUND_SYMBOLS = frozenset({"AIS", "ZPE", "IAT"})
 CASH_SYMBOL = "CASH"
 TF_PARTICIPATION_SYMBOL = "TF_KATILIM"
+_TURKIYE_FUND_DISPLAY_NAMES = {
+    "AIS": "Ak Portföy Para Piyasası Katılım Fonu",
+    "ZPE": "Ziraat Portföy Katılım Hisse Senedi Fonu (Hisse Senedi Yoğun Fon)",
+    "IAT": "İş Portföy Kira Sertifikaları Katılım (TL) Fonu",
+}
 
 
 def resolve_asset_metadata(symbol: str, *, currency: str) -> Tuple[str, str, str, str]:
@@ -28,6 +34,9 @@ def resolve_asset_metadata(symbol: str, *, currency: str) -> Tuple[str, str, str
 
     if sym == TF_PARTICIPATION_SYMBOL:
         return ASSET_CLASS_OTHER, "TR", "deposit", "REQUIRES_CONFIRMATION"
+
+    if sym in KNOWN_TURKIYE_FUND_SYMBOLS:
+        return ASSET_CLASS_FUND, "TR", "fund", "RESOLVED"
 
     if sym in KNOWN_ETF_SYMBOLS:
         return ASSET_CLASS_ETF, "US", "etf", "RESOLVED"
@@ -45,4 +54,6 @@ def display_name_for(symbol: str) -> Optional[str]:
     sym = str(symbol or "").strip().upper()
     if sym == TF_PARTICIPATION_SYMBOL:
         return "Türkiye Finans Katılım Hesabı"
+    if sym in _TURKIYE_FUND_DISPLAY_NAMES:
+        return _TURKIYE_FUND_DISPLAY_NAMES[sym]
     return None
