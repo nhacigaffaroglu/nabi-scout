@@ -118,11 +118,16 @@ class MemoryParticipationAssessmentRepository:
         return dict(stored)
 
     def get_latest(self, symbol: str) -> Optional[Dict[str, Any]]:
+        history = self.get_recent_history(symbol, limit=1)
+        return history[0] if history else None
+
+    def get_recent_history(self, symbol: str, *, limit: int = 10) -> List[Dict[str, Any]]:
         if self.unavailable:
             raise RuntimeError("database_unavailable")
         code = str(symbol or "").strip().upper()
-        matches = [row for row in self.rows if str(row.get("symbol") or "").upper() == code]
-        return dict(matches[-1]) if matches else None
+        matches = [dict(row) for row in self.rows if str(row.get("symbol") or "").upper() == code]
+        matches.reverse()
+        return matches[: max(1, int(limit))]
 
 
 @dataclass
@@ -156,6 +161,22 @@ class MemorySecurityIntelligenceSnapshotRepository:
                 return dict(payload)
         self.rows.append(dict(payload))
         return dict(payload)
+
+    def get_latest(self, symbol: str) -> Optional[Dict[str, Any]]:
+        history = self.get_recent_history(symbol, limit=1)
+        return history[0] if history else None
+
+    def get_recent_history(self, symbol: str, *, limit: int = 10) -> List[Dict[str, Any]]:
+        if self.unavailable:
+            raise RuntimeError("database_unavailable")
+        code = str(symbol or "").strip().upper()
+        matches = [dict(row) for row in self.rows if str(row.get("symbol") or "").upper() == code]
+
+        def _as_of(row: Dict[str, Any]) -> str:
+            return str(row.get("as_of") or row.get("as_of_key") or "")
+
+        matches.sort(key=_as_of, reverse=True)
+        return matches[: max(1, min(int(limit), 25))]
 
     def get_by_identity(
         self,
