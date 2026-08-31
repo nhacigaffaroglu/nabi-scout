@@ -362,8 +362,8 @@ class FundReportSemanticsTests(unittest.TestCase):
         with open("pages/9_Fund_Report.py", encoding="utf-8") as handle:
             source = handle.read()
         pre_view = source.split("view = build_fund_report_view")[0]
-        self.assertNotIn("if refresh_clicked:", pre_view)
-        after_refresh_click = source.split("if refresh_clicked:")[1]
+        self.assertNotIn("if refresh_clicked", pre_view)
+        after_refresh_click = source.split("if refresh_clicked and not turkiye_canonical:")[1]
         self.assertIn("_refresh_live_fund_analysis(requested_symbol)", after_refresh_click)
 
     def test_fund_report_metadata_refresh_button(self) -> None:

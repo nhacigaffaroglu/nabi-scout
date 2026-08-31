@@ -14,6 +14,12 @@ from services.fund_report_service import (
     FUND_REPORT_SESSION_SYMBOL,
     build_fund_report_view,
     resolve_requested_symbol,
+    turkiye_fund_report_canonical_from_read,
+)
+from services.turkiye_fund_snapshot_reader import (
+    SnapshotReadError,
+    is_turkiye_fund_production_identity,
+    load_turkiye_fund_canonical_from_client,
 )
 from services.manual_analysis_service import analyze_security, refresh_tracked_fund_metadata
 from services.scanner_v8_engine import ScannerV8Engine
@@ -125,6 +131,16 @@ had_tracked_context = bool(st.session_state.get("fund_report_had_tracked_context
 if tracked_row is not None:
     st.session_state["fund_report_had_tracked_context"] = True
 
+canonical = None
+canonical_unavailable_reason = None
+if is_turkiye_fund_production_identity(requested_symbol):
+    try:
+        canonical = turkiye_fund_report_canonical_from_read(
+            load_turkiye_fund_canonical_from_client(client, requested_symbol)
+        )
+    except SnapshotReadError as exc:
+        canonical_unavailable_reason = exc.reason
+
 view = build_fund_report_view(
     requested_symbol,
     tracked_row=tracked_row,
@@ -133,6 +149,8 @@ view = build_fund_report_view(
     analysis_kind=analysis_kind,
     had_tracked_context=had_tracked_context and tracked_row is None,
     candidate_row=candidate_row,
+    canonical=canonical,
+    canonical_unavailable_reason=canonical_unavailable_reason,
 )
 
 if not view.entry_allowed:
@@ -149,12 +167,17 @@ with header_right:
     if st.button("← Dashboard", key="fund_report_back_dashboard", use_container_width=True):
         _return_to_dashboard()
 
+turkiye_canonical = is_turkiye_fund_production_identity(requested_symbol)
 action_cols = st.columns([1, 1, 2])
 with action_cols[0]:
     refresh_clicked = st.button(
         "Canlı veriyi yenile",
         type="primary",
         key="fund_report_refresh_live",
+        disabled=turkiye_canonical,
+        help="Turkish funds use persisted snapshots. Live recompute is blocked."
+        if turkiye_canonical
+        else None,
     )
 with action_cols[1]:
     metadata_refresh_disabled = not (
@@ -171,7 +194,7 @@ with action_cols[1]:
         ),
     )
 
-if refresh_clicked:
+if refresh_clicked and not turkiye_canonical:
     analysis = _refresh_live_fund_analysis(requested_symbol)
     if analysis is not None:
         if analysis.analysis_kind != "fund" or analysis.fund_result is None:

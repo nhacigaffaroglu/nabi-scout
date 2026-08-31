@@ -27,6 +27,7 @@ from services.fund_product_contract import (
     LAYER_CASH_LIKE,
     METHODOLOGY_TURKIYE_FUND_PARTICIPATION,
     METHODOLOGY_TURKIYE_FUND_PARTICIPATION_VERSION,
+    PILOT_TEFAS_FUND_CODES,
 )
 from services.hybrid_exposure_allocation_policy import HybridPortfolioMode
 from services.participation_assessment_persistence_service import snapshot_from_row as participation_from_row
@@ -318,6 +319,49 @@ def read_turkiye_fund_canonical(
         participation=participation,
         fund_intelligence=fund_intelligence,
         decision=decision,
+    )
+
+
+def is_turkiye_fund_production_identity(
+    symbol: str,
+    *,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
+) -> bool:
+    """Route by accepted FUND/TR identity, not ticker heuristics."""
+    code = normalize_symbol(symbol)
+    if code not in PILOT_TEFAS_FUND_CODES:
+        return False
+    resolved_instrument = str(instrument or TURKIYE_FUND_8E_INSTRUMENT).strip().upper()
+    resolved_market = str(market or TURKIYE_FUND_8E_MARKET).strip().upper()
+    return resolved_instrument == TURKIYE_FUND_8E_INSTRUMENT and resolved_market == TURKIYE_FUND_8E_MARKET
+
+
+def load_turkiye_fund_canonical_from_client(
+    client: Any,
+    fund_code: str,
+    *,
+    is_holding: bool = False,
+    portfolio_weight: Optional[float] = None,
+) -> TurkiyeFundCanonicalRead:
+    """Production consumer load. Read-only repos. No TEFAS/KAP compute."""
+    from repositories.participation_assessment_repository import (
+        ParticipationAssessmentRepository,
+    )
+    from repositories.security_intelligence_snapshot_repository import (
+        SecurityIntelligenceSnapshotRepository,
+    )
+
+    if client is None:
+        raise SnapshotReadError(REASON_PARTICIPATION_MISSING, fund_code=normalize_symbol(fund_code))
+    if not is_turkiye_fund_production_identity(fund_code):
+        raise SnapshotReadError(REASON_INCOMPATIBLE_METHODOLOGY, fund_code=normalize_symbol(fund_code))
+    return read_turkiye_fund_canonical(
+        participation_repo=ReadOnlyRepository(ParticipationAssessmentRepository(client)),
+        snapshot_repo=ReadOnlyRepository(SecurityIntelligenceSnapshotRepository(client)),
+        fund_code=fund_code,
+        is_holding=is_holding,
+        portfolio_weight=portfolio_weight,
     )
 
 

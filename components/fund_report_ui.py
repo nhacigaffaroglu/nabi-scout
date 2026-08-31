@@ -28,7 +28,9 @@ from services.fund_report_service import (
     LIVE_DATA_PROMPT,
     SHARIAH_DISCLAIMER,
     FundReportViewModel,
+    TurkiyeFundReportCanonical,
 )
+from services.fund_product_contract import LAYER_CASH_LIKE
 
 
 def format_compact_number(value: float) -> str:
@@ -140,11 +142,44 @@ def render_participation_section(
     st.caption("Katılım: —")
 
 
+def render_canonical_snapshot_section(canonical: TurkiyeFundReportCanonical) -> None:
+    st.subheader("Canonical snapshot")
+    st.caption(
+        f"{canonical.instrument} · {canonical.market} · "
+        f"{canonical.methodology_id} {canonical.methodology_version}"
+    )
+    cols = st.columns(4)
+    cols[0].metric("Katılım", canonical.participation_status)
+    cols[1].metric("FI", f"{canonical.fi_score} {canonical.fi_state}")
+    cols[2].metric("8E", canonical.eight_e)
+    cols[3].metric("Artırım", "izin yok" if not canonical.increase_allowed else "izin var")
+    exposure = canonical.exposure
+    if view_symbol_is_ais_cash_like(canonical):
+        exposure = LAYER_CASH_LIKE
+    st.markdown(f"**Ekonomik maruziyet:** {exposure} / {canonical.geography or '—'}")
+    st.caption(f"research_allowed: {canonical.research_allowed}")
+    st.caption(f"TEFAS as_of: {canonical.as_of_key or '—'}")
+    source = canonical.source_as_of or {}
+    if source.get("kap_mandate") or source.get("tefas_price"):
+        st.caption(
+            "source_as_of: "
+            f"TEFAS {source.get('tefas_price') or '—'} · "
+            f"KAP {source.get('kap_mandate') or '—'}"
+        )
+
+
+def view_symbol_is_ais_cash_like(canonical: TurkiyeFundReportCanonical) -> bool:
+    return canonical.exposure == LAYER_CASH_LIKE
+
+
 def render_identity_section(view: FundReportViewModel) -> None:
     st.subheader("Fon kimliği")
     st.markdown(f"**{view.symbol}** · {view.fund_name}")
 
     live = view.live_result
+    if view.canonical is not None:
+        st.caption(f"Enstrüman: {view.canonical.instrument} · Piyasa: {view.canonical.market}")
+        return
     exchange = (live.exchange if live else None) or (
         (view.tracked_row or {}).get("exchange")
     )
@@ -410,16 +445,24 @@ def render_fund_report(view: FundReportViewModel, *, format_datetime) -> None:
             st.info(message)
 
     render_identity_section(view)
-    render_participation_section(
-        tracked_row=view.tracked_row,
-        live_result=view.live_result,
-        symbol=view.symbol,
-    )
-    render_cost_section(view.live_result)
-    render_portfolio_section(view.live_result)
-    render_concentration_section(view.live_result)
-    render_performance_risk_section(view.live_result)
-    render_data_quality_section(view.live_result)
+    if view.canonical is not None:
+        render_canonical_snapshot_section(view.canonical)
+    elif view.canonical_unavailable_reason:
+        st.error(
+            "Canonical snapshot unavailable: "
+            f"{view.canonical_unavailable_reason}. Live recompute is blocked."
+        )
+    else:
+        render_participation_section(
+            tracked_row=view.tracked_row,
+            live_result=view.live_result,
+            symbol=view.symbol,
+        )
+        render_cost_section(view.live_result)
+        render_portfolio_section(view.live_result)
+        render_concentration_section(view.live_result)
+        render_performance_risk_section(view.live_result)
+        render_data_quality_section(view.live_result)
     render_tracking_metadata_section(
         tracked_row=view.tracked_row,
         is_tracked=view.is_tracked,

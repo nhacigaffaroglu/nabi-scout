@@ -36,6 +36,11 @@ from services.portfolio_security_decision_engine import evaluate_portfolio_secur
 from services.security_master_service import production_security_master
 from services.signal_intelligence_service import SignalIntelligenceService
 from services.wealth_core_service import WealthCoreService
+from services.turkiye_fund_snapshot_reader import (
+    SnapshotReadError,
+    is_turkiye_fund_production_identity,
+    load_turkiye_fund_canonical_from_client,
+)
 from services.wealth_contract import normalize_symbol
 
 LOOKTHROUGH_FUNDS = ("SPUS", "SPSK", "SPRE", "SPWO")
@@ -59,6 +64,8 @@ def evaluate_portfolio_security_for_symbol(
         return fail_closed_portfolio_security_decision(normalized or str(symbol or ""))
     try:
         return _evaluate_loaded(client, normalized, user_id=user_id)
+    except SnapshotReadError:
+        return fail_closed_portfolio_security_decision(normalized)
     except Exception:
         return fail_closed_portfolio_security_decision(normalized)
 
@@ -69,6 +76,20 @@ def _evaluate_loaded(
     *,
     user_id: Optional[str],
 ) -> PortfolioSecurityDecision:
+    if is_turkiye_fund_production_identity(symbol):
+        qty = weight = None
+        view = _portfolio_view(client, user_id or _default_user_id(client))
+        if view is not None:
+            qty, _value, weight, _market = aggregate_holding(
+                iter_all_position_rows(view), symbol
+            )
+        is_holding = qty is not None and qty > 0
+        return load_turkiye_fund_canonical_from_client(
+            client,
+            symbol,
+            is_holding=is_holding,
+            portfolio_weight=weight,
+        ).decision
     resolution = None
     try:
         resolution = production_security_master(client).resolve_security(symbol)

@@ -8,6 +8,7 @@ from services.symbol_resolver_service import (
     SECURITY_TYPE_UNRESOLVED,
     ResolvedSecurity,
 )
+from services.turkiye_fund_snapshot_reader import is_turkiye_fund_production_identity
 
 FUND_REPORT_SESSION_SYMBOL = "fund_report_symbol"
 FUND_REPORT_SESSION_LIVE = "fund_report_live"
@@ -28,6 +29,24 @@ UNTRACKED_WHILE_OPEN_MESSAGE = "Bu fon artık takip listesinde değil."
 
 
 @dataclass(frozen=True)
+class TurkiyeFundReportCanonical:
+    participation_status: str
+    research_allowed: bool
+    fi_score: Optional[float]
+    fi_state: str
+    exposure: Optional[str]
+    geography: Optional[str]
+    eight_e: str
+    increase_allowed: bool
+    methodology_id: str
+    methodology_version: str
+    as_of_key: str
+    source_as_of: Dict[str, Any]
+    instrument: str = "FUND"
+    market: str = "TR"
+
+
+@dataclass(frozen=True)
 class FundReportViewModel:
     symbol: str
     fund_name: str
@@ -39,6 +58,8 @@ class FundReportViewModel:
     entry_allowed: bool
     block_reason: Optional[str] = None
     state_messages: tuple[str, ...] = field(default_factory=tuple)
+    canonical: Optional[TurkiyeFundReportCanonical] = None
+    canonical_unavailable_reason: Optional[str] = None
 
 
 def normalize_fund_report_symbol(symbol: Optional[str]) -> str:
@@ -92,6 +113,9 @@ def validate_fund_report_entry(
     normalized = normalize_fund_report_symbol(symbol)
     if not normalized:
         return False, "Sembol gerekli."
+
+    if is_turkiye_fund_production_identity(normalized):
+        return True, None
 
     if tracked_row is not None:
         return True, None
@@ -167,6 +191,25 @@ def resolve_display_fund_name(
     return normalized
 
 
+def turkiye_fund_report_canonical_from_read(read: Any) -> TurkiyeFundReportCanonical:
+    quality = dict(read.fund_intelligence.raw_row.get("data_quality") or {})
+    source_as_of = dict(quality.get("source_as_of") or {})
+    return TurkiyeFundReportCanonical(
+        participation_status=read.participation.status,
+        research_allowed=bool(read.participation.research_allowed),
+        fi_score=read.fund_intelligence.score,
+        fi_state=read.fund_intelligence.state,
+        exposure=read.fund_intelligence.exposure.primary_exposure,
+        geography=read.fund_intelligence.exposure.geography,
+        eight_e=read.decision.decision,
+        increase_allowed=bool(read.decision.exposure_increase_allowed),
+        methodology_id=read.participation.methodology_id,
+        methodology_version=read.participation.methodology_version,
+        as_of_key=read.fund_intelligence.as_of_key,
+        source_as_of=source_as_of,
+    )
+
+
 def build_fund_report_view(
     symbol: str,
     *,
@@ -176,6 +219,8 @@ def build_fund_report_view(
     analysis_kind: Optional[str] = None,
     had_tracked_context: bool = False,
     candidate_row: Optional[Dict[str, Any]] = None,
+    canonical: Optional[TurkiyeFundReportCanonical] = None,
+    canonical_unavailable_reason: Optional[str] = None,
 ) -> FundReportViewModel:
     normalized = normalize_fund_report_symbol(symbol)
     matched_live = merge_live_result_for_symbol(normalized, live_result)
@@ -206,6 +251,14 @@ def build_fund_report_view(
     if entry_allowed and not is_tracked and has_live_data:
         state_messages.append("Bu fon takip listesinde değil.")
 
+    if entry_allowed and canonical is not None:
+        state_messages.append("Canonical snapshot state. Fresh TEFAS/KAP compute is not used.")
+    if entry_allowed and canonical_unavailable_reason:
+        state_messages.append(
+            "Canonical snapshot unavailable: "
+            f"{canonical_unavailable_reason}. Live recompute is blocked."
+        )
+
     return FundReportViewModel(
         symbol=normalized,
         fund_name=fund_name,
@@ -217,4 +270,6 @@ def build_fund_report_view(
         entry_allowed=entry_allowed,
         block_reason=block_reason,
         state_messages=tuple(state_messages),
+        canonical=canonical,
+        canonical_unavailable_reason=canonical_unavailable_reason,
     )

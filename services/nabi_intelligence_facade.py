@@ -78,6 +78,66 @@ def get_investment_intelligence(
     snapshot_status = participation.get("participation_status") if participation else None
     snapshot_score = participation.get("participation_score") if participation else None
 
+    from services.turkiye_fund_snapshot_reader import (
+        SnapshotReadError,
+        is_turkiye_fund_production_identity,
+        load_turkiye_fund_canonical_from_client,
+    )
+
+    if is_turkiye_fund_production_identity(normalized_symbol):
+        from services.portfolio_security_decision_service import (
+            fail_closed_portfolio_security_decision,
+        )
+
+        try:
+            canonical = load_turkiye_fund_canonical_from_client(client, normalized_symbol)
+            return InvestmentIntelligenceView(
+                symbol=normalized_symbol,
+                market=canonical.fund_intelligence.exposure.geography or "TR",
+                company_name=(candidate or {}).get("company_name"),
+                decision=canonical.decision.decision,
+                nabi_score=None,
+                participation_status=canonical.participation.status,
+                participation_score=None,
+                research_status=None,
+                sector_theme=None,
+                industry=None,
+                country="TR",
+                candidate_id=(candidate or {}).get("id"),
+                has_candidate=candidate is not None,
+                has_participation_snapshot=True,
+                security_intelligence_overall=canonical.fund_intelligence.score,
+                security_intelligence_status=canonical.fund_intelligence.state,
+                security_intelligence_state=canonical.fund_intelligence.state,
+                security_intelligence_confidence=canonical.fund_intelligence.confidence,
+                has_security_intelligence=True,
+                security_intelligence_snapshot_id=canonical.fund_intelligence.row_id,
+                security_intelligence_snapshot_as_of=canonical.fund_intelligence.as_of_key,
+                has_persisted_security_intelligence=True,
+                signal_context=empty_signal_context(normalized_symbol),
+                portfolio_security_decision=canonical.decision,
+            )
+        except SnapshotReadError:
+            return InvestmentIntelligenceView(
+                symbol=normalized_symbol,
+                market="TR",
+                company_name=(candidate or {}).get("company_name"),
+                decision=None,
+                nabi_score=None,
+                participation_status=None,
+                participation_score=None,
+                research_status=None,
+                sector_theme=None,
+                industry=None,
+                country="TR",
+                candidate_id=(candidate or {}).get("id"),
+                has_candidate=candidate is not None,
+                has_participation_snapshot=False,
+                portfolio_security_decision=fail_closed_portfolio_security_decision(
+                    normalized_symbol
+                ),
+            )
+
     si_overall = None
     si_status = None
     si_state = None
