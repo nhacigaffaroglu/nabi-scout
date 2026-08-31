@@ -38,6 +38,8 @@ from services.turkiye_fund_refresh_contract import (
     TurkiyeFundRefreshState,
     TurkiyeFundSymbolRefresh,
 )
+from services.official_kap_pdr_evidence import load_captured_pdr_discovery
+from services.turkiye_fund_source_dates import parse_official_date, source_as_of_bundle
 from services.turkiye_fund_snapshot import (
     assert_ais_not_portfolio_cash,
     blocked_snapshot,
@@ -47,7 +49,6 @@ from services.turkiye_fund_snapshot import (
     identity_snapshot,
     izahname_date_for,
     participation_snapshot,
-    source_as_of_bundle,
 )
 
 
@@ -82,7 +83,19 @@ def _safe_call(callback, default=None):
         return default
 
 
-def compute_source_as_of(provider: object, fund_code: str) -> dict[str, Optional[str]]:
+def _pdr_published_at(fund_code: str) -> Optional[str]:
+    discovery = _safe_call(lambda: load_captured_pdr_discovery(fund_code))
+    if discovery is None:
+        return None
+    return parse_official_date(getattr(discovery, "publish_date", None))
+
+
+def compute_source_as_of(
+    provider: object,
+    fund_code: str,
+    *,
+    calculated_at: Optional[str] = None,
+) -> dict[str, Any]:
     series = _safe_call(lambda: provider.price_history(fund_code, period_months=12))
     pdr = _safe_call(lambda: provider.pdr_holdings(fund_code))
     kap = _safe_call(lambda: provider.kap_mandate(fund_code))
@@ -91,6 +104,8 @@ def compute_source_as_of(provider: object, fund_code: str) -> dict[str, Optional
         kap_pdr=getattr(pdr, "report_period", None) if pdr is not None else None,
         kap_mandate=getattr(kap, "as_of", None) if kap is not None else None,
         kap_izahname=izahname_date_for(fund_code),
+        kap_pdr_published_at=_pdr_published_at(fund_code),
+        calculated_at=calculated_at,
     )
 
 
@@ -101,7 +116,7 @@ def compute_turkiye_fund_snapshots(
     calculated_at: Optional[str] = None,
 ) -> dict[str, Any]:
     resolved = provider or default_tefas_fund_provider()
-    sources = compute_source_as_of(resolved, fund_code)
+    sources = compute_source_as_of(resolved, fund_code, calculated_at=calculated_at)
     identity = _safe_call(lambda: resolved.turkiye_identity(fund_code))
     if identity is None:
         identity_row = blocked_snapshot(

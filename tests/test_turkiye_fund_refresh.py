@@ -172,7 +172,10 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
         self.assertEqual(sources["tefas_price"], "2026-08-28")
         self.assertEqual(sources["kap_pdr"], "2026-07")
         self.assertEqual(sources["kap_izahname"], "2026-01-13")
-        self.assertTrue(sources["kap_mandate"])
+        self.assertEqual(sources["kap_mandate"], "2026-01-13")
+        iat = compute_turkiye_fund_snapshots("IAT", calculated_at=self.stamp)
+        self.assertEqual(iat["source_as_of"]["kap_mandate"], "2026-02-27")
+        self.assertNotEqual(iat["source_as_of"]["kap_mandate"], "2027-02-27")
         for layer in (
             LAYER_IDENTITY,
             LAYER_PARTICIPATION,

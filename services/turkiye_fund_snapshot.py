@@ -34,6 +34,10 @@ from services.portfolio_security_decision_contract import (
     PortfolioSecurityDecision,
 )
 from services.security_intelligence_snapshot_service import as_of_key
+from services.turkiye_fund_source_dates import (
+    layer_idempotency_dates,
+    source_as_of_bundle,
+)
 from services.turkiye_fund_refresh_contract import (
     LAYER_ECONOMIC_EXPOSURE,
     LAYER_EIGHT_E,
@@ -54,21 +58,6 @@ def semantic_hash(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def source_as_of_bundle(
-    *,
-    tefas_price: Optional[str],
-    kap_pdr: Optional[str],
-    kap_mandate: Optional[str],
-    kap_izahname: Optional[str],
-) -> dict[str, Optional[str]]:
-    return {
-        "tefas_price": tefas_price,
-        "kap_pdr": kap_pdr,
-        "kap_mandate": kap_mandate,
-        "kap_izahname": kap_izahname,
-    }
-
-
 def izahname_date_for(fund_code: str) -> Optional[str]:
     funds = dict(load_participation_bundle().get("funds") or {})
     row = dict(funds.get(fund_code) or {})
@@ -83,7 +72,7 @@ class TurkiyeFundLayerSnapshot:
     market: str
     target_table: Optional[str]
     idempotency_key: str
-    source_as_of: dict[str, Optional[str]]
+    source_as_of: dict[str, Any]
     calculated_at: str
     methodology_version: Optional[str]
     publishable: bool
@@ -111,7 +100,7 @@ def _envelope(
     fund_code: str,
     target_table: Optional[str],
     methodology_version: Optional[str],
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: str,
     publishable: bool,
     semantic: Mapping[str, Any],
@@ -121,7 +110,7 @@ def _envelope(
         "fund_code": fund_code,
         "layer": layer,
         "methodology_version": methodology_version,
-        "source_as_of": dict(source_as_of),
+        "source_as_of": layer_idempotency_dates(layer, source_as_of),
         "semantic": dict(semantic),
     }
     return TurkiyeFundLayerSnapshot(
@@ -142,7 +131,7 @@ def _envelope(
 def identity_snapshot(
     identity: TurkiyeFundIdentity,
     *,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
 ) -> TurkiyeFundLayerSnapshot:
     stamp = _now_iso(calculated_at)
@@ -181,7 +170,7 @@ def identity_snapshot(
 def participation_snapshot(
     verdict: TurkiyeFundParticipationVerdict,
     *,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
 ) -> TurkiyeFundLayerSnapshot:
     stamp = _now_iso(calculated_at)
@@ -238,7 +227,7 @@ def participation_snapshot(
 def fund_intelligence_snapshot(
     view: FundIntelligenceEvaluation,
     *,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
     exposure: Optional[OfficialFundEconomicClassification] = None,
     research_allowed: bool = False,
@@ -314,7 +303,7 @@ def economic_exposure_snapshot(
     classification: Optional[OfficialFundEconomicClassification],
     *,
     fund_code: str,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
 ) -> TurkiyeFundLayerSnapshot:
     stamp = _now_iso(calculated_at)
@@ -382,7 +371,7 @@ def economic_exposure_snapshot(
 def eight_e_snapshot(
     decision: PortfolioSecurityDecision,
     *,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
     upstream_ready: bool = False,
 ) -> TurkiyeFundLayerSnapshot:
@@ -424,7 +413,7 @@ def blocked_snapshot(
     layer: str,
     fund_code: str,
     *,
-    source_as_of: Mapping[str, Optional[str]],
+    source_as_of: Mapping[str, Any],
     calculated_at: Optional[str] = None,
     reason: str,
     target_table: Optional[str] = None,

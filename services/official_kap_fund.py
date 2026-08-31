@@ -221,7 +221,10 @@ def parse_kap_mandate(
         official_profile=official_profile_from_kap(umbrella_type=umbrella_type, ybf=merged_ybf),
         source=PROVIDER_KAP_FUND,
         source_url=ybf_url or source_url,
-        as_of=as_of or str(ybf.get("as_of") or "") or None,
+        as_of=as_of
+        or str(ybf.get("published_at") or "")
+        or str(ybf.get("as_of") or "")
+        or None,
         excerpts=excerpts,
         limitations=("RAW_OFFICIAL_TEXT_ONLY",),
     )
