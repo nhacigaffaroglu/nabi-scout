@@ -203,6 +203,9 @@ def participation_snapshot(
             "source_as_of": dict(source_as_of),
         },
         "assessment_payload": {
+            "instrument": TURKIYE_FUND_8E_INSTRUMENT,
+            "market": TURKIYE_FUND_8E_MARKET,
+            "fund_code": verdict.fund_code,
             "participation_status": verdict.participation_status,
             "research_allowed": verdict.research_allowed,
             "blockers": list(verdict.blockers),

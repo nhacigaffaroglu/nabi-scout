@@ -59,6 +59,7 @@ from tests.test_turkiye_fund_8e import FROZEN_FI
 SNAPSHOT = Path("services/turkiye_fund_snapshot.py")
 ORCHESTRATOR = Path("services/turkiye_fund_refresh_orchestrator.py")
 CONTRACT = Path("services/turkiye_fund_refresh_contract.py")
+PERSISTENCE = Path("services/turkiye_fund_persistence.py")
 CLI = Path("scripts/run_turkiye_fund_refresh.py")
 NEW_MONEY = Path("services/wealth_new_money_allocation.py")
 HYBRID = Path("services/hybrid_exposure_allocation_policy.py")
@@ -301,25 +302,36 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=False):
             dry = run_turkiye_fund_refresh()
-            live = run_turkiye_fund_refresh(
+            forbidden = run_turkiye_fund_refresh(
                 dry_run=False,
                 persist_fund_intelligence=True,
                 persist_participation=True,
                 persist_economic_exposure=True,
                 persist_decisions=True,
                 allow_live=True,
+                cli_live=True,
+            )
+            live_no_repos = run_turkiye_fund_refresh(
+                persist_fund_intelligence=True,
+                persist_participation=True,
+                cli_live=True,
             )
         self.assertEqual(dry.writes, 0)
         self.assertTrue(dry.dry_run)
-        self.assertEqual(live.writes, 0)
-        self.assertTrue(live.dry_run)
-        self.assertEqual(live.status, "LIVE_BLOCKED")
-        self.assertEqual(live.would_publish, 0)
-        for fund in live.funds:
-            for layer in fund.layers:
-                self.assertEqual(layer.status, STATUS_BLOCKED)
-                self.assertEqual(layer.reason, REASON_LIVE_UNSAFE)
-                self.assertFalse(layer.published)
+        self.assertEqual(forbidden.writes, 0)
+        self.assertTrue(forbidden.dry_run)
+        self.assertEqual(forbidden.status, "LIVE_BLOCKED")
+        self.assertEqual(live_no_repos.writes, 0)
+        self.assertTrue(live_no_repos.dry_run)
+        self.assertEqual(live_no_repos.status, "LIVE_BLOCKED")
+        for fund in live_no_repos.funds:
+            self.assertFalse(any(layer.published for layer in fund.layers))
+            part = _layer(live_no_repos, fund.fund_code, LAYER_PARTICIPATION)
+            fi = _layer(live_no_repos, fund.fund_code, LAYER_FUND_INTELLIGENCE)
+            self.assertEqual(part.status, STATUS_BLOCKED)
+            self.assertEqual(part.reason, REASON_LIVE_UNSAFE)
+            self.assertEqual(fi.status, STATUS_BLOCKED)
+            self.assertEqual(fi.reason, REASON_LIVE_UNSAFE)
         source = ORCHESTRATOR.read_text(encoding="utf-8")
         self.assertNotIn("DATABASE_URL", source)
         self.assertNotIn("supabase", source.lower())
@@ -351,7 +363,7 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
         self.assertIn(participation.status, {STATUS_WOULD_PUBLISH, STATUS_NO_CHANGE})
 
     def test_new_money_and_hybrid_remain_off(self) -> None:
-        for path in (SNAPSHOT, ORCHESTRATOR, CONTRACT, CLI):
+        for path in (SNAPSHOT, ORCHESTRATOR, CONTRACT, PERSISTENCE, CLI):
             source = path.read_text(encoding="utf-8")
             self.assertNotIn("allocate_new_money", source)
             self.assertNotIn("enable_hybrid_exposure_allocation", source)
@@ -391,17 +403,23 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
             dry_run=True,
             live=True,
             allow_live=False,
+            allow_broad=False,
             persist_fund_intelligence=False,
             persist_participation=False,
             persist_economic_exposure=False,
             persist_decisions=False,
         )
         self.assertTrue(cli.live_requested(args))
-        self.assertEqual(cli.main(["--live"]), 1)
+        self.assertFalse(cli.writes_enabled(args))
+        self.assertEqual(cli.main(["--live"]), 0)
+        self.assertEqual(cli.main(["--persist-participation"]), 0)
+        self.assertEqual(cli.main(["--persist-fund-intelligence"]), 0)
         self.assertEqual(cli.main(["--persist-decisions"]), 1)
+        self.assertEqual(cli.main(["--persist-economic-exposure"]), 1)
         cli_source = CLI.read_text(encoding="utf-8")
-        self.assertNotIn("create_admin_supabase_client", cli_source)
+        self.assertIn("attach_production_repos", cli_source)
         self.assertNotIn("DATABASE_URL", cli_source)
+        self.assertIn("create_admin_supabase_client", cli_source)
 
     def test_watch_is_not_rewritten_as_insufficient(self) -> None:
         from services.fund_decision_readiness import evaluate_official_fund_decision
@@ -429,6 +447,8 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
         row = bundle[LAYER_PARTICIPATION]
         self.assertEqual(verdict.participation_status, PARTICIPATION_STATUS_UYGUN)
         self.assertEqual(row.payload["symbol"], "AIS")
+        self.assertEqual(row.payload["assessment_payload"]["instrument"], "FUND")
+        self.assertEqual(row.payload["assessment_payload"]["market"], "TR")
         self.assertIn("semantic_identity", row.payload)
         self.assertIn("source_evidence", row.payload)
         identity = identity_snapshot(

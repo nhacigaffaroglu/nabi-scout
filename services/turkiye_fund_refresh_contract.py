@@ -14,6 +14,7 @@ from services.bist_refresh_contract import (
     REASON_LIVE_UNSAFE,
     REASON_NO_CHANGE,
     REASON_PERSIST_DISABLED,
+    REASON_PILOT_SCOPE,
     STATUS_BLOCKED,
     STATUS_NO_CHANGE,
     STATUS_SKIPPED,
@@ -53,6 +54,30 @@ OUTCOME_SKIPPED = STATUS_SKIPPED
 OUTCOME_BLOCKED = STATUS_BLOCKED
 OUTCOME_ERROR = "ERROR"
 OUTCOME_WOULD_PUBLISH = STATUS_WOULD_PUBLISH
+STATUS_PUBLISHED = OUTCOME_PUBLISHED
+REASON_PARTICIPATION_WRITE_FAILED = "PARTICIPATION_WRITE_FAILED"
+REASON_FORBIDDEN_LAYER = "FORBIDDEN_LAYER_PERSIST"
+REASON_INVALID_PAYLOAD = "INVALID_SNAPSHOT_PAYLOAD"
+
+
+@dataclass(frozen=True)
+class TurkiyeFundLayerCounts:
+    processed: int = 0
+    published: int = 0
+    would_publish: int = 0
+    no_change: int = 0
+    blocked: int = 0
+    errors: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "processed": self.processed,
+            "published": self.published,
+            "would_publish": self.would_publish,
+            "no_change": self.no_change,
+            "blocked": self.blocked,
+            "errors": self.errors,
+        }
 
 
 @dataclass(frozen=True)
@@ -155,14 +180,18 @@ class TurkiyeFundRefreshRun:
     persist_economic_exposure: bool = False
     persist_decisions: bool = False
     allow_live: bool = False
+    cli_live: bool = False
     symbols: tuple[str, ...] = PILOT_TEFAS_FUND_CODES
     changes_detected: int = 0
     processed: int = 0
+    published: int = 0
     would_publish: int = 0
     no_change: int = 0
     blocked: int = 0
     errors: tuple[str, ...] = ()
     writes: int = 0
+    participation: TurkiyeFundLayerCounts = field(default_factory=TurkiyeFundLayerCounts)
+    fund_intelligence: TurkiyeFundLayerCounts = field(default_factory=TurkiyeFundLayerCounts)
     funds: tuple[TurkiyeFundSymbolRefresh, ...] = ()
     next_state: TurkiyeFundRefreshState = field(default_factory=TurkiyeFundRefreshState)
 
@@ -179,13 +208,18 @@ class TurkiyeFundRefreshRun:
             "persist_economic_exposure": self.persist_economic_exposure,
             "persist_decisions": self.persist_decisions,
             "allow_live": self.allow_live,
+            "cli_live": self.cli_live,
             "symbols": list(self.symbols),
+            "fund_codes": list(self.symbols),
             "changes_detected": self.changes_detected,
             "processed": self.processed,
+            "published": self.published,
             "would_publish": self.would_publish,
             "no_change": self.no_change,
             "blocked": self.blocked,
             "errors": list(self.errors),
             "writes": self.writes,
+            "participation": self.participation.to_dict(),
+            "fund_intelligence": self.fund_intelligence.to_dict(),
             "funds": [row.to_dict() for row in self.funds],
         }
