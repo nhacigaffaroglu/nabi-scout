@@ -181,6 +181,8 @@ with st.expander("Gelişmiş Araçlar", expanded=False):
             "Canonical Turkish fund identities. Snapshot-only Fund Report. "
             "Canlı ABD ETF analizi kullanılmaz."
         )
+        if st.button("🧭 Türkiye Fon Tarama", key="dashboard_turkiye_fund_scanner"):
+            st.switch_page("pages/13_Turkiye_Fon_Tarama.py")
         for item in list_turkiye_fund_nav_items():
             with st.container(border=True):
                 st.markdown(f"**{item.fund_code}** · {item.official_name}")

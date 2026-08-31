@@ -18,6 +18,7 @@ from services.fund_product_contract import (
     ASSET_GROUP_LEASE_CERTIFICATE,
     ASSET_GROUP_OTHER,
     ASSET_GROUP_PARTICIPATION_ACCOUNT,
+    ASSET_GROUP_PRECIOUS_METALS,
     ASSET_GROUP_REPO,
     AUTHORITY_KAP,
     AUTHORITY_SPK,
@@ -45,6 +46,14 @@ from services.fund_product_contract import (
     METHODOLOGY_TURKIYE_FUND_PARTICIPATION_VERSION,
     OfficialParticipationEvidenceItem,
     PILOT_TEFAS_FUND_CODES,
+    PROFILE_EQUITY_PARTICIPATION_FUND,
+    PROFILE_LIQUIDITY_PARTICIPATION_FUND,
+    PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND,
+    PROFILE_SHORT_TERM_PARTICIPATION,
+    PROFILE_SUKUK_LEASE_CERTIFICATE,
+    PROFILE_SUKUK_PARTICIPATION_FUND,
     PROVIDER_KAP_FUND,
     PURIFICATION_MISSING,
     PURIFICATION_NOT_REQUIRED,
@@ -53,7 +62,7 @@ from services.fund_product_contract import (
     TurkiyeParticipationFramework,
 )
 from services.official_kap_pdr import asset_group_weights, join_pdr_to_security_master
-from services.official_kap_pdr_evidence import load_captured_pdr_holdings
+from services.official_kap_pdr_evidence import try_load_captured_pdr_holdings
 from services.official_tefas import normalize_fund_code
 from services.official_turkiye_fund_evidence import EVIDENCE_DIR
 from services.participation_intelligence_contract import (
@@ -68,10 +77,22 @@ SPK_EXEMPT_GROUPS = frozenset(
     {ASSET_GROUP_LEASE_CERTIFICATE, ASSET_GROUP_PARTICIPATION_ACCOUNT, ASSET_GROUP_REPO}
 )
 AIS_ALLOWED = SPK_EXEMPT_GROUPS
+LIQUIDITY_ALLOWED = AIS_ALLOWED
 ZPE_ALLOWED = frozenset(
     {ASSET_GROUP_EQUITY, ASSET_GROUP_FUND, ASSET_GROUP_PARTICIPATION_ACCOUNT, ASSET_GROUP_REPO}
 )
+EQUITY_ALLOWED = ZPE_ALLOWED
 IAT_ALLOWED = frozenset({ASSET_GROUP_LEASE_CERTIFICATE, ASSET_GROUP_CASH, ASSET_GROUP_OTHER})
+SUKUK_ALLOWED = IAT_ALLOWED
+PRECIOUS_METALS_ALLOWED = frozenset(
+    {ASSET_GROUP_PRECIOUS_METALS, ASSET_GROUP_PARTICIPATION_ACCOUNT, ASSET_GROUP_REPO, ASSET_GROUP_CASH}
+)
+LIQUIDITY_PROFILES = frozenset({PROFILE_SHORT_TERM_PARTICIPATION, PROFILE_LIQUIDITY_PARTICIPATION_FUND})
+EQUITY_PROFILES = frozenset({PROFILE_PARTICIPATION_EQUITY, PROFILE_EQUITY_PARTICIPATION_FUND})
+SUKUK_PROFILES = frozenset({PROFILE_SUKUK_LEASE_CERTIFICATE, PROFILE_SUKUK_PARTICIPATION_FUND})
+PRECIOUS_METALS_PROFILES = frozenset(
+    {PROFILE_PRECIOUS_METALS_PARTICIPATION, PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND}
+)
 
 # Verdict policy — defined before pilot evaluation.
 # UYGUN requires ALL of the following. Missing evidence is Kontrol Et, never Uygun Değil.
@@ -188,27 +209,31 @@ def _explicit_governance(excerpts: tuple[str, ...]) -> bool:
     )
 
 
-def _holdings_state(fund_code: str) -> tuple[str, tuple[str, ...], tuple[OfficialParticipationEvidenceItem, ...]]:
-    file = load_captured_pdr_holdings(fund_code)
+def _holdings_state(
+    fund_code: str,
+    official_profile: Optional[str] = None,
+) -> tuple[str, tuple[str, ...], tuple[OfficialParticipationEvidenceItem, ...]]:
+    file = try_load_captured_pdr_holdings(fund_code)
     if file is None or not file.holdings:
         return HOLDINGS_MISSING, ("OFFICIAL_PDR_MISSING",), ()
     groups = asset_group_weights(file)
     reasons: list[str] = []
     if not file.weights.weight_reconciled:
         reasons.append("PDR_WEIGHTS_UNRECONCILED")
-    unknown = {name: weight for name, weight in groups.items() if name not in _allowed(fund_code)}
+    allowed = _allowed_groups(official_profile)
+    unknown = {name: weight for name, weight in groups.items() if name not in allowed}
     if unknown:
         reasons.append("HOLDING_GROUP_OUTSIDE_MANDATE:" + ",".join(sorted(unknown)))
-    if fund_code == "AIS":
+    if official_profile in LIQUIDITY_PROFILES:
         if groups.get(ASSET_GROUP_PARTICIPATION_ACCOUNT, 0.0) > 50.0:
             reasons.append("AIS_KATILMA_OVER_50")
-    if fund_code == "ZPE":
-        sleeve = groups.get(ASSET_GROUP_EQUITY, 0.0) + _xk_tracking_fund_weight(file)
+    if official_profile in EQUITY_PROFILES:
+        sleeve = groups.get(ASSET_GROUP_EQUITY, 0.0) + groups.get(ASSET_GROUP_FUND, 0.0)
         if sleeve < 80.0:
             reasons.append("ZPE_XK_SLEEVE_BELOW_80")
         overlap = join_pdr_to_security_master(file)
         _ = overlap  # exact SM overlap is supporting, not required
-    if fund_code == "IAT":
+    if official_profile in SUKUK_PROFILES:
         if groups.get(ASSET_GROUP_LEASE_CERTIFICATE, 0.0) < 80.0:
             reasons.append("IAT_KIRA_BELOW_80")
         other = groups.get(ASSET_GROUP_OTHER, 0.0)
@@ -229,13 +254,15 @@ def _holdings_state(fund_code: str) -> tuple[str, tuple[str, ...], tuple[Officia
     return HOLDINGS_COMPLIANT, (), (item,)
 
 
-def _allowed(fund_code: str) -> frozenset[str]:
-    if fund_code == "AIS":
-        return AIS_ALLOWED
-    if fund_code == "ZPE":
-        return ZPE_ALLOWED
-    if fund_code == "IAT":
-        return IAT_ALLOWED
+def _allowed_groups(official_profile: Optional[str]) -> frozenset[str]:
+    if official_profile in LIQUIDITY_PROFILES:
+        return LIQUIDITY_ALLOWED
+    if official_profile in EQUITY_PROFILES:
+        return EQUITY_ALLOWED
+    if official_profile in SUKUK_PROFILES:
+        return SUKUK_ALLOWED
+    if official_profile in PRECIOUS_METALS_PROFILES:
+        return PRECIOUS_METALS_ALLOWED
     return frozenset()
 
 
@@ -250,7 +277,7 @@ def _xk_tracking_fund_weight(file) -> float:
 
 
 def _freshness(fund_code: str, row: Mapping[str, Any], *, as_of: date) -> str:
-    file = load_captured_pdr_holdings(fund_code)
+    file = try_load_captured_pdr_holdings(fund_code, as_of=as_of)
     if file is None or not (file.report_period or file.report_date):
         return FRESHNESS_STALE
     period = file.report_period or (file.report_date or "")[:7]
@@ -265,12 +292,29 @@ def _freshness(fund_code: str, row: Mapping[str, Any], *, as_of: date) -> str:
     return FRESHNESS_ACCEPTABLE
 
 
-def _purification_state(fund_code: str, excerpts: tuple[str, ...]) -> str:
+def _purification_state(official_profile: Optional[str], excerpts: tuple[str, ...]) -> str:
     if excerpts:
         return PURIFICATION_POLICY_ONLY
-    if fund_code in {"AIS", "IAT"}:
+    if official_profile in LIQUIDITY_PROFILES or official_profile in SUKUK_PROFILES:
         return PURIFICATION_NOT_REQUIRED
     return PURIFICATION_MISSING
+
+
+def _official_profile_from_kap_bundle(fund_code: str) -> Optional[str]:
+    from services.official_kap_fund import parse_kap_mandate
+    from services.official_turkiye_fund_evidence import load_kap_official_bundle
+
+    kap = dict((load_kap_official_bundle().get("funds") or {}).get(fund_code) or {})
+    if not kap:
+        return None
+    mandate = parse_kap_mandate(
+        fund_code=fund_code,
+        ozet_fields=dict(kap.get("ozet_fields") or {}),
+        ybf_payload=dict(kap.get("ybf") or {}),
+        source_url=str(kap.get("ozet_url") or ""),
+        ybf_url=str(kap.get("ybf_url") or ""),
+    )
+    return mandate.official_profile
 
 
 def evaluate_turkiye_fund_participation(
@@ -285,6 +329,7 @@ def evaluate_turkiye_fund_participation(
     umbrella_only: bool = False,
     forced_governance: Optional[str] = None,
     forced_contradiction: Optional[tuple[str, ...]] = None,
+    official_profile: Optional[str] = None,
 ) -> TurkiyeFundParticipationVerdict:
     """Canonical verdict. Name/umbrella-only paths cannot emit Uygun."""
     code = normalize_fund_code(symbol)
@@ -385,6 +430,7 @@ def evaluate_turkiye_fund_participation(
         )
 
     identity_ok = identity_status == IDENTITY_RESOLVED if identity_status is not None else True
+    profile = official_profile or _official_profile_from_kap_bundle(code)
     mandate = MANDATE_CONFIRMED if _explicit_mandate(mandate_excerpts) else MANDATE_UNRESOLVED
     if forced_governance:
         governance = forced_governance
@@ -418,7 +464,10 @@ def evaluate_turkiye_fund_participation(
             )
         )
 
-    holdings_state, holding_reasons, holding_items = _holdings_state(code)
+    holdings_state, holding_reasons, holding_items = _holdings_state(
+        code,
+        official_profile=profile,
+    )
     evidence.extend(holding_items)
     contradiction_reasons = tuple(forced_contradiction or holding_reasons)
     contradiction = bool(forced_contradiction) or (
@@ -432,7 +481,7 @@ def evaluate_turkiye_fund_participation(
         contradiction = True
         contradiction_reasons = contradiction_reasons + ("GOVERNANCE_CONFLICT",)
 
-    purification = _purification_state(code, purification_excerpts)
+    purification = _purification_state(profile, purification_excerpts)
     if purification_excerpts:
         evidence.append(
             _item(
@@ -512,6 +561,7 @@ def evaluate_pilot_participation(
         official_name=identity.official_name,
         umbrella_type=kap.umbrella_type,
         as_of=as_of,
+        official_profile=kap.official_profile,
     )
 
 

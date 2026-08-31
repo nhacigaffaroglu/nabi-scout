@@ -20,6 +20,7 @@ from services.fund_product_contract import (
     PDR_FIELD_ISSUER,
     PDR_FIELD_MATURITY,
     PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROVIDER_KAP_FUND,
@@ -111,6 +112,13 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
         "min_80_kira_sertifikasi": bool(
             re.search(r"en az %80.*kira sertifikalar", body, flags=re.I | re.S)
         ),
+        "precious_metals_mandate": bool(
+            re.search(
+                r"(altın|kıymetli maden|kiymetli maden|gümüş).{0,80}(yatırım|portföy)",
+                body,
+                flags=re.I | re.S,
+            )
+        ),
         "tl_assets_only": bool(re.search(r"sadece TL cinsi varlıklar", body, flags=re.I)),
     }
 
@@ -128,6 +136,8 @@ def official_profile_from_kap(
         return PROFILE_PARTICIPATION_EQUITY
     if facts.get("min_80_kira_sertifikasi"):
         return PROFILE_SUKUK_LEASE_CERTIFICATE
+    if facts.get("precious_metals_mandate"):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
     _ = umbrella_type
     return None
 
@@ -156,6 +166,14 @@ def parse_kap_mandate(
         or bool(re.search(r"BIST Katılım 100", str(ybf.get("strategy") or ""), flags=re.I)),
         "min_80_kira_sertifikasi": parsed.get("min_80_kira_sertifikasi")
         or bool(re.search(r"kira sertifikalar", str(ybf.get("strategy") or ""), flags=re.I)),
+        "precious_metals_mandate": parsed.get("precious_metals_mandate")
+        or bool(
+            re.search(
+                r"(altın|kıymetli maden|gümüş).{0,80}(yatırım|portföy)",
+                str(ybf.get("strategy") or ""),
+                flags=re.I | re.S,
+            )
+        ),
     }
     wording: list[str] = []
     status = str(ybf.get("status_sentence") or "")

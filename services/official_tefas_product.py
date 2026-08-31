@@ -13,6 +13,8 @@ from services.fund_product_contract import (
     PROFILE_EQUITY_PARTICIPATION_FUND,
     PROFILE_LIQUIDITY_PARTICIPATION_FUND,
     PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROFILE_SUKUK_PARTICIPATION_FUND,
@@ -223,6 +225,7 @@ class TefasFundProductProvider:
             identity_status=identity.identity_status,
             official_name=identity.official_name,
             umbrella_type=mandate.umbrella_type,
+            official_profile=mandate.official_profile,
         )
         uygun = verdict.participation_status == PARTICIPATION_STATUS_UYGUN
         limitations = ["NO_INVENTED_UYGUN"]
@@ -258,11 +261,13 @@ class TefasFundProductProvider:
         code = self._require(symbol)
         kap = _kap_fund(code, self._kap)
         identity = self.turkiye_identity(code)
+        kap_mandate = self.kap_mandate(code)
         verdict = evaluate_turkiye_fund_participation(
             code,
             identity_status=identity.identity_status,
             official_name=identity.official_name,
-            umbrella_type=self.kap_mandate(code).umbrella_type,
+            umbrella_type=kap_mandate.umbrella_type,
+            official_profile=kap_mandate.official_profile,
         )
         required = False if verdict.purification_state == PURIFICATION_NOT_REQUIRED else None
         return FundPurificationEvidence(
@@ -323,6 +328,8 @@ def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
         layer, vehicle = "equity", PROFILE_EQUITY_PARTICIPATION_FUND
     elif profile == PROFILE_SUKUK_LEASE_CERTIFICATE:
         layer, vehicle = "sukuk", PROFILE_SUKUK_PARTICIPATION_FUND
+    elif profile == PROFILE_PRECIOUS_METALS_PARTICIPATION:
+        layer, vehicle = "precious_metals", PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND
     else:
         raise ValueError(f"unsupported_kap_official_profile:{profile}")
     mandate = OfficialFundMandate(
@@ -338,6 +345,13 @@ def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
     )
     mandate.validate()
     return mandate
+
+
+def try_mandate_from_kap(kap: KapFundMandateEvidence) -> Optional[OfficialFundMandate]:
+    try:
+        return mandate_from_kap(kap)
+    except ValueError:
+        return None
 
 
 def default_tefas_fund_provider() -> TefasFundProductProvider:

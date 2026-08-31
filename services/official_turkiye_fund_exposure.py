@@ -56,6 +56,9 @@ def classify_official_turkiye_fund_exposure(
     limitations = ["PRIMARY_DISTINCT_FROM_LOOKTHROUGH"]
     if layer == LAYER_CASH_LIKE:
         limitations.append("NOT_PORTFOLIO_CASH")
+    if layer == "precious_metals":
+        limitations.append("NOT_PORTFOLIO_CASH")
+        limitations.append("PRECIOUS_METALS_NOT_CASH_LIKE")
     return OfficialFundEconomicClassification(
         symbol=mandate.symbol,
         instrument="FUND",

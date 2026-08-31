@@ -23,6 +23,7 @@ HIDDEN_NAV_PAGE_HREFS = (
     "Portfolio_Intelligence",
     "Monitor",
     "Fund_Report",
+    "Turkiye_Fon_Tarama",
     "NABI_Akademi",
 )
 

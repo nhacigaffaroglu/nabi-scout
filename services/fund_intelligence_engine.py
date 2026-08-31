@@ -63,9 +63,11 @@ from services.fund_product_contract import (
     MIN_READY_SCORED_DIMENSIONS,
     MIN_READY_WEIGHT_COVERAGE,
     OfficialFundMandate,
+    PRECIOUS_METALS_PARTICIPATION_FUND_WEIGHTS,
     PROFILE_EQUITY_ETF,
     PROFILE_EQUITY_PARTICIPATION_FUND,
     PROFILE_LIQUIDITY_PARTICIPATION_FUND,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND,
     PROFILE_REIT_ETF,
     PROFILE_SUKUK_ETF,
     PROFILE_SUKUK_PARTICIPATION_FUND,
@@ -104,6 +106,8 @@ def profile_for_mandate(mandate: Optional[OfficialFundMandate]) -> str:
         return PROFILE_SUKUK_ETF
     if layer == "real_estate":
         return PROFILE_REIT_ETF
+    if layer == "precious_metals":
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND
     return PROFILE_EQUITY_ETF
 
 
@@ -114,6 +118,8 @@ def weights_for_profile(profile: str, *, region: str = "") -> dict[str, float]:
         return dict(EQUITY_PARTICIPATION_FUND_WEIGHTS)
     if profile == PROFILE_SUKUK_PARTICIPATION_FUND:
         return dict(SUKUK_PARTICIPATION_FUND_WEIGHTS)
+    if profile == PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND:
+        return dict(PRECIOUS_METALS_PARTICIPATION_FUND_WEIGHTS)
     if profile == PROFILE_SUKUK_ETF:
         return dict(SUKUK_ETF_WEIGHTS)
     if profile == PROFILE_REIT_ETF:
@@ -566,6 +572,8 @@ def evaluate_fund_intelligence(
                 )
             else:
                 dimensions.append(_missing(DIM_MATURITY, "official_pdr_maturity_date"))
+        elif profile == PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND:
+            dimensions.append(_na(DIM_MATURITY, "PRECIOUS_METALS_PARTICIPATION_PROFILE"))
         else:
             dimensions.append(_na(DIM_MATURITY, "EQUITY_PARTICIPATION_PROFILE"))
         if profile == PROFILE_SUKUK_PARTICIPATION_FUND:

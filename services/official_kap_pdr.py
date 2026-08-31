@@ -20,6 +20,7 @@ from services.fund_product_contract import (
     ASSET_GROUP_LEASE_CERTIFICATE,
     ASSET_GROUP_OTHER,
     ASSET_GROUP_PARTICIPATION_ACCOUNT,
+    ASSET_GROUP_PRECIOUS_METALS,
     ASSET_GROUP_REPO,
     ASSET_GROUP_UNKNOWN,
     KAP_FUNDS_BY_CRITERIA,
@@ -74,6 +75,8 @@ _SECTION_MAP = (
     ("taahhut sozlesmesi", ASSET_GROUP_REPO),
     ("satış vaadiyle alış", ASSET_GROUP_REPO),
     ("satis vaadiyle alis", ASSET_GROUP_REPO),
+    ("kıymetli maden", ASSET_GROUP_PRECIOUS_METALS),
+    ("kiymetli maden", ASSET_GROUP_PRECIOUS_METALS),
     ("hisse senet", ASSET_GROUP_EQUITY),
     ("borsa yatırım fonu", ASSET_GROUP_FUND),
     ("yatırım fonu", ASSET_GROUP_FUND),
@@ -231,9 +234,14 @@ def discover_latest_pdr(
     fund_code: str,
     *,
     attachments: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    as_of: Optional[date] = None,
 ) -> KapPdrDiscovery:
     code = normalize_fund_code(fund_code)
     matches = [dict(row) for row in rows if _is_pdr_row(row, code)]
+    if as_of is not None:
+        from services.turkiye_fund_pdr_window import pdr_row_is_applicable
+
+        matches = [row for row in matches if pdr_row_is_applicable(row, as_of)]
     if not matches:
         return KapPdrDiscovery(
             fund_code=code,

@@ -971,6 +971,14 @@ def _turkiye_fund_adviser_overlay(
     )
 
 
+def _turkiye_fund_scanner_adviser_overlay(
+    parsed: ParsedAdviserQuestion,
+) -> tuple[Optional[str], Optional[dict[str, Any]]]:
+    from services.turkiye_fund_scanner_adviser import turkiye_fund_scanner_adviser_overlay
+
+    return turkiye_fund_scanner_adviser_overlay(parsed.question)
+
+
 def _compose_canonical_answer(
     parsed: ParsedAdviserQuestion,
     *,
@@ -1368,6 +1376,9 @@ def build_nabi_adviser_context(
         turkiye_fund_contexts=turkiye_fund_contexts,
         new_money=new_money,
     )
+    scanner_answer, scanner_facts = _turkiye_fund_scanner_adviser_overlay(parsed)
+    if turkiye_answer is None and scanner_answer:
+        turkiye_answer = scanner_answer
     canonical = _compose_canonical_answer(
         parsed,
         rec=rec,
@@ -1407,6 +1418,7 @@ def build_nabi_adviser_context(
             "dashboard_primary": view.dashboard_primary,
             "wealth_action": view.wealth_action,
             **({"turkiye_fund": turkiye_facts} if turkiye_facts else {}),
+            **({"turkiye_fund_scanner": scanner_facts} if scanner_facts else {}),
         },
         goal_context=goal,
         new_money_context=new_money,
