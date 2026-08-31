@@ -51,6 +51,7 @@ PDR_DISCOVERY_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
 PROVENANCE_KAP_PDR = "kap_pdr_official"
 
 _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
+_GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
 _BIST_CODE_RE = re.compile(r"\b([A-Z0-9]{2,6}\.[EF])\b")
 _TR_DATE_RE = re.compile(r"\b(\d{2}[./]\d{2}[./]\d{2,4})\b")
 _FILE_RE = re.compile(
@@ -77,6 +78,10 @@ _SECTION_MAP = (
     ("satis vaadiyle alis", ASSET_GROUP_REPO),
     ("kıymetli maden", ASSET_GROUP_PRECIOUS_METALS),
     ("kiymetli maden", ASSET_GROUP_PRECIOUS_METALS),
+    ("altın", ASSET_GROUP_PRECIOUS_METALS),
+    ("altin", ASSET_GROUP_PRECIOUS_METALS),
+    ("gümüş", ASSET_GROUP_PRECIOUS_METALS),
+    ("gumus", ASSET_GROUP_PRECIOUS_METALS),
     ("hisse senet", ASSET_GROUP_EQUITY),
     ("borsa yatırım fonu", ASSET_GROUP_FUND),
     ("yatırım fonu", ASSET_GROUP_FUND),
@@ -362,6 +367,9 @@ def _holding(
             group = ASSET_GROUP_EQUITY
         elif official_code.endswith(".F"):
             group = ASSET_GROUP_FUND
+    name_blob = _fold(f"{security_name_raw or ''} {issuer_raw or ''} {asset_group_raw or ''}")
+    if str(isin or "").startswith("TRXDRP") or "altin hazine" in name_blob:
+        group = ASSET_GROUP_PRECIOUS_METALS
     return KapPdrHolding(
         fund_code=fund_code,
         report_period=report_period,
@@ -428,6 +436,13 @@ def _parse_isin_row(
             name = isin
     if issuer:
         issuer = re.sub(r"\s+\b(TL|TRY|USD|EUR)\b\s*$", "", issuer).strip() or issuer
+    if not issuer:
+        tail = re.search(rf"^(?P<head>.+?)\s+{re.escape(isin)}\s*$", line)
+        if tail:
+            issuer = _plain(re.sub(r"[\d.,:\-|]+", " ", tail.group("head")))
+            issuer = re.sub(r"\s+", " ", issuer).strip() or None
+            if issuer and not name:
+                name = issuer
     nums = _numbers(line)
     weight = None
     market_value = None
@@ -841,7 +856,7 @@ def parse_kap_pdr_text(
     code = normalize_fund_code(fund_code)
     if not code:
         raise KapPdrError("fund_code is required")
-    body = str(text or "")
+    body = _GLUED_ISIN.sub(r" \1", str(text or ""))
     if not body.strip():
         raise KapPdrError("empty PDR text")
     fund_total = _fund_total_from_text(body)

@@ -15,6 +15,10 @@ from services.fund_product_contract import (
     PROFILE_PARTICIPATION_EQUITY,
     PROFILE_PRECIOUS_METALS_PARTICIPATION,
     PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND,
+    PROFILE_REAL_ESTATE_PARTICIPATION,
+    PROFILE_REAL_ESTATE_PARTICIPATION_FUND,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROFILE_SUKUK_PARTICIPATION_FUND,
@@ -56,7 +60,7 @@ from services.official_tefas import (
     parse_tefas_snapshot,
 )
 from services.official_kap_pdr import pdr_rows_to_official_holdings
-from services.official_kap_pdr_evidence import load_captured_pdr_holdings
+from services.official_kap_pdr_evidence import try_load_captured_pdr_holdings
 from services.official_tefas_performance import performance_from_tefas_series
 from services.official_turkiye_fund_evidence import (
     load_kap_official_bundle,
@@ -72,9 +76,15 @@ TEFAS_RETURNS_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_RETURNS}"
 TEFAS_PRICE_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_PRICES}"
 
 
-def _kap_fund(code: str, bundle: Mapping[str, Any]) -> dict[str, Any]:
+def _kap_fund(
+    code: str,
+    bundle: Mapping[str, Any],
+    packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> dict[str, Any]:
     funds = dict(bundle.get("funds") or {})
-    return dict(funds.get(code) or {})
+    if code in funds:
+        return dict(funds.get(code) or {})
+    return dict((packs or {}).get(code) or {})
 
 
 class TefasFundProductProvider:
@@ -88,15 +98,38 @@ class TefasFundProductProvider:
         tefas_bundle: Optional[Mapping[str, Any]] = None,
         kap_bundle: Optional[Mapping[str, Any]] = None,
         price_rows: Optional[Mapping[str, Mapping[int, list[dict[str, Any]]]]] = None,
+        evidence_packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
     ) -> None:
         self._tefas = dict(tefas_bundle or load_tefas_official_bundle())
         self._kap = dict(kap_bundle or load_kap_official_bundle())
         self._price_rows = dict(price_rows or {})
+        self._packs = {
+            normalize_fund_code(code): dict(row)
+            for code, row in dict(evidence_packs or {}).items()
+        }
+
+    def _snapshot_row(self, code: str) -> dict[str, Any]:
+        snap = dict((self._tefas.get("snapshot") or {}).get(code) or {})
+        if snap:
+            return snap
+        return dict((self._packs.get(code) or {}).get("tefas_snapshot") or {})
+
+    def _returns_row(self, code: str) -> dict[str, Any]:
+        row = dict((self._tefas.get("returns") or {}).get(code) or {})
+        if row:
+            return row
+        return dict((self._packs.get(code) or {}).get("tefas_returns") or {})
 
     def supports(self, symbol: str) -> bool:
         code = normalize_fund_code(symbol)
-        snapshots = dict(self._tefas.get("snapshot") or {})
-        return code in snapshots and code in dict(self._kap.get("funds") or {})
+        if code in dict(self._kap.get("funds") or {}) and code in dict(self._tefas.get("snapshot") or {}):
+            return True
+        pack = dict(self._packs.get(code) or {})
+        if not pack:
+            return False
+        snap = dict(self._tefas.get("snapshot") or {}).get(code) or pack.get("tefas_snapshot")
+        identity_ok = pack.get("identity_status") == IDENTITY_RESOLVED
+        return bool(identity_ok and snap)
 
     def _require(self, symbol: str) -> str:
         code = normalize_fund_code(symbol)
@@ -106,9 +139,9 @@ class TefasFundProductProvider:
 
     def turkiye_identity(self, symbol: str) -> TurkiyeFundIdentity:
         code = self._require(symbol)
-        snap = parse_tefas_snapshot(dict(self._tefas.get("snapshot") or {}).get(code) or {})
-        returns = parse_tefas_returns(dict(self._tefas.get("returns") or {}).get(code) or {})
-        kap = _kap_fund(code, self._kap)
+        snap = parse_tefas_snapshot(self._snapshot_row(code))
+        returns = parse_tefas_returns(self._returns_row(code))
+        kap = _kap_fund(code, self._kap, self._packs)
         ozet = dict(kap.get("ozet_fields") or {})
         ybf = dict(kap.get("ybf") or {})
         status = match_tefas_kap_identity(tefas_code=snap.get("fonKodu") or code, kap_code=kap.get("fund_code"))
@@ -150,8 +183,8 @@ class TefasFundProductProvider:
 
     def facts(self, symbol: str) -> FundFacts:
         code = self._require(symbol)
-        snap = parse_tefas_snapshot(dict(self._tefas.get("snapshot") or {}).get(code) or {})
-        returns = parse_tefas_returns(dict(self._tefas.get("returns") or {}).get(code) or {})
+        snap = parse_tefas_snapshot(self._snapshot_row(code))
+        returns = parse_tefas_returns(self._returns_row(code))
         mandate = self.kap_mandate(code)
         raw = {key: "" if value is None else str(value) for key, value in {**snap, **returns}.items()}
         nav = snap.get("sonFiyat")
@@ -184,7 +217,7 @@ class TefasFundProductProvider:
 
     def kap_mandate(self, symbol: str) -> KapFundMandateEvidence:
         code = self._require(symbol)
-        kap = _kap_fund(code, self._kap)
+        kap = _kap_fund(code, self._kap, self._packs)
         return parse_kap_mandate(
             fund_code=code,
             ozet_fields=dict(kap.get("ozet_fields") or {}),
@@ -259,7 +292,7 @@ class TefasFundProductProvider:
 
     def purification_evidence(self, symbol: str) -> FundPurificationEvidence:
         code = self._require(symbol)
-        kap = _kap_fund(code, self._kap)
+        kap = _kap_fund(code, self._kap, self._packs)
         identity = self.turkiye_identity(code)
         kap_mandate = self.kap_mandate(code)
         verdict = evaluate_turkiye_fund_participation(
@@ -286,7 +319,13 @@ class TefasFundProductProvider:
     def price_history(self, symbol: str, *, period_months: int = 12) -> TefasPriceSeries:
         code = self._require(symbol)
         override = (self._price_rows.get(code) or {}).get(period_months)
-        rows = list(override) if override is not None else load_tefas_price_rows(code, period_months=period_months)
+        if override is not None:
+            rows = list(override)
+        else:
+            try:
+                rows = load_tefas_price_rows(code, period_months=period_months)
+            except (FileNotFoundError, ValueError, OSError):
+                rows = list((self._packs.get(code) or {}).get("tefas_price_rows") or [])
         return parse_tefas_price_history(
             rows,
             fund_code=code,
@@ -296,22 +335,25 @@ class TefasFundProductProvider:
 
     def portfolio_report_audit(self, symbol: str) -> KapPortfolioReportAudit:
         code = self._require(symbol)
-        kap = _kap_fund(code, self._kap)
+        kap = _kap_fund(code, self._kap, self._packs)
         return parse_kap_portfolio_report_audit(fund_code=code, report=dict(kap.get("portfolio_report") or {}))
 
     def pdr_holdings(self, symbol: str):
         code = self._require(symbol)
-        return load_captured_pdr_holdings(code)
+        file = try_load_captured_pdr_holdings(code)
+        if file is None:
+            raise FileNotFoundError(f"captured PDR text missing for {code}")
+        return file
 
     def official_risk_value(self, symbol: str) -> Optional[str]:
         code = self._require(symbol)
-        returns = parse_tefas_returns(dict(self._tefas.get("returns") or {}).get(code) or {})
+        returns = parse_tefas_returns(self._returns_row(code))
         value = returns.get("riskDegeri")
         return str(value).strip() if value is not None and str(value).strip() else None
 
     def investor_count(self, symbol: str) -> Optional[int]:
         code = self._require(symbol)
-        snap = parse_tefas_snapshot(dict(self._tefas.get("snapshot") or {}).get(code) or {})
+        snap = parse_tefas_snapshot(self._snapshot_row(code))
         raw = snap.get("yatirimciSayi")
         try:
             return int(raw) if raw is not None else None
@@ -330,6 +372,10 @@ def mandate_from_kap(kap: KapFundMandateEvidence) -> OfficialFundMandate:
         layer, vehicle = "sukuk", PROFILE_SUKUK_PARTICIPATION_FUND
     elif profile == PROFILE_PRECIOUS_METALS_PARTICIPATION:
         layer, vehicle = "precious_metals", PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND
+    elif profile in {PROFILE_REAL_ESTATE_PARTICIPATION, PROFILE_REAL_ESTATE_PARTICIPATION_FUND}:
+        layer, vehicle = "real_estate", PROFILE_REAL_ESTATE_PARTICIPATION_FUND
+    elif profile in {PROFILE_MIXED_MULTI_ASSET_PARTICIPATION, PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND}:
+        layer, vehicle = "multi_asset", PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND
     else:
         raise ValueError(f"unsupported_kap_official_profile:{profile}")
     mandate = OfficialFundMandate(
@@ -354,8 +400,24 @@ def try_mandate_from_kap(kap: KapFundMandateEvidence) -> Optional[OfficialFundMa
         return None
 
 
-def default_tefas_fund_provider() -> TefasFundProductProvider:
-    return TefasFundProductProvider()
+def default_tefas_fund_provider(
+    *,
+    evidence_packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> TefasFundProductProvider:
+    packs = evidence_packs
+    if packs is None:
+        from services.turkiye_fund_source_capture import load_cached_evidence_packs
+
+        packs = load_cached_evidence_packs()
+    official_codes = set(dict(load_tefas_official_bundle().get("snapshot") or {}))
+    price_rows: dict[str, dict[int, list[dict[str, Any]]]] = {}
+    for code, pack in dict(packs or {}).items():
+        if code in official_codes:
+            continue
+        rows = list(pack.get("tefas_price_rows") or [])
+        if rows:
+            price_rows[code] = {12: rows}
+    return TefasFundProductProvider(evidence_packs=packs, price_rows=price_rows)
 
 
 def supported_tefas_pilot_codes() -> tuple[str, ...]:

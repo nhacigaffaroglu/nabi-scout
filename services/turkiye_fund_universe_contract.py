@@ -147,6 +147,13 @@ class TurkiyeFundScannerResult:
     trades: int = 0
     portfolio_writes: int = 0
     persist: bool = False
+    capture_stats: dict[str, Any] = field(default_factory=dict)
+    coverage_funnel: dict[str, Any] = field(default_factory=dict)
+    review_reason_counts: dict[str, int] = field(default_factory=dict)
+    manager_coverage: dict[str, dict[str, int]] = field(default_factory=dict)
+    category_coverage: dict[str, dict[str, int]] = field(default_factory=dict)
+    fi_distribution: dict[str, int] = field(default_factory=dict)
+    pdr_parser_quality: dict[str, Any] = field(default_factory=dict)
     limitations: tuple[str, ...] = (
         SCANNER_NOT_A_BUY,
         SCANNER_NOT_EIGHT_E,

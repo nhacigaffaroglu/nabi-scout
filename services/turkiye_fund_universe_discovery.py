@@ -36,6 +36,7 @@ DISCOVERY_EQUITY = "equity"
 DISCOVERY_SUKUK = "sukuk"
 DISCOVERY_PRECIOUS_METALS = "precious_metals"
 DISCOVERY_REAL_ESTATE = "real_estate"
+DISCOVERY_MULTI_ASSET = "multi_asset"
 DISCOVERY_OTHER = "other"
 
 
@@ -86,6 +87,8 @@ def discovery_category_from_official_title(title: Any) -> str:
         return DISCOVERY_PRECIOUS_METALS
     if "gayrimenkul" in folded:
         return DISCOVERY_REAL_ESTATE
+    if any(token in folded for token in ("fon sepeti fonu", "degisken fon", "karma fon")):
+        return DISCOVERY_MULTI_ASSET
     return DISCOVERY_OTHER
 
 

@@ -12,6 +12,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from services.fund_intelligence_engine import evaluate_official_fund_intelligence
 from services.fund_product_contract import (
+    DIM_CONCENTRATION_EVAL,
     DIM_COST_EVAL,
     DIM_DIVERSIFICATION_EVAL,
     DIM_PERFORMANCE_EVAL,
@@ -22,7 +23,10 @@ from services.fund_product_contract import (
 from services.official_tefas import normalize_fund_code
 from services.official_tefas_product import default_tefas_fund_provider, try_mandate_from_kap
 from services.official_turkiye_fund_exposure import classify_official_turkiye_fund_exposure
-from services.official_turkiye_fund_participation import evaluate_turkiye_fund_participation
+from services.official_turkiye_fund_participation import (
+    evaluate_turkiye_fund_participation,
+    load_participation_bundle,
+)
 from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_KONTROL_ET,
     PARTICIPATION_STATUS_UYGUN,
@@ -30,6 +34,7 @@ from services.participation_intelligence_contract import (
 )
 from services.turkiye_fund_pdr_window import latest_applicable_pdr_period
 from services.turkiye_fund_source_capture import (
+    load_cached_evidence_packs,
     load_captured_kap_pdr_catalog,
     load_captured_tefas_snapshots,
 )
@@ -88,7 +93,94 @@ REQUIRED_FI_DIMENSIONS = {
         DIM_COST_EVAL,
         DIM_DIVERSIFICATION_EVAL,
     ),
+    "REAL_ESTATE_PARTICIPATION_FUND": (
+        DIM_PERFORMANCE_EVAL,
+        DIM_RISK_EVAL,
+        DIM_COST_EVAL,
+        DIM_DIVERSIFICATION_EVAL,
+        "REAL_ESTATE_CONCENTRATION",
+    ),
+    "MIXED_MULTI_ASSET_PARTICIPATION_FUND": (
+        DIM_PERFORMANCE_EVAL,
+        DIM_RISK_EVAL,
+        DIM_COST_EVAL,
+        DIM_DIVERSIFICATION_EVAL,
+        DIM_CONCENTRATION_EVAL,
+    ),
 }
+
+CANONICAL_REVIEW_REASONS = (
+    "IDENTITY_UNRESOLVED",
+    "TEFAS_INACTIVE",
+    "YBF_MISSING",
+    "GOVERNANCE_EVIDENCE_MISSING",
+    "PDR_NOT_YET_DUE",
+    "PDR_MISSING",
+    "PDR_PARSE_INCOMPLETE",
+    "PDR_RECONCILIATION_FAILED",
+    "HISTORY_INSUFFICIENT",
+    "ECONOMIC_EXPOSURE_UNKNOWN",
+    "PARTICIPATION_REVIEW",
+    "FI_INSUFFICIENT_DATA",
+    "SOURCE_STALE",
+    "SOURCE_ERROR",
+)
+
+_REASON_MAP = {
+    "IDENTITY_UNRESOLVED": "IDENTITY_UNRESOLVED",
+    "TEFAS_INACTIVE": "TEFAS_INACTIVE",
+    "TEFAS_ACTIVE_UNPROVEN": "TEFAS_INACTIVE",
+    "KAP_YBF_MISSING": "YBF_MISSING",
+    "YBF_MISSING": "YBF_MISSING",
+    "GOVERNANCE_NOT_CONFIRMED": "GOVERNANCE_EVIDENCE_MISSING",
+    "KAP_GOVERNANCE_EVIDENCE_MISSING": "GOVERNANCE_EVIDENCE_MISSING",
+    "GOVERNANCE_EVIDENCE_MISSING": "GOVERNANCE_EVIDENCE_MISSING",
+    "PDR_NOT_YET_DUE": "PDR_NOT_YET_DUE",
+    "HOLDINGS_MISSING": "PDR_MISSING",
+    "PDR_MISSING": "PDR_MISSING",
+    "OFFICIAL_PDR_MISSING": "PDR_MISSING",
+    "PDR_PARSE_INCOMPLETE": "PDR_PARSE_INCOMPLETE",
+    "PDR_RECONCILIATION_FAILED": "PDR_RECONCILIATION_FAILED",
+    "PDR_WEIGHTS_UNRECONCILED": "PDR_RECONCILIATION_FAILED",
+    "TEFAS_HISTORY_MISSING": "HISTORY_INSUFFICIENT",
+    "HISTORY_INSUFFICIENT": "HISTORY_INSUFFICIENT",
+    "ECONOMIC_EXPOSURE_UNKNOWN": "ECONOMIC_EXPOSURE_UNKNOWN",
+    "FI_NOT_PUBLISHABLE": "FI_INSUFFICIENT_DATA",
+    "FI_PROFILE_UNROUTED": "FI_INSUFFICIENT_DATA",
+    "EVIDENCE_STALE": "SOURCE_STALE",
+    "SOURCE_STALE": "SOURCE_STALE",
+    "SOURCE_ERROR": "SOURCE_ERROR",
+    "MANDATE_UNRESOLVED": "PARTICIPATION_REVIEW",
+}
+
+
+def canonicalize_review_reasons(codes: Sequence[str]) -> tuple[str, ...]:
+    mapped: list[str] = []
+    for raw in codes:
+        key = str(raw or "").split(":", 1)[0].strip()
+        if not key:
+            continue
+        mapped.append(_REASON_MAP.get(key, "PARTICIPATION_REVIEW" if key not in CANONICAL_REVIEW_REASONS else key))
+    return tuple(dict.fromkeys(mapped))
+
+
+def participation_bundle_for(code: str, packs: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    base = load_participation_bundle()
+    funds = dict(base.get("funds") or {})
+    existing = dict(funds.get(code) or {})
+    if existing.get("mandate_excerpts"):
+        return base
+    pack = dict(packs.get(code) or {})
+    if not pack:
+        return base
+    funds[code] = {
+        "mandate_excerpts": list(pack.get("mandate_excerpts") or ()),
+        "governance_excerpts": list(pack.get("governance_excerpts") or ()),
+        "purification_excerpts": list(pack.get("purification_excerpts") or ()),
+        "izahname_url": pack.get("izahname_url") or "",
+        "izahname_date": pack.get("source_as_of") or "",
+    }
+    return {**base, "funds": funds}
 
 
 def _as_of(value: Optional[date]) -> date:
@@ -162,9 +254,12 @@ def _evaluate_one(
     *,
     as_of: date,
     provider,
+    packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> TurkiyeFundScannerRow:
     code = identity.fund_code
+    pack = dict((packs or {}).get(code) or {})
     missing: list[str] = []
+    missing.extend(str(item) for item in pack.get("review_reasons") or () if item)
     active = identity.tefas_status == TEFAS_STATUS_ACTIVE
     if not active:
         missing.append("TEFAS_ACTIVE_UNPROVEN" if identity.tefas_status != "INACTIVE" else "TEFAS_INACTIVE")
@@ -180,7 +275,9 @@ def _evaluate_one(
     max_drawdown = None
     profile_name = None
     reason = ""
+    founder = identity.founder or pack.get("founder")
     category = discovery_category_from_official_title(identity.fund_name)
+    bundle = participation_bundle_for(code, packs or {})
     if not active:
         reason = "Inactive or unproven TEFAS status; fail closed from ranking."
         return TurkiyeFundScannerRow(
@@ -207,8 +304,8 @@ def _evaluate_one(
                 scanner_ready=False,
             ),
             reason=reason,
-            missing_evidence=tuple(missing),
-            founder=identity.founder,
+            missing_evidence=canonicalize_review_reasons(missing),
+            founder=founder,
         )
     official_profile = None
     if provider.supports(code):
@@ -222,6 +319,7 @@ def _evaluate_one(
             umbrella_type=kap.umbrella_type,
             as_of=as_of,
             official_profile=official_profile,
+            bundle=bundle,
         )
         participation_status = verdict.participation_status
         research_allowed = bool(verdict.research_allowed)
@@ -258,10 +356,11 @@ def _evaluate_one(
     else:
         verdict = evaluate_turkiye_fund_participation(
             code,
-            identity_status=None,
+            identity_status=pack.get("identity_status"),
             official_name=identity.fund_name,
-            umbrella_type=identity.umbrella_type,
+            umbrella_type=identity.umbrella_type or pack.get("umbrella_type"),
             as_of=as_of,
+            bundle=bundle,
         )
         participation_status = verdict.participation_status
         research_allowed = bool(verdict.research_allowed)
@@ -313,10 +412,10 @@ def _evaluate_one(
             scanner_ready=scanner_status == SCANNER_READY,
         ),
         reason=reason,
-        missing_evidence=tuple(dict.fromkeys(missing)),
+        missing_evidence=canonicalize_review_reasons(missing),
         fi_profile=profile_name,
         peer_view=PEER_VIEW_CATEGORY,
-        founder=identity.founder,
+        founder=founder,
     )
 
 
@@ -345,6 +444,7 @@ def run_turkiye_fund_scanner(
     persist: bool = False,
     sample_only: bool = True,
     extra_per_category: int = 1,
+    evidence_packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> TurkiyeFundScannerResult:
     if persist:
         raise ValueError("turkiye_fund_scanner_persist_refused")
@@ -354,8 +454,10 @@ def run_turkiye_fund_scanner(
     )
     snapshots = dict(tefas_snapshots) if tefas_snapshots is not None else load_captured_tefas_snapshots()
     identities = discover_turkiye_participation_universe(rows, tefas_snapshots=snapshots)
-    provider = default_tefas_fund_provider()
+    packs = dict(evidence_packs) if evidence_packs is not None else load_cached_evidence_packs()
+    provider = default_tefas_fund_provider(evidence_packs=packs)
     include = tuple(code for code in snapshots if provider.supports(code))
+    include = tuple(dict.fromkeys((*include, *tuple(code for code in packs if provider.supports(code)))))
     sample = select_representative_sample(
         identities,
         extra_per_category=extra_per_category,
@@ -374,7 +476,7 @@ def run_turkiye_fund_scanner(
         identity = by_code.get(code)
         if identity is None:
             continue
-        evaluated.append(_evaluate_one(identity, as_of=day, provider=provider))
+        evaluated.append(_evaluate_one(identity, as_of=day, provider=provider, packs=packs))
     ranked_rows = _assign_ranks(evaluated)
     ready_rows = [row for row in ranked_rows if row.scanner_status == SCANNER_READY]
     ranked_by_category: dict[str, tuple[TurkiyeFundScannerRow, ...]] = {}
@@ -408,12 +510,48 @@ def run_turkiye_fund_scanner(
         if profile in TURKISH_FI_PROFILES
     )
     _ = latest_applicable_pdr_period(day)
+    active_count = sum(1 for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE)
+    funnel = _coverage_funnel(identities, ranked_rows, packs)
+    reason_counts: dict[str, int] = {}
+    for row in ranked_rows:
+        if row.scanner_status == SCANNER_READY:
+            continue
+        for item in row.missing_evidence:
+            reason_counts[item] = reason_counts.get(item, 0) + 1
+    manager_coverage: dict[str, dict[str, int]] = {}
+    for row in ranked_rows:
+        manager = row.founder or "UNKNOWN"
+        bucket = manager_coverage.setdefault(manager, {"ready": 0, "review": 0, "blocked": 0, "evaluated": 0})
+        bucket["evaluated"] += 1
+        if row.scanner_status == SCANNER_READY:
+            bucket["ready"] += 1
+        elif row.scanner_status == SCANNER_BLOCKED:
+            bucket["blocked"] += 1
+        else:
+            bucket["review"] += 1
+    category_coverage: dict[str, dict[str, int]] = {}
+    for row in ranked_rows:
+        bucket = category_coverage.setdefault(row.category or "other", {"ready": 0, "review": 0, "evaluated": 0})
+        bucket["evaluated"] += 1
+        if row.scanner_status == SCANNER_READY:
+            bucket["ready"] += 1
+        else:
+            bucket["review"] += 1
+    fi_distribution: dict[str, int] = {}
+    for row in ranked_rows:
+        state = row.fi_state or "INSUFFICIENT_DATA"
+        fi_distribution[state] = fi_distribution.get(state, 0) + 1
+    pdr_quality = {
+        code: dict(pack.get("pdr_quality") or {})
+        for code, pack in packs.items()
+        if pack.get("pdr_quality")
+    }
     return TurkiyeFundScannerResult(
         as_of=day.isoformat(),
         calculated_at=datetime.now(timezone.utc).date().isoformat(),
         discovered_count=len(identities),
-        active_count=sum(1 for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE),
-        analyzable_count=sum(1 for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE),
+        active_count=active_count,
+        analyzable_count=active_count,
         participation_uygun_count=participation_counts[PARTICIPATION_STATUS_UYGUN],
         kontrol_et_count=participation_counts[PARTICIPATION_STATUS_KONTROL_ET],
         uygun_degil_count=participation_counts[PARTICIPATION_STATUS_UYGUN_DEGIL],
@@ -428,13 +566,20 @@ def run_turkiye_fund_scanner(
         ranked_by_category=ranked_by_category,
         overall_shortlist=overall,
         profile_routing=routing,
-        production_reads=("kap_pdr_universe_catalog", "tefas_participation_activity", "captured_tefas_kap_bundles"),
+        production_reads=("kap_pdr_universe_catalog", "tefas_participation_activity", "captured_tefas_kap_bundles", "evidence_packs_cache"),
         production_writes=(),
         eight_e_calls=0,
         new_money_calls=0,
         trades=0,
         portfolio_writes=0,
         persist=False,
+        capture_stats={},
+        coverage_funnel=funnel,
+        review_reason_counts=reason_counts,
+        manager_coverage=manager_coverage,
+        category_coverage=category_coverage,
+        fi_distribution=fi_distribution,
+        pdr_parser_quality=pdr_quality,
         limitations=(
             SCANNER_NOT_A_BUY,
             SCANNER_NOT_EIGHT_E,
@@ -444,5 +589,65 @@ def run_turkiye_fund_scanner(
     )
 
 
+def _coverage_funnel(
+    identities: Sequence[TurkiyeFundUniverseIdentity],
+    rows: Sequence[TurkiyeFundScannerRow],
+    packs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    from services.fund_product_contract import IDENTITY_RESOLVED
+
+    by_code = {row.fund_code: row for row in rows}
+    active = [row for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE]
+    active_n = len(active) or 1
+
+    def _pct(count: int) -> float:
+        return round(100.0 * count / active_n, 2)
+
+    identity_resolved = 0
+    history_ready = 0
+    mandate_ready = 0
+    governance_ready = 0
+    pdr_ready = 0
+    for identity in active:
+        pack = dict(packs.get(identity.fund_code) or {})
+        row = by_code.get(identity.fund_code)
+        if pack.get("identity_status") == IDENTITY_RESOLVED or (row and row.participation == PARTICIPATION_STATUS_UYGUN):
+            identity_resolved += 1
+        rows_hist = list(pack.get("tefas_price_rows") or [])
+        if rows_hist or (row and row.return_1y is not None):
+            history_ready += 1
+        if pack.get("mandate_excerpts") or (row and row.participation == PARTICIPATION_STATUS_UYGUN):
+            mandate_ready += 1
+        if pack.get("governance_excerpts") or (row and row.participation == PARTICIPATION_STATUS_UYGUN):
+            governance_ready += 1
+        quality = dict(pack.get("pdr_quality") or {})
+        if quality.get("row_count") or (row and row.exposure):
+            pdr_ready += 1
+    uygun = sum(1 for row in rows if row.participation == PARTICIPATION_STATUS_UYGUN)
+    exposure_ready = sum(1 for row in rows if row.exposure)
+    fi_ready = sum(1 for row in rows if row.fi_score is not None and row.scanner_status == SCANNER_READY)
+    scanner_ready = sum(1 for row in rows if row.scanner_status == SCANNER_READY)
+    review_required = sum(1 for row in rows if row.scanner_status == SCANNER_REVIEW_REQUIRED)
+    gates = {
+        "discovered": len(identities),
+        "active": len(active),
+        "identity_resolved": identity_resolved,
+        "tefas_history_ready": history_ready,
+        "kap_mandate_ready": mandate_ready,
+        "governance_ready": governance_ready,
+        "pdr_ready": pdr_ready,
+        "participation_uygun": uygun,
+        "economic_exposure_ready": exposure_ready,
+        "fi_ready": fi_ready,
+        "scanner_ready": scanner_ready,
+        "review_required": review_required,
+        "blocked": sum(1 for ident in identities if ident.tefas_status != TEFAS_STATUS_ACTIVE),
+    }
+    return {
+        "gates": gates,
+        "pct_active": {key: _pct(value) for key, value in gates.items()},
+    }
+
+
 def load_default_scanner_result(*, as_of: Optional[date] = None) -> TurkiyeFundScannerResult:
-    return run_turkiye_fund_scanner(as_of=as_of, persist=False, sample_only=True)
+    return run_turkiye_fund_scanner(as_of=as_of, persist=False, sample_only=False)

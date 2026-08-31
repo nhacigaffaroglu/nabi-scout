@@ -13,6 +13,7 @@ from services.official_kap_pdr import (
     report_period_label,
 )
 from services.official_tefas import normalize_fund_code
+from services.turkiye_fund_source_capture import cached_pdr_text_path
 
 EVIDENCE_DIR = Path(__file__).resolve().parent / "official_kap_pdr_evidence"
 DISCOVERY_PATH = EVIDENCE_DIR / "pdr_discovery_rows.json"
@@ -40,7 +41,9 @@ def captured_pdr_text_path(fund_code: str) -> Optional[Path]:
     if explicit is not None and explicit.is_file():
         return explicit
     matches = sorted(EVIDENCE_DIR.glob(f"{code}_*.txt"))
-    return matches[-1] if matches else None
+    if matches:
+        return matches[-1]
+    return cached_pdr_text_path(code)
 
 
 def _period_from_filename(path: Path) -> Optional[str]:

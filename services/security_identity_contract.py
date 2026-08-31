@@ -54,6 +54,7 @@ ECONOMIC_LAYERS = (
     "cash_like",
     "commodity",
     "precious_metals",
+    "multi_asset",
     "other",
 )
 

@@ -331,6 +331,189 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         self.assertNotIn("wealth_new_money_allocation", text)
         self.assertNotIn("PILOT_TEFAS_FUND_CODES", text)
 
+    def test_broad_ui_funnel_controls(self) -> None:
+        page = PAGE.read_text(encoding="utf-8")
+        self.assertIn("coverage_funnel", page)
+        self.assertIn("Yönetici", page)
+        self.assertIn("REVIEW_REQUIRED", page)
+        self.assertIn("review_reason_counts", page)
+        self.assertNotIn("Buy this fund", page)
+
+
+class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
+    def test_official_slug_from_title_not_fuzzy(self) -> None:
+        from services.turkiye_fund_kap_slug import kap_official_slug
+
+        self.assertEqual(
+            kap_official_slug("AIS", "AK PORTFÖY PARA PİYASASI KATILIM FONU"),
+            "ais-ak-portfoy-para-piyasasi-katilim-fonu",
+        )
+        self.assertEqual(
+            kap_official_slug("IAT", "İŞ PORTFÖY KİRA SERTİFİKALARI KATILIM (TL) FONU"),
+            "iat-is-portfoy-kira-sertifikalari-katilim-tl-fonu",
+        )
+
+    def test_java_wrapped_pdf_unwrap(self) -> None:
+        from services.turkiye_fund_pdf_text import unwrap_kap_file_bytes
+
+        pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
+        wrapped = b"\xac\xed\x00\x05ur\x00\x02[B" + b"xxxx" + pdf
+        self.assertEqual(unwrap_kap_file_bytes(wrapped)[:8], b"%PDF-1.7")
+        self.assertEqual(unwrap_kap_file_bytes(pdf)[:8], b"%PDF-1.7")
+
+    def test_kap_rsc_identity_and_documents(self) -> None:
+        from services.turkiye_fund_kap_rsc import parse_kap_bildirim_rsc, parse_kap_ozet_rsc
+
+        ozet = (
+            '"generalInfo":{"objId":"abc","fundType":"SYF","fundName":"BV PORTFÖY ALTIN KATILIM FONU",'
+            '"mkkMemberOid":"m1","title":"BV PORTFÖY YÖNETİMİ A.Ş.","fundCode":"BAI","fundId":1},'
+            '"fundDocuments":{"IZAHNAME":[{"fileOid":"oid-izah","disclosureIndex":1,"fileName":"izah.pdf",'
+            '"extension":"pdf"}],"BILGI_FORMU":[{"fileOid":"oid-ybf","disclosureIndex":2,'
+            '"fileName":"ybf.pdf","extension":"pdf"}]}'
+        )
+        parsed = parse_kap_ozet_rsc(ozet)
+        self.assertEqual(parsed["fund_code"], "BAI")
+        self.assertEqual(parsed["ybf_file_oid"], "oid-ybf")
+        self.assertTrue(parsed["resolved"])
+        bildirim = parse_kap_bildirim_rsc(
+            '{"attachments":[{"objId":"4028328d9f52dddd019fd289d7530906","fileName":"BAI_2026.07.pdf","fileExtension":"pdf"}]}'
+        )
+        self.assertEqual(bildirim["file_oid"], "4028328d9f52dddd019fd289d7530906")
+
+    def test_retry_backoff_and_cache_reuse(self) -> None:
+        from urllib.error import URLError
+
+        from services.turkiye_fund_source_capture import OfficialCaptureSession, cache_identity, load_or_store
+
+        attempts = {"n": 0}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def opener(request, timeout=0):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise URLError("temp")
+            return _Resp()
+
+        sleeps: list[float] = []
+        session = OfficialCaptureSession(live=True, opener=opener, sleep=sleeps.append, min_gap_sec=0)
+        payload = session.http_json("https://www.kap.org.tr/tr/api/disclosure/funds/byCriteria", {"x": 1})
+        self.assertEqual(payload["ok"], True)
+        self.assertEqual(attempts["n"], 3)
+        self.assertEqual(session.stats.retry_count, 2)
+        key = cache_identity(kind="broad_retry", key=str(uuid.uuid4()))
+        first, hit1 = load_or_store(kind="broad_retry", key=key, fetcher=lambda: {"n": 1})
+        second, hit2 = load_or_store(kind="broad_retry", key=key, fetcher=lambda: {"n": 9})
+        self.assertFalse(hit1)
+        self.assertTrue(hit2)
+        self.assertEqual(first["n"], second["n"])
+
+    def test_resumability_skips_unchanged_pack(self) -> None:
+        from services.turkiye_fund_broad_capture import _pack_is_reusable
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="BAI",
+            fund_name="BV PORTFÖY ALTIN KATILIM FONU",
+            isin=None,
+            founder="BV PORTFÖY",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+            kap_disclosure_index=1,
+        )
+        reusable = {
+            "fund_code": "BAI",
+            "identity_status": "RESOLVED",
+            "documents": {"BILGI_FORMU": {"file_oid": "oid"}},
+            "kap_disclosure_index": 1,
+            "production_persist": False,
+        }
+        self.assertTrue(_pack_is_reusable(reusable, identity))
+        failed = {**reusable, "review_reasons": ["SOURCE_ERROR"]}
+        self.assertFalse(_pack_is_reusable(failed, identity))
+
+    def test_broad_universe_scanner_without_live_fetch(self) -> None:
+        result = run_turkiye_fund_scanner(persist=False, sample_only=False, evidence_packs={})
+        self.assertGreaterEqual(result.discovered_count, 200)
+        self.assertGreaterEqual(result.active_count, 200)
+        self.assertLess(result.active_count, result.discovered_count)
+        by_code = {row.fund_code: row for row in result.rows}
+        for code, (score, state) in FROZEN.items():
+            self.assertEqual(by_code[code].fi_score, score)
+            self.assertEqual(by_code[code].fi_state, state)
+            self.assertEqual(by_code[code].scanner_status, SCANNER_READY)
+        self.assertGreaterEqual(result.scanner_ready_count, 3)
+        self.assertTrue(result.coverage_funnel.get("gates"))
+        self.assertGreater(result.review_required_count, 0)
+        self.assertTrue(result.review_reason_counts)
+        self.assertEqual(result.eight_e_calls, 0)
+        self.assertEqual(result.new_money_calls, 0)
+        self.assertEqual(result.production_writes, ())
+        self.assertFalse(result.persist)
+        self.assertNotIn("allocate_new_money", SCANNER.read_text(encoding="utf-8"))
+
+    def test_participation_hard_gate_not_loosened(self) -> None:
+        from services.official_kap_fund import parse_kap_ybf_text
+        from services.turkiye_fund_evidence_extract import extract_governance_excerpts, governance_uygun_tokens_present
+
+        name_only = evaluate_turkiye_fund_participation(
+            "BAI",
+            name_only=True,
+            official_name="BV PORTFÖY ALTIN KATILIM FONU",
+        )
+        self.assertEqual(name_only.participation_status, PARTICIPATION_STATUS_KONTROL_ET)
+        captured = extract_governance_excerpts("Katılım Esasları ve faizsiz finans ilkeleri uygulanır.")
+        self.assertTrue(captured)
+        self.assertFalse(governance_uygun_tokens_present(captured))
+        ybf = parse_kap_ybf_text("Fon portföyü altın ve kıymetli maden yatırım araçlarından oluşur. Fon sepeti değildir.")
+        self.assertTrue(ybf["precious_metals_mandate"])
+        self.assertFalse(ybf["mixed_mandate"])
+
+    def test_no_forced_reconciliation_or_paid_api(self) -> None:
+        from services.turkiye_fund_source_capture import PAID_HOST_BLOCKLIST, assert_official_host
+
+        ais = try_load_captured_pdr_holdings("AIS")
+        self.assertIsNotNone(ais)
+        self.assertFalse(ais.weights.renormalized)
+        with self.assertRaises(ValueError):
+            assert_official_host("https://financialmodelingprep.com/x")
+        self.assertIn("yahoo", PAID_HOST_BLOCKLIST)
+
+    def test_mixed_and_real_estate_profiles_defined_before_scores(self) -> None:
+        from services.fund_intelligence_engine import weights_for_profile
+        from services.fund_product_contract import (
+            MIXED_MULTI_ASSET_PARTICIPATION_FUND_WEIGHTS,
+            PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND,
+            PROFILE_REAL_ESTATE_PARTICIPATION_FUND,
+            REAL_ESTATE_PARTICIPATION_FUND_WEIGHTS,
+        )
+
+        self.assertAlmostEqual(sum(MIXED_MULTI_ASSET_PARTICIPATION_FUND_WEIGHTS.values()), 1.0)
+        self.assertAlmostEqual(sum(REAL_ESTATE_PARTICIPATION_FUND_WEIGHTS.values()), 1.0)
+        self.assertEqual(
+            weights_for_profile(PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND),
+            dict(MIXED_MULTI_ASSET_PARTICIPATION_FUND_WEIGHTS),
+        )
+        self.assertEqual(
+            weights_for_profile(PROFILE_REAL_ESTATE_PARTICIPATION_FUND),
+            dict(REAL_ESTATE_PARTICIPATION_FUND_WEIGHTS),
+        )
+
+    def test_adviser_rank_is_not_a_buy(self) -> None:
+        narrative = format_scanner_adviser_narrative(self._scanner_result())
+        self.assertIn("canonical Fund Intelligence", narrative)
+        self.assertNotIn("Buy this fund", narrative)
+
+    def _scanner_result(self):
+        return run_turkiye_fund_scanner(persist=False, sample_only=True)
+
 
 if __name__ == "__main__":
     unittest.main()

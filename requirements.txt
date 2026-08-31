@@ -1,4 +1,4 @@
 streamlit>=1.41,<2
 supabase>=2.10,<3
 pandas>=2.2,<3
-requests>=2.32,<3
+pypdf>=5,<6

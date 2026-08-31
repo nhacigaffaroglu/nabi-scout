@@ -29,9 +29,11 @@ def is_turkiye_fund_scanner_question(question: str) -> bool:
 def format_scanner_adviser_narrative(result=None) -> str:
     payload = result or load_default_scanner_result()
     lines = [
+        "These funds currently rank highest within their peer category based on canonical Fund Intelligence.",
         "Bunlar resmi kanıtı yeterli en yüksek sıralı katılım fonu araştırma adaylarıdır.",
         SCANNER_NOT_A_BUY,
         "Scanner rank is not an 8E decision and not a New Money allocation.",
+        "Adviser must not treat scanner rank as a buy instruction.",
     ]
     for category, rows in sorted(payload.ranked_by_category.items()):
         names = ", ".join(f"{row.fund_code} ({row.fi_score})" for row in rows[:3])

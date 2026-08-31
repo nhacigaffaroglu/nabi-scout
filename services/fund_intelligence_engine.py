@@ -64,15 +64,19 @@ from services.fund_product_contract import (
     MIN_READY_WEIGHT_COVERAGE,
     OfficialFundMandate,
     PRECIOUS_METALS_PARTICIPATION_FUND_WEIGHTS,
+    MIXED_MULTI_ASSET_PARTICIPATION_FUND_WEIGHTS,
     PROFILE_EQUITY_ETF,
     PROFILE_EQUITY_PARTICIPATION_FUND,
     PROFILE_LIQUIDITY_PARTICIPATION_FUND,
     PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND,
+    PROFILE_REAL_ESTATE_PARTICIPATION_FUND,
     PROFILE_REIT_ETF,
     PROFILE_SUKUK_ETF,
     PROFILE_SUKUK_PARTICIPATION_FUND,
     READINESS_READY_NOW,
     REIT_ETF_WEIGHTS,
+    REAL_ESTATE_PARTICIPATION_FUND_WEIGHTS,
     RETURN_RISK_FAMILY,
     RISK_FACT_HISTORICAL_MAX_DRAWDOWN,
     RISK_FACT_HISTORICAL_VOLATILITY,
@@ -102,6 +106,12 @@ def profile_for_mandate(mandate: Optional[OfficialFundMandate]) -> str:
     if vehicle in TURKISH_FI_PROFILES:
         return vehicle
     layer = str(mandate.primary_layer or "").strip().lower() if mandate else ""
+    region = str(mandate.region or "").strip().upper() if mandate else ""
+    if region == "TR":
+        if layer == "real_estate":
+            return PROFILE_REAL_ESTATE_PARTICIPATION_FUND
+        if layer == "multi_asset":
+            return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND
     if layer == "sukuk":
         return PROFILE_SUKUK_ETF
     if layer == "real_estate":
@@ -120,6 +130,10 @@ def weights_for_profile(profile: str, *, region: str = "") -> dict[str, float]:
         return dict(SUKUK_PARTICIPATION_FUND_WEIGHTS)
     if profile == PROFILE_PRECIOUS_METALS_PARTICIPATION_FUND:
         return dict(PRECIOUS_METALS_PARTICIPATION_FUND_WEIGHTS)
+    if profile == PROFILE_REAL_ESTATE_PARTICIPATION_FUND:
+        return dict(REAL_ESTATE_PARTICIPATION_FUND_WEIGHTS)
+    if profile == PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND:
+        return dict(MIXED_MULTI_ASSET_PARTICIPATION_FUND_WEIGHTS)
     if profile == PROFILE_SUKUK_ETF:
         return dict(SUKUK_ETF_WEIGHTS)
     if profile == PROFILE_REIT_ETF:

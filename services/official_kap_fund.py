@@ -21,6 +21,8 @@ from services.fund_product_contract import (
     PDR_FIELD_MATURITY,
     PROFILE_PARTICIPATION_EQUITY,
     PROFILE_PRECIOUS_METALS_PARTICIPATION,
+    PROFILE_REAL_ESTATE_PARTICIPATION,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROVIDER_KAP_FUND,
@@ -119,6 +121,16 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
                 flags=re.I | re.S,
             )
         ),
+        "real_estate_mandate": bool(
+            re.search(r"gayrimenkul.{0,80}(yatırım|portföy|sertifika)", body, flags=re.I | re.S)
+        ),
+        "mixed_mandate": bool(
+            re.search(
+                r"(fon sepeti fonu|değişken fon|degisken fon|karma fon|çoklu varlık|coklu varlik)",
+                body,
+                flags=re.I,
+            )
+        ),
         "tl_assets_only": bool(re.search(r"sadece TL cinsi varlıklar", body, flags=re.I)),
     }
 
@@ -138,6 +150,10 @@ def official_profile_from_kap(
         return PROFILE_SUKUK_LEASE_CERTIFICATE
     if facts.get("precious_metals_mandate"):
         return PROFILE_PRECIOUS_METALS_PARTICIPATION
+    if facts.get("real_estate_mandate"):
+        return PROFILE_REAL_ESTATE_PARTICIPATION
+    if facts.get("mixed_mandate"):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
     _ = umbrella_type
     return None
 
@@ -172,6 +188,16 @@ def parse_kap_mandate(
                 r"(altın|kıymetli maden|gümüş).{0,80}(yatırım|portföy)",
                 str(ybf.get("strategy") or ""),
                 flags=re.I | re.S,
+            )
+        ),
+        "real_estate_mandate": parsed.get("real_estate_mandate")
+        or bool(re.search(r"gayrimenkul.{0,80}(yatırım|portföy|sertifika)", str(ybf.get("strategy") or ""), flags=re.I | re.S)),
+        "mixed_mandate": parsed.get("mixed_mandate")
+        or bool(
+            re.search(
+                r"(fon sepeti fonu|değişken fon|degisken fon|karma fon)",
+                str(ybf.get("strategy") or ""),
+                flags=re.I,
             )
         ),
     }
