@@ -180,6 +180,10 @@ def render_identity_section(view: FundReportViewModel) -> None:
     if view.canonical is not None:
         st.caption(f"Enstrüman: {view.canonical.instrument} · Piyasa: {view.canonical.market}")
         return
+    if view.instrument and view.market:
+        st.caption(f"Enstrüman: {view.instrument} · Piyasa: {view.market}")
+        if view.instrument == "FUND":
+            return
     exchange = (live.exchange if live else None) or (
         (view.tracked_row or {}).get("exchange")
     )

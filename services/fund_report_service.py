@@ -13,7 +13,11 @@ from services.turkiye_fund_snapshot_reader import is_turkiye_fund_production_ide
 FUND_REPORT_SESSION_SYMBOL = "fund_report_symbol"
 FUND_REPORT_SESSION_LIVE = "fund_report_live"
 FUND_REPORT_SESSION_RESOLVED = "fund_report_resolved"
+FUND_REPORT_SESSION_INSTRUMENT = "fund_report_instrument"
+FUND_REPORT_SESSION_MARKET = "fund_report_market"
 FUND_REPORT_QUERY_PARAM = "fund_symbol"
+FUND_REPORT_QUERY_INSTRUMENT = "fund_instrument"
+FUND_REPORT_QUERY_MARKET = "fund_market"
 
 from services.participation_intelligence_contract import PARTICIPATION_DISCLAIMER_SHORT
 
@@ -60,6 +64,8 @@ class FundReportViewModel:
     state_messages: tuple[str, ...] = field(default_factory=tuple)
     canonical: Optional[TurkiyeFundReportCanonical] = None
     canonical_unavailable_reason: Optional[str] = None
+    instrument: Optional[str] = None
+    market: Optional[str] = None
 
 
 def normalize_fund_report_symbol(symbol: Optional[str]) -> str:
@@ -72,6 +78,29 @@ def resolve_requested_symbol(
     query_symbol: Optional[str],
 ) -> str:
     return normalize_fund_report_symbol(session_symbol or query_symbol)
+
+
+def _normalize_identity_part(value: Optional[str]) -> Optional[str]:
+    text = str(value or "").strip().upper()
+    return text or None
+
+
+def resolve_requested_identity(
+    *,
+    session_symbol: Optional[str],
+    query_symbol: Optional[str],
+    session_instrument: Optional[str] = None,
+    query_instrument: Optional[str] = None,
+    session_market: Optional[str] = None,
+    query_market: Optional[str] = None,
+) -> tuple[str, Optional[str], Optional[str]]:
+    symbol = resolve_requested_symbol(
+        session_symbol=session_symbol,
+        query_symbol=query_symbol,
+    )
+    instrument = _normalize_identity_part(session_instrument or query_instrument)
+    market = _normalize_identity_part(session_market or query_market)
+    return symbol, instrument, market
 
 
 def is_valid_session_fund_handoff(
@@ -188,6 +217,12 @@ def resolve_display_fund_name(
         return max(meaningful, key=len)
     if candidates:
         return candidates[0]
+    if is_turkiye_fund_production_identity(normalized):
+        from services.turkiye_fund_navigation import turkiye_fund_nav_display_name
+
+        catalog_name = turkiye_fund_nav_display_name(normalized)
+        if catalog_name:
+            return catalog_name
     return normalized
 
 
@@ -221,12 +256,26 @@ def build_fund_report_view(
     candidate_row: Optional[Dict[str, Any]] = None,
     canonical: Optional[TurkiyeFundReportCanonical] = None,
     canonical_unavailable_reason: Optional[str] = None,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
 ) -> FundReportViewModel:
     normalized = normalize_fund_report_symbol(symbol)
-    matched_live = merge_live_result_for_symbol(normalized, live_result)
-    matched_resolved = merge_resolved_for_symbol(normalized, resolved)
+    turkiye_identity = is_turkiye_fund_production_identity(
+        normalized,
+        instrument=instrument,
+        market=market,
+    )
+    if turkiye_identity:
+        matched_live = None
+        matched_resolved = None
+        analysis_kind = None
+    else:
+        matched_live = merge_live_result_for_symbol(normalized, live_result)
+        matched_resolved = merge_resolved_for_symbol(normalized, resolved)
     is_tracked = tracked_row is not None
     has_live_data = matched_live is not None
+    view_instrument = "FUND" if turkiye_identity else _normalize_identity_part(instrument)
+    view_market = "TR" if turkiye_identity else _normalize_identity_part(market)
 
     fund_name = resolve_display_fund_name(
         normalized,
@@ -244,11 +293,11 @@ def build_fund_report_view(
     )
 
     state_messages: List[str] = []
-    if entry_allowed and is_tracked and not has_live_data:
+    if entry_allowed and is_tracked and not has_live_data and not turkiye_identity:
         state_messages.append(COLD_OPEN_BANNER)
-    if entry_allowed and had_tracked_context and not is_tracked:
+    if entry_allowed and had_tracked_context and not is_tracked and not turkiye_identity:
         state_messages.append(UNTRACKED_WHILE_OPEN_MESSAGE)
-    if entry_allowed and not is_tracked and has_live_data:
+    if entry_allowed and not is_tracked and has_live_data and not turkiye_identity:
         state_messages.append("Bu fon takip listesinde değil.")
 
     if entry_allowed and canonical is not None:
@@ -272,4 +321,6 @@ def build_fund_report_view(
         state_messages=tuple(state_messages),
         canonical=canonical,
         canonical_unavailable_reason=canonical_unavailable_reason,
+        instrument=view_instrument,
+        market=view_market,
     )

@@ -25,6 +25,14 @@ from services.fund_report_service import (
     FUND_REPORT_SESSION_SYMBOL,
     resolve_display_fund_name,
 )
+from services.turkiye_fund_navigation import (
+    apply_turkiye_fund_report_handoff,
+    clear_turkiye_fund_report_identity,
+    format_turkiye_fund_nav_caption,
+    is_turkiye_fund_nav_identity,
+    list_turkiye_fund_nav_items,
+    us_etf_live_handoff_allowed,
+)
 from services.manual_analysis_service import (
     UNRESOLVED_UNSUPPORTED_REASON,
     analyze_security,
@@ -113,14 +121,33 @@ with st.expander("Gelişmiş Araçlar", expanded=False):
         return None
 
 
-    def _open_fund_report(symbol: str) -> None:
+    def _open_fund_report(
+        symbol: str,
+        *,
+        instrument: Optional[str] = None,
+        market: Optional[str] = None,
+    ) -> None:
         normalized = str(symbol or "").strip().upper()
         if not normalized:
             return
+        if is_turkiye_fund_nav_identity(
+            normalized,
+            instrument=instrument,
+            market=market,
+        ):
+            apply_turkiye_fund_report_handoff(
+                st.session_state,
+                st.query_params,
+                normalized,
+            )
+            st.switch_page("pages/9_Fund_Report.py")
+            return
+        clear_turkiye_fund_report_identity(st.session_state, st.query_params)
         st.session_state[FUND_REPORT_SESSION_SYMBOL] = normalized
         manual_result = st.session_state.get("manual_analysis_result")
         if (
-            manual_result is not None
+            us_etf_live_handoff_allowed(normalized, instrument=instrument, market=market)
+            and manual_result is not None
             and manual_result.analysis_kind == "fund"
             and str(manual_result.symbol or "").strip().upper() == normalized
             and manual_result.fund_result is not None
@@ -138,12 +165,35 @@ with st.expander("Gelişmiş Araçlar", expanded=False):
 
 
     if analyze_clicked:
-        analysis = _execute_manual_analysis(manual_symbol)
-        if analysis is not None:
-            st.session_state["manual_analysis_result"] = analysis
+        if is_turkiye_fund_nav_identity(manual_symbol):
+            _open_fund_report(manual_symbol, instrument="FUND", market="TR")
         else:
-            st.session_state.pop("manual_analysis_result", None)
+            analysis = _execute_manual_analysis(manual_symbol)
+            if analysis is not None:
+                st.session_state["manual_analysis_result"] = analysis
+            else:
+                st.session_state.pop("manual_analysis_result", None)
 
+
+    def _render_turkiye_fund_section() -> None:
+        st.markdown("**Türkiye Fonları · FUND/TR**")
+        st.caption(
+            "Canonical Turkish fund identities. Snapshot-only Fund Report. "
+            "Canlı ABD ETF analizi kullanılmaz."
+        )
+        for item in list_turkiye_fund_nav_items():
+            with st.container(border=True):
+                st.markdown(f"**{item.fund_code}** · {item.official_name}")
+                st.caption(format_turkiye_fund_nav_caption(item))
+                if st.button(
+                    "📊 Fon Raporu",
+                    key=f"dashboard_turkiye_fund_report_{item.fund_code}",
+                ):
+                    _open_fund_report(
+                        item.fund_code,
+                        instrument=item.instrument,
+                        market=item.market,
+                    )
 
     def _render_tracked_funds_section() -> None:
         st.markdown("**⭐ Takip Edilen Fonlar**")
@@ -180,6 +230,13 @@ with st.expander("Gelişmiş Araçlar", expanded=False):
                 st.caption(f"Son takip güncellemesi: {last_updated_label}")
                 if row.get("data_provider"):
                     st.caption(f"Veri kaynağı: {row['data_provider']}")
+                if is_turkiye_fund_nav_identity(symbol):
+                    if st.button(
+                        "📊 Fon Raporu",
+                        key=f"dashboard_tracked_fund_report_{symbol}_{index}",
+                    ):
+                        _open_fund_report(symbol, instrument="FUND", market="TR")
+                    continue
                 action_cols = st.columns(3)
                 with action_cols[0]:
                     if st.button(
@@ -425,4 +482,5 @@ with st.expander("Gelişmiş Araçlar", expanded=False):
 
         st.divider()
 
+    _render_turkiye_fund_section()
     _render_tracked_funds_section()

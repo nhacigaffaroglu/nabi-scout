@@ -8,13 +8,21 @@ from services.alpha_vantage_client import AlphaVantageClient
 from services.fmp_client import FMPClient, FMPError
 from services.free_universe_client import FreeUniverseClient
 from services.fund_report_service import (
+    FUND_REPORT_QUERY_INSTRUMENT,
+    FUND_REPORT_QUERY_MARKET,
     FUND_REPORT_QUERY_PARAM,
+    FUND_REPORT_SESSION_INSTRUMENT,
     FUND_REPORT_SESSION_LIVE,
+    FUND_REPORT_SESSION_MARKET,
     FUND_REPORT_SESSION_RESOLVED,
     FUND_REPORT_SESSION_SYMBOL,
     build_fund_report_view,
-    resolve_requested_symbol,
+    resolve_requested_identity,
     turkiye_fund_report_canonical_from_read,
+)
+from services.turkiye_fund_navigation import (
+    clear_turkiye_fund_report_identity,
+    discard_us_etf_live_for_turkiye,
 )
 from services.turkiye_fund_snapshot_reader import (
     SnapshotReadError,
@@ -88,24 +96,40 @@ def _refresh_live_fund_analysis(symbol: str):
 
 def _return_to_dashboard() -> None:
     st.session_state.pop(FUND_REPORT_SESSION_SYMBOL, None)
+    st.session_state.pop(FUND_REPORT_SESSION_LIVE, None)
+    st.session_state.pop(FUND_REPORT_SESSION_RESOLVED, None)
+    clear_turkiye_fund_report_identity(st.session_state, st.query_params)
     if FUND_REPORT_QUERY_PARAM in st.query_params:
         del st.query_params[FUND_REPORT_QUERY_PARAM]
     st.switch_page("pages/1_Dashboard.py")
 
 
-requested_symbol = resolve_requested_symbol(
+requested_symbol, requested_instrument, requested_market = resolve_requested_identity(
     session_symbol=st.session_state.get(FUND_REPORT_SESSION_SYMBOL),
     query_symbol=st.query_params.get(FUND_REPORT_QUERY_PARAM),
+    session_instrument=st.session_state.get(FUND_REPORT_SESSION_INSTRUMENT),
+    query_instrument=st.query_params.get(FUND_REPORT_QUERY_INSTRUMENT),
+    session_market=st.session_state.get(FUND_REPORT_SESSION_MARKET),
+    query_market=st.query_params.get(FUND_REPORT_QUERY_MARKET),
 )
 
 if not requested_symbol:
-    st.info("Fon raporu açmak için Dashboard'daki takip edilen fonlardan «Fon Raporu» seçin.")
+    st.info(
+        "Fon raporu açmak için Dashboard'daki Türkiye fonlarından "
+        "veya takip edilen fonlardan «Fon Raporu» seçin."
+    )
     if st.button("← Dashboard"):
         _return_to_dashboard()
     st.stop()
 
 st.session_state[FUND_REPORT_SESSION_SYMBOL] = requested_symbol
 st.query_params[FUND_REPORT_QUERY_PARAM] = requested_symbol
+if requested_instrument:
+    st.session_state[FUND_REPORT_SESSION_INSTRUMENT] = requested_instrument
+    st.query_params[FUND_REPORT_QUERY_INSTRUMENT] = requested_instrument
+if requested_market:
+    st.session_state[FUND_REPORT_SESSION_MARKET] = requested_market
+    st.query_params[FUND_REPORT_QUERY_MARKET] = requested_market
 
 tracked_row = tracked_fund_repo.get_by_symbol(requested_symbol)
 candidate_row = candidate_repo.get_by_symbol(requested_symbol)
@@ -127,13 +151,37 @@ if (
     if resolved is None and manual_result.resolved is not None:
         resolved = manual_result.resolved
 
+live_result, resolved, analysis_kind = discard_us_etf_live_for_turkiye(
+    requested_symbol,
+    instrument=requested_instrument,
+    market=requested_market,
+    live_result=live_result,
+    resolved=resolved,
+    analysis_kind=analysis_kind,
+)
+if is_turkiye_fund_production_identity(
+    requested_symbol,
+    instrument=requested_instrument,
+    market=requested_market,
+):
+    st.session_state.pop(FUND_REPORT_SESSION_LIVE, None)
+    st.session_state.pop(FUND_REPORT_SESSION_RESOLVED, None)
+
 had_tracked_context = bool(st.session_state.get("fund_report_had_tracked_context"))
-if tracked_row is not None:
+if tracked_row is not None and not is_turkiye_fund_production_identity(
+    requested_symbol,
+    instrument=requested_instrument,
+    market=requested_market,
+):
     st.session_state["fund_report_had_tracked_context"] = True
 
 canonical = None
 canonical_unavailable_reason = None
-if is_turkiye_fund_production_identity(requested_symbol):
+if is_turkiye_fund_production_identity(
+    requested_symbol,
+    instrument=requested_instrument,
+    market=requested_market,
+):
     try:
         canonical = turkiye_fund_report_canonical_from_read(
             load_turkiye_fund_canonical_from_client(client, requested_symbol)
@@ -151,6 +199,8 @@ view = build_fund_report_view(
     candidate_row=candidate_row,
     canonical=canonical,
     canonical_unavailable_reason=canonical_unavailable_reason,
+    instrument=requested_instrument,
+    market=requested_market,
 )
 
 if not view.entry_allowed:
@@ -162,12 +212,19 @@ if not view.entry_allowed:
 header_left, header_right = st.columns([4, 1])
 with header_left:
     st.markdown(f"## {view.symbol} — {view.fund_name}")
-    st.caption("ETF / fon raporu — equity NABI skoru uygulanmaz.")
+    if view.instrument == "FUND" and view.market == "TR":
+        st.caption("FUND/TR — equity NABI skoru uygulanmaz.")
+    else:
+        st.caption("ETF / fon raporu — equity NABI skoru uygulanmaz.")
 with header_right:
     if st.button("← Dashboard", key="fund_report_back_dashboard", use_container_width=True):
         _return_to_dashboard()
 
-turkiye_canonical = is_turkiye_fund_production_identity(requested_symbol)
+turkiye_canonical = is_turkiye_fund_production_identity(
+    requested_symbol,
+    instrument=requested_instrument,
+    market=requested_market,
+)
 action_cols = st.columns([1, 1, 2])
 with action_cols[0]:
     refresh_clicked = st.button(
