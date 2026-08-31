@@ -60,6 +60,11 @@ from services.fund_lookthrough_engine import build_portfolio_lookthrough
 from services.portfolio_ai_adviser_service import PortfolioAIAdviserService
 from services.portfolio_research_context import build_portfolio_research_context
 from services.total_wealth_service import compute_total_wealth_metrics
+from services.turkiye_fund_navigation import is_turkiye_fund_nav_identity
+from services.turkiye_fund_portfolio_integration import (
+    apply_portfolio_intelligence_fund_handoff,
+    portfolio_intelligence_report_symbols,
+)
 
 
 client = prepare_protected_page("Portföy Zekâsı | NABI Scout", "💼")
@@ -340,9 +345,10 @@ with tab_hold:
 
 st.divider()
 st.markdown("**Varlık raporuna git**")
-symbols = sorted(
-    {row.valuation.symbol for row in dashboard.enriched_positions if not row.valuation.is_cash}
-)
+held_symbols = {
+    row.valuation.symbol for row in dashboard.enriched_positions if not row.valuation.is_cash
+}
+symbols = list(portfolio_intelligence_report_symbols(held_symbols))
 if symbols:
     symbol_rows = {
         row.valuation.symbol: row.valuation.asset_class
@@ -350,11 +356,23 @@ if symbols:
         if not row.valuation.is_cash
     }
     selected_symbol = st.selectbox("Sembol", symbols, key="pi_report_symbol")
-    asset_class = symbol_rows.get(selected_symbol, "equity")
+    asset_class = symbol_rows.get(selected_symbol)
+    if asset_class is None and is_turkiye_fund_nav_identity(selected_symbol):
+        asset_class = "fund"
+    asset_class = asset_class or "equity"
     report_page = route_report_page(asset_class)
-    label = "📄 Fund Intelligence" if report_page == "fund_report" else "📄 Company Report"
+    label = "📄 Fund Intelligence" if (
+        report_page == "fund_report" or is_turkiye_fund_nav_identity(selected_symbol)
+    ) else "📄 Company Report"
     if st.button(label, type="primary", key="pi_open_asset_report"):
-        if report_page == "fund_report":
+        turkish_page = apply_portfolio_intelligence_fund_handoff(
+            st.session_state,
+            st.query_params,
+            selected_symbol,
+        )
+        if turkish_page:
+            st.switch_page(turkish_page)
+        elif report_page == "fund_report":
             st.session_state["fund_report_symbol"] = selected_symbol
             st.query_params["symbol"] = selected_symbol
             st.switch_page("pages/9_Fund_Report.py")

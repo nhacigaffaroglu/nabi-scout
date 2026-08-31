@@ -158,6 +158,12 @@ def render_canonical_snapshot_section(canonical: TurkiyeFundReportCanonical) -> 
         exposure = LAYER_CASH_LIKE
     st.markdown(f"**Ekonomik maruziyet:** {exposure} / {canonical.geography or '—'}")
     st.caption(f"research_allowed: {canonical.research_allowed}")
+    if canonical.increase_allowed:
+        st.caption(f"8E {canonical.eight_e}. Yeni para artışına izin veriliyor.")
+    else:
+        st.caption(
+            f"8E {canonical.eight_e}. Yeni para artışına izin verilmiyor. Allocation 0 TRY."
+        )
     st.caption(f"TEFAS as_of: {canonical.as_of_key or '—'}")
     source = canonical.source_as_of or {}
     if source.get("kap_mandate") or source.get("tefas_price"):
