@@ -139,10 +139,12 @@ class PortfolioManagementService:
         if normalized_class not in ASSET_CLASS_OPTIONS:
             raise WealthValidationError(f"Desteklenmeyen varlık sınıfı: {asset_class}")
 
-        if sym in PILOT_TEFAS_FUND_CODES:
+        normalized_market = str(market or "").strip().upper()
+        is_turkiye_fund = normalized_class == ASSET_CLASS_FUND and normalized_market == "TR"
+        if sym in PILOT_TEFAS_FUND_CODES or is_turkiye_fund:
             if normalized_class == ASSET_CLASS_CASH:
                 raise WealthValidationError(
-                    "Türk fonları nakit değil. AIS/ZPE/IAT FUND/TR olarak kaydedilir."
+                    "Türkiye fonları nakit değildir; FUND/TR olarak kaydedilir."
                 )
             normalized_class = ASSET_CLASS_FUND
             currency = "TRY"

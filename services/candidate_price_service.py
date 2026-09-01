@@ -46,7 +46,9 @@ class CandidatePriceService:
     ) -> None:
         seen: set[str] = set()
         for symbol, asset_class, currency in assets:
-            if is_cash_asset(symbol, asset_class) and not is_turkiye_fund_holding_identity(symbol):
+            if is_cash_asset(symbol, asset_class) and not is_turkiye_fund_holding_identity(
+                symbol, instrument=asset_class, market=None
+            ):
                 continue
             sym = str(symbol or "").strip().upper()
             if not sym or sym in seen:
@@ -66,6 +68,8 @@ class CandidatePriceService:
             symbol,
             client=self._client,
             currency=currency,
+            instrument=asset_class,
+            market=market,
         )
         if turkish is not None:
             canonical = str(symbol or "").strip().upper()

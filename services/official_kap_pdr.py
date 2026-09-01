@@ -55,6 +55,29 @@ _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
 _BIST_CODE_RE = re.compile(r"\b([A-Z0-9]{2,6}\.[EF])\b")
 _TICKER_ROW_RE = re.compile(r"\b([A-Z]{3,6}(?:-[A-Z0-9]{2,10})?)\s+(TL|TRY|USD|EUR|AU1)\b")
 _FTD_TAIL_RE = re.compile(r"(-?\d+,\d+)\s+(-?\d+,\d+)\s+(-?\d+,\d+)\s*$")
+_NUMBERED_MONEY = r"(?P<{name}>-?\d{{1,3}}(?:\.\d{{3}})*(?:,\d+)?|-?\d+,\d+)"
+_NUMBERED_WEIGHT = r"(?P<wsign>-)?%(?P<w>-?\d+,\d+)(?:\s+\S.*)?$"
+_NUMBERED_HOLDING_RE = re.compile(
+    r"^(?P<code>[A-Z]{3,6}(?:[A-Z0-9]{1,2})?)\s+(?P<name>.+?)\s+"
+    + _NUMBERED_MONEY.format(name="nom")
+    + r"\s+"
+    + _NUMBERED_MONEY.format(name="mv")
+    + r"\s+"
+    + _NUMBERED_WEIGHT
+)
+_NUMBERED_NAMED_RE = re.compile(
+    r"^(?P<name>.+?)\s+"
+    + _NUMBERED_MONEY.format(name="nom")
+    + r"\s+"
+    + _NUMBERED_MONEY.format(name="mv")
+    + r"\s+"
+    + _NUMBERED_WEIGHT
+)
+_NUMBERED_TAIL_RE = re.compile(
+    r"(-?\d{1,3}(?:\.\d{3})*(?:,\d+)?|-?\d+,\d+)\s+"
+    r"(-?\d{1,3}(?:\.\d{3})*(?:,\d+)?|-?\d+,\d+)\s+"
+    r"-?%-?\d+,\d+\s*$"
+)
 _PAGE_NOISE_RE = re.compile(
     r"temmuz-\d{4}|kamuyu aydinlatma|sayfa\s*\d|menkul kiymet\s+cinsi|doviz\s+ihracci",
     flags=re.I,
@@ -78,6 +101,10 @@ _SECTION_MAP = (
     ("kira sertifika", ASSET_GROUP_LEASE_CERTIFICATE),
     ("katılım hesabı", ASSET_GROUP_PARTICIPATION_ACCOUNT),
     ("katilim hesabi", ASSET_GROUP_PARTICIPATION_ACCOUNT),
+    ("katılma hesap", ASSET_GROUP_PARTICIPATION_ACCOUNT),
+    ("katilma hesap", ASSET_GROUP_PARTICIPATION_ACCOUNT),
+    ("katılma belge", ASSET_GROUP_FUND),
+    ("katilma belge", ASSET_GROUP_FUND),
     ("taahhüt sözleşmesi", ASSET_GROUP_REPO),
     ("taahhut sozlesmesi", ASSET_GROUP_REPO),
     ("satış vaadiyle alış", ASSET_GROUP_REPO),
@@ -142,7 +169,9 @@ _HEADER_SKIP = (
     "1 - fonu",
     "2 - fonun",
     "3 - fon portföy",
+    "3- fon",
     "4 - toplam",
+    "4- fon toplam",
     "5 - ay içinde",
     "7 - portföyden",
     "8 - itfalar",
@@ -362,6 +391,13 @@ def _section_from_line(line: str) -> Optional[str]:
         return None
     group = normalize_pdr_asset_group(line)
     if group == ASSET_GROUP_UNKNOWN:
+        if (
+            re.match(r"^[A-ZÇĞİÖŞÜI]\)\s+\S", line.strip(), flags=re.I)
+            and not _has_numbered_tail(line)
+            and not _isin_tokens(line)
+            and not _BIST_CODE_RE.search(line)
+        ):
+            return re.sub(r"^#+\s*", "", line.strip())
         return None
     if len(_plain(line)) > 80 and _isin_tokens(line):
         return None
@@ -628,6 +664,107 @@ def _parse_zpe_equity_row(
     )
 
 
+def _numbered_weight(match: re.Match[str]) -> Optional[float]:
+    value = parse_tr_number(match.group("w"))
+    if value is None:
+        return None
+    if match.groupdict().get("wsign") == "-":
+        return -abs(value)
+    return value
+
+
+def _is_numbered_ftd_summary(text: str) -> bool:
+    folded = _fold(text)
+    if folded.startswith("toplam"):
+        return True
+    if re.match(r"^[a-e][.)]\s*", folded) and any(
+        token in folded
+        for token in (
+            "fon portfoy degeri",
+            "hazir degerler",
+            "alacaklar",
+            "diger varliklar",
+            "borclar",
+        )
+    ):
+        return True
+    return False
+
+
+def _has_numbered_tail(line: str) -> bool:
+    return bool(_NUMBERED_TAIL_RE.search(_plain(line)))
+
+
+def _is_numbered_holding_start(line: str) -> bool:
+    text = _plain(line)
+    if not text or _is_header(text) or _is_page_noise(text) or _is_numbered_ftd_summary(text):
+        return False
+    if not _has_numbered_tail(text):
+        return False
+    if _has_ftd_tail(text) or _BIST_CODE_RE.search(text):
+        return False
+    if is_valid_isin(text.split()[0].rstrip(".,;:")):
+        return False
+    return True
+
+
+def _parse_numbered_holding_row(
+    line: str,
+    *,
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    section: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> Optional[KapPdrHolding]:
+    """ELZ-style numbered PDR rows: CODE NAME nominal market_value %weight."""
+    text = _plain(line)
+    if not text or _is_header(text) or _is_numbered_ftd_summary(text):
+        return None
+    if _has_ftd_tail(text) or _BIST_CODE_RE.search(text):
+        return None
+    match = _NUMBERED_HOLDING_RE.match(text) or _NUMBERED_NAMED_RE.match(text)
+    if not match:
+        return None
+    weight = _numbered_weight(match)
+    if weight is None:
+        return None
+    groups = match.groupdict()
+    code = str(groups.get("code") or "").strip() or None
+    name = str(groups.get("name") or "").strip() or code
+    if code is None and name:
+        first = name.split()[0]
+        if re.fullmatch(r"[A-Z]{2,6}(?:\.[A-Za-z0-9ÇçĞğİıÖöŞşÜü.%/-]+)+", first) or re.fullmatch(
+            r"[A-Z]{3,6}(?:[A-Z0-9]{1,2})?", first
+        ):
+            code = first
+            name = name[len(first) :].strip() or first
+    isins = _isin_tokens(text)
+    isin = isins[0] if isins else None
+    return _holding(
+        fund_code=fund_code,
+        report_period=report_period,
+        report_date=report_date,
+        asset_group_raw=section,
+        security_name_raw=name,
+        issuer_raw=name if not code else None,
+        isin=isin,
+        official_code=code or isin,
+        maturity_date=parse_tr_date(text),
+        currency="TRY" if re.search(r"\b(TL|TRY)\b", text) else None,
+        quantity=None,
+        nominal=parse_tr_number(match.group("nom")),
+        unit_price=None,
+        market_value=parse_tr_number(match.group("mv")),
+        portfolio_weight=weight,
+        fund_total_value=fund_total_value,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
+
 def _parse_ticker_row(
     line: str,
     *,
@@ -763,11 +900,18 @@ def _parse_ftd_overlay(
         (r"B-\)?\s*HAZIR DE[ĞG]ERLER\s+(-?[\d.]+,\d+)\s+(-?[\d,]+)\s*%", "HAZIR DEĞERLER"),
         (r"C-\)?\s*ALACAKLAR\s+(-?[\d.]+,\d+)\s+(-?[\d,]+)\s*%", "ALACAKLAR"),
         (r"E-\)?\s*BOR[ÇC]LAR\s+(-?[\d.]+,\d+)\s+(-?[\d,]+)\s*%", "BORÇLAR"),
+        (r"B[.\-)]+\s*HAZIR DE[ĞG]ERLER\s+(-?[\d.]+,\d+)\s+(-?%-?[\d,]+)", "HAZIR DEĞERLER"),
+        (r"C[.\-)]+\s*ALACAKLAR\s+(-?[\d.]+,\d+)\s+(-?%-?[\d,]+)", "ALACAKLAR"),
+        (r"E[.\-)]+\s*BOR[ÇC]LAR\s+(-?[\d.]+,\d+)\s+(-?%-?[\d,]+)", "BORÇLAR"),
     )
+    seen: set[str] = set()
     for pattern, label in patterns:
+        if label in seen:
+            continue
         match = re.search(pattern, text, flags=re.I)
         if not match:
             continue
+        seen.add(label)
         rows.append(
             _holding(
                 fund_code=fund_code,
@@ -867,6 +1011,8 @@ def _is_holding_row_start(line: str) -> bool:
         return True
     if _has_ftd_tail(text) and re.search(r"\b(TL|TRY)\b", text) and not _isin_tokens(text):
         return True
+    if _is_numbered_holding_start(text):
+        return True
     return False
 
 
@@ -897,6 +1043,8 @@ def _is_wrap_continuation(line: str, buf: str) -> bool:
     if "GRUP TOPLAMI" in text.upper() or _is_header(text) or _is_page_noise(text):
         return False
     if _has_ftd_tail(text):
+        return False
+    if _is_numbered_holding_start(text):
         return False
     if _BIST_CODE_RE.search(text):
         return False
@@ -952,15 +1100,22 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         line = raw.strip()
         if not line or line in {"|", ":"} or set(line) <= {"|", "-", " "}:
             continue
-        if re.search(r"IV-?FON TOPLAM|4 - TOPLAM DE[ĞG]ER|VII-PORTF|7 - PORTF|8 - [İI]TFALAR|9 - PORTF", line, flags=re.I):
+        if re.search(r"IV-?FON TOPLAM|4\s*-?\s*FON TOPLAM DE[ĞG]ER|4 - TOPLAM DE[ĞG]ER|VII-PORTF|7 - PORTF|8 - [İI]TFALAR|9 - PORTF", line, flags=re.I):
             flush()
             break
         if _is_page_noise(line):
             continue
         header = _section_from_line(line)
-        if header and not _isin_tokens(line) and not _BIST_CODE_RE.search(line) and not _TICKER_ROW_RE.match(_plain(line)):
+        if header and not _isin_tokens(line) and not _BIST_CODE_RE.search(line) and not _TICKER_ROW_RE.match(_plain(line)) and not _is_numbered_holding_start(line):
             flush()
             section = header
+            continue
+        if _is_numbered_holding_start(line):
+            flush()
+            buf = line
+            continue
+        if line.upper().lstrip().startswith("TOPLAM:") or re.match(r"^TOPLAM\s*$", line.strip(), flags=re.I):
+            flush()
             continue
         if line.startswith("|") and not _BIST_CODE_RE.search(line):
             pipe_buf.append(line)
@@ -1005,14 +1160,18 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
 def _cut_holdings_body(text: str) -> str:
     body = str(text or "")
     end = re.search(
-        r"IV-?FON TOPLAM DE[ĞG]ER[İI]|4 - TOPLAM DE[ĞG]ER[İI]|VII-PORTF[ÖO]YDEN|7 - PORTF[ÖO]YDEN",
+        r"IV-?FON TOPLAM DE[ĞG]ER[İI]|4\s*-?\s*FON TOPLAM DE[ĞG]ER[İI]|4 - TOPLAM DE[ĞG]ER[İI]|VII-PORTF[ÖO]YDEN|7 - PORTF[ÖO]YDEN",
         body,
         flags=re.I,
     )
     end_at = end.start() if end else len(body)
     if re.search(r"\b[A-Z0-9]{2,6}\.[EF]\b", body[:end_at]):
         return body[:end_at]
-    start = re.search(r"III-?FON PORTF[ÖO]Y DE[ĞG]ER[İI] TABLOSU|3 - FON PORTF[ÖO]Y DE[ĞG]ER[İI]", body, flags=re.I)
+    start = re.search(
+        r"III-?FON PORTF[ÖO]Y DE[ĞG]ER[İI] TABLOSU|3\s*-?\s*FON PORTF[ÖO]Y DE[ĞG]ER[İI]",
+        body,
+        flags=re.I,
+    )
     if start:
         return body[start.start() : end_at]
     return body[:end_at]
@@ -1068,6 +1227,19 @@ def parse_kap_pdr_text(
         )
         if zpe:
             holdings.append(zpe)
+            continue
+        numbered = _parse_numbered_holding_row(
+            line,
+            fund_code=code,
+            report_period=report_period,
+            report_date=report_date,
+            section=section,
+            fund_total_value=fund_total,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+        if numbered:
+            holdings.append(numbered)
             continue
         ticker = _parse_ticker_row(
             line,

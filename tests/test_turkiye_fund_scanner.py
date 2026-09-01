@@ -315,6 +315,7 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         facts = scanner_adviser_facts(self.result)
         self.assertIn("araştırma", narrative.casefold())
         self.assertIn("not a buy", narrative.casefold())
+        self.assertIn("sufficient official evidence", narrative)
         self.assertTrue(facts["not_a_buy"])
         self.assertTrue(facts["not_eight_e"])
         self.assertTrue(facts["not_new_money"])
@@ -330,6 +331,10 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         self.assertNotIn("portfolio_security_decision_engine", text)
         self.assertNotIn("wealth_new_money_allocation", text)
         self.assertNotIn("PILOT_TEFAS_FUND_CODES", text)
+
+    def test_newly_uygun_requires_real_previous_status_not_pilot_allowlist(self) -> None:
+        result = run_turkiye_fund_scanner(persist=False, sample_only=False)
+        self.assertEqual(result.newly_uygun, ())
 
     def test_broad_ui_funnel_controls(self) -> None:
         page = PAGE.read_text(encoding="utf-8")
@@ -535,8 +540,10 @@ class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
 
     def test_adviser_rank_is_not_a_buy(self) -> None:
         narrative = format_scanner_adviser_narrative(self._scanner_result())
-        self.assertIn("canonical Fund Intelligence", narrative)
+        self.assertIn("sufficient official evidence", narrative)
+        self.assertIn("peer category", narrative)
         self.assertNotIn("Buy this fund", narrative)
+        self.assertNotIn("Buy X", narrative)
 
     def _scanner_result(self):
         return run_turkiye_fund_scanner(persist=False, sample_only=True)
@@ -775,6 +782,366 @@ class TurkiyeFund6OfficialRecoveryTests(unittest.TestCase):
         source = Path("services/turkiye_fund_universe_discovery.py").read_text(encoding="utf-8")
         self.assertIn("DISCOVERY_MULTI_ASSET", source)
         self.assertIn(DISCOVERY_MULTI_ASSET, source)
+
+
+class TurkiyeFund7KapCompletionTests(unittest.TestCase):
+    def test_public_kap_directory_parser_recovers_current_identity_and_slug(self) -> None:
+        from services.turkiye_fund_source_capture import parse_kap_fund_directory_html
+
+        html = """
+        <table><tbody><tr>
+          <td>PKD</td>
+          <td><a href="/tr/fon-bilgileri/ozet/pkd-pusula-portfoy-ikinci-katilim-hisse-senedi-serbest-fon-hisse-senedi-yogun-fon">
+            PUSULA PORTFÖY İKİNCİ KATILIM HİSSE SENEDİ SERBEST FON (HİSSE SENEDİ YOĞUN FON)
+          </a></td>
+          <td>PUSULA PORTFÖY YÖNETİMİ A.Ş.</td>
+        </tr></tbody></table>
+        """
+        rows = parse_kap_fund_directory_html(html)
+        self.assertEqual(rows["PKD"]["founder"], "PUSULA PORTFÖY YÖNETİMİ A.Ş.")
+        self.assertEqual(
+            rows["PKD"]["slug"],
+            "pkd-pusula-portfoy-ikinci-katilim-hisse-senedi-serbest-fon-hisse-senedi-yogun-fon",
+        )
+        self.assertIn("HİSSE SENEDİ", rows["PKD"]["fund_name"])
+
+    def test_kap_directory_can_resolve_identity_when_per_fund_pages_throttle(self) -> None:
+        from unittest.mock import patch
+        from services.turkiye_fund_broad_capture import capture_one_fund
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="PKD",
+            fund_name="PUSULA PORTFÖY İKİNCİ DENGE KATILIM SERBEST FON",
+            isin=None,
+            founder=None,
+            tefas_status=TEFAS_STATUS_ACTIVE,
+        )
+        directory = {
+            "PKD": {
+                "fund_code": "PKD",
+                "fund_name": "PUSULA PORTFÖY İKİNCİ KATILIM HİSSE SENEDİ SERBEST FON (HİSSE SENEDİ YOĞUN FON)",
+                "founder": "PUSULA PORTFÖY YÖNETİMİ A.Ş.",
+                "slug": "pkd-pusula-portfoy-ikinci-katilim-hisse-senedi-serbest-fon-hisse-senedi-yogun-fon",
+            }
+        }
+
+        class _Session:
+            stats = type("Stats", (), {"cache_hits": 0, "unchanged_documents": 0})()
+
+        with patch("services.turkiye_fund_broad_capture.load_or_store", side_effect=RuntimeError("429")), \
+             patch("services.turkiye_fund_broad_capture._attach_tefas", return_value=None), \
+             patch("services.turkiye_fund_broad_capture._write_pack", side_effect=lambda _c, pack: pack):
+            pack = capture_one_fund(
+                identity,
+                session=_Session(),
+                catalog_rows=(),
+                fetch_prices=False,
+                allow_ocr=False,
+                kap_directory=directory,
+            )
+        self.assertEqual(pack["identity_status"], "RESOLVED")
+        self.assertEqual(pack["identity_source"], "KAP_FUND_DIRECTORY")
+        self.assertTrue(pack["identity_name_updated"])
+        self.assertEqual(pack["founder"], "PUSULA PORTFÖY YÖNETİMİ A.Ş.")
+        self.assertIn("SOURCE_ERROR", pack["review_reasons"])
+
+    def test_persistent_session_cookie_reuse_and_single_client(self) -> None:
+        from http.cookiejar import CookieJar
+        from services.turkiye_fund_source_capture import OfficialCaptureSession, USER_AGENT
+
+        self.assertIn("NABI-Scout/FUND-7", USER_AGENT)
+        self.assertNotIn("Mozilla", USER_AGENT)
+        calls: list[str] = []
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"<html>ok</html>"
+
+        def opener(request, timeout=0):
+            calls.append(request.full_url)
+            return _Resp()
+
+        session = OfficialCaptureSession(live=True, opener=opener, sleep=lambda _s: None, min_gap_sec=0)
+        self.assertIsInstance(session.cookie_jar, CookieJar)
+        session.ensure_kap_session()
+        session.ensure_kap_session()
+        self.assertTrue(session.kap_warmed)
+        self.assertEqual(sum(1 for url in calls if url.rstrip("/") == "https://www.kap.org.tr"), 1)
+
+    def test_throttle_retry_after_and_adaptive_pacing(self) -> None:
+        from email.message import EmailMessage
+        from io import BytesIO
+        from urllib.error import HTTPError
+        from services.turkiye_fund_source_capture import (
+            KAP_MIN_GAP_SEC,
+            OfficialCaptureSession,
+        )
+
+        sleeps: list[float] = []
+        attempts = {"n": 0}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def opener(request, timeout=0):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                hdrs = EmailMessage()
+                hdrs["Retry-After"] = "2"
+                raise HTTPError(
+                    "https://www.kap.org.tr/tr/api/disclosure/funds/byCriteria",
+                    429,
+                    "throttled",
+                    hdrs,
+                    BytesIO(b""),
+                )
+            return _Resp()
+
+        session = OfficialCaptureSession(live=True, opener=opener, sleep=sleeps.append, min_gap_sec=KAP_MIN_GAP_SEC)
+        payload = session.http_json("https://www.kap.org.tr/tr/api/disclosure/funds/byCriteria", {"x": 1})
+        self.assertEqual(payload["ok"], True)
+        self.assertEqual(session.stats.throttle_responses, 1)
+        self.assertGreaterEqual(session.stats.retry_count, 1)
+        self.assertTrue(any(wait >= 2 for wait in sleeps))
+        self.assertGreaterEqual(session.min_gap_sec, KAP_MIN_GAP_SEC)
+
+    def test_throttle_does_not_hammer(self) -> None:
+        from email.message import EmailMessage
+        from io import BytesIO
+        from urllib.error import HTTPError
+        from services.turkiye_fund_source_capture import OfficialCaptureSession
+
+        attempts = {"n": 0}
+
+        def opener(request, timeout=0):
+            attempts["n"] += 1
+            hdrs = EmailMessage()
+            raise HTTPError(
+                "https://www.kap.org.tr/tr/Bildirim/1",
+                503,
+                "busy",
+                hdrs,
+                BytesIO(b""),
+            )
+
+        session = OfficialCaptureSession(live=True, opener=opener, sleep=lambda _s: None, min_gap_sec=0)
+        with self.assertRaises(HTTPError):
+            session.http_get_text("https://www.kap.org.tr/tr/Bildirim/1")
+        self.assertLessEqual(attempts["n"], 3)
+        self.assertEqual(session.stats.throttle_responses, 2)
+
+    def test_client_errors_are_not_retried(self) -> None:
+        from email.message import EmailMessage
+        from io import BytesIO
+        from urllib.error import HTTPError
+        from services.turkiye_fund_source_capture import OfficialCaptureSession
+
+        attempts = {"n": 0}
+
+        def opener(request, timeout=0):
+            attempts["n"] += 1
+            raise HTTPError(
+                "https://www.kap.org.tr/tr/missing",
+                404,
+                "gone",
+                EmailMessage(),
+                BytesIO(b""),
+            )
+
+        session = OfficialCaptureSession(live=True, opener=opener, sleep=lambda _s: None, min_gap_sec=0)
+        with self.assertRaises(HTTPError):
+            session.http_get_text("https://www.kap.org.tr/tr/missing")
+        self.assertEqual(attempts["n"], 1)
+
+    def test_genel_exact_slug_can_recover_identity_without_ozet(self) -> None:
+        from services.turkiye_fund_broad_capture import _genel_identity_evidence
+
+        self.assertTrue(
+            _genel_identity_evidence(
+                {
+                    "resolved": True,
+                    "isin": "TRYPUPY00000",
+                    "items": {"kpy81_acc1_kurucu_unvan": "PUSULA PORTFÖY"},
+                }
+            )
+        )
+        self.assertTrue(
+            _genel_identity_evidence(
+                {
+                    "resolved": True,
+                    "isin": None,
+                    "items": {"kpy81_acc1_kurucu_unvan": "PUSULA PORTFÖY"},
+                }
+            )
+        )
+        self.assertFalse(_genel_identity_evidence({"resolved": True, "items": {}}))
+        self.assertFalse(
+            _genel_identity_evidence(
+                {"resolved": False, "isin": "TRYPUPY00000", "items": {}}
+            )
+        )
+
+    def test_capture_universe_can_target_only_recovery_codes(self) -> None:
+        from unittest.mock import patch
+        from services.turkiye_fund_broad_capture import capture_universe
+        from services.turkiye_fund_source_capture import OfficialCaptureSession
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identities = tuple(
+            TurkiyeFundUniverseIdentity(
+                fund_code=code,
+                fund_name=f"{code} KATILIM FONU",
+                isin=None,
+                founder=None,
+                tefas_status=TEFAS_STATUS_ACTIVE,
+            )
+            for code in ("AAA", "BBB", "CCC")
+        )
+        attempted: list[str] = []
+
+        def fake_capture(identity, **kwargs):
+            attempted.append(identity.fund_code)
+            return {
+                "fund_code": identity.fund_code,
+                "identity_status": "RESOLVED",
+                "review_reasons": [],
+                "errors": [],
+                "evidence_recovery_version": 9,
+            }
+
+        session = OfficialCaptureSession(live=False, sleep=lambda _s: None, min_gap_sec=0)
+        with patch("services.turkiye_fund_broad_capture.capture_one_fund", side_effect=fake_capture):
+            packs, stats = capture_universe(
+                identities,
+                catalog_rows=(),
+                session=session,
+                resume=False,
+                only_fund_codes=("bbb", "CCC"),
+                fetch_prices=False,
+                allow_ocr=False,
+            )
+        self.assertEqual(attempted, ["BBB", "CCC"])
+        self.assertEqual(set(packs), {"BBB", "CCC"})
+        self.assertEqual(stats.funds_attempted, 2)
+
+    def test_checkpoint_resume_skips_accepted_identities(self) -> None:
+        from services.turkiye_fund_broad_capture import _pack_is_reusable
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="BAI",
+            fund_name="BV PORTFÖY ALTIN KATILIM FONU",
+            isin=None,
+            founder="BV PORTFÖY",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+            kap_disclosure_index=1,
+        )
+        v8 = {
+            "fund_code": "BAI",
+            "identity_status": "RESOLVED",
+            "documents": {"BILGI_FORMU": {"file_oid": "oid"}},
+            "kap_disclosure_index": 1,
+            "production_persist": False,
+            "evidence_recovery_version": 8,
+        }
+        self.assertTrue(_pack_is_reusable(v8, identity))
+        self.assertTrue(_pack_is_reusable({**v8, "evidence_recovery_version": 9}, identity))
+        self.assertFalse(_pack_is_reusable({**v8, "review_reasons": ["SOURCE_ERROR"]}, identity))
+        self.assertFalse(_pack_is_reusable({**v8, "identity_status": "UNRESOLVED"}, identity))
+
+    def test_ocr_last_resort_only_when_allowed(self) -> None:
+        from services.turkiye_fund_text_recovery import LAYER_OCR, LAYER_UNAVAILABLE, recover_official_document_text
+
+        ocr_calls = {"n": 0}
+
+        class _Session:
+            def http_get_text(self, url, **kwargs):
+                return "<html><title>Yatırımcı Bilgi Formu</title><body>short</body></html>"
+
+            def kap_rsc(self, url):
+                return "{}"
+
+            def http_get_bytes(self, *args, **kwargs):
+                return b"%PDF-1.4 empty"
+
+        closed = recover_official_document_text(
+            _Session(),
+            file_oid="oid",
+            disclosure_index="1",
+            document_type="YBF",
+            ocr_fn=lambda _img: ocr_calls.__setitem__("n", ocr_calls["n"] + 1) or "x",
+            allow_ocr=False,
+        )
+        self.assertEqual(closed.get("text_origin"), LAYER_UNAVAILABLE)
+        self.assertNotIn(LAYER_OCR, closed.get("layers_attempted") or [])
+        self.assertEqual(ocr_calls["n"], 0)
+        opened = recover_official_document_text(
+            _Session(),
+            file_oid="oid",
+            disclosure_index="1",
+            document_type="YBF",
+            ocr_fn=lambda _img: ocr_calls.__setitem__("n", ocr_calls["n"] + 1) or "x",
+            allow_ocr=True,
+        )
+        self.assertIn(LAYER_OCR, opened.get("layers_attempted") or [])
+
+    def test_gls_contradiction_stays_kontrol_et(self) -> None:
+        from services.fund_product_contract import ASSET_GROUP_LEASE_CERTIFICATE, ASSET_GROUP_UNKNOWN
+        from services.official_kap_pdr import normalize_pdr_asset_group
+        from services.official_turkiye_fund_participation import SUKUK_ALLOWED
+
+        self.assertNotEqual(normalize_pdr_asset_group("BORÇLANMA SENETLERİ"), ASSET_GROUP_LEASE_CERTIFICATE)
+        self.assertNotIn(ASSET_GROUP_UNKNOWN, SUKUK_ALLOWED)
+        result = run_turkiye_fund_scanner(persist=False, sample_only=False)
+        by_code = {row.fund_code: row for row in result.rows}
+        if "GLS" in by_code:
+            self.assertNotEqual(by_code["GLS"].participation, PARTICIPATION_STATUS_UYGUN)
+
+    def test_participation_and_fi_remain_frozen(self) -> None:
+        by_code = {row.fund_code: row for row in run_turkiye_fund_scanner(persist=False, sample_only=True).rows}
+        for code, (score, state) in FROZEN.items():
+            self.assertEqual(by_code[code].fi_score, score)
+            self.assertEqual(by_code[code].fi_state, state)
+            self.assertEqual(by_code[code].participation, PARTICIPATION_STATUS_UYGUN)
+        name_only = evaluate_turkiye_fund_participation(
+            "GLS",
+            name_only=True,
+            official_name="ZİRAAT PORTFÖY KATILIM FONU",
+        )
+        self.assertEqual(name_only.participation_status, PARTICIPATION_STATUS_KONTROL_ET)
+
+    def test_zero_eight_e_new_money_persist_paid(self) -> None:
+        result = run_turkiye_fund_scanner(persist=False, sample_only=False)
+        self.assertEqual(result.eight_e_calls, 0)
+        self.assertEqual(result.new_money_calls, 0)
+        self.assertEqual(result.trades, 0)
+        self.assertEqual(result.portfolio_writes, 0)
+        self.assertEqual(result.production_writes, ())
+        capture = Path("services/turkiye_fund_broad_capture.py").read_text(encoding="utf-8")
+        source = Path("services/turkiye_fund_source_capture.py").read_text(encoding="utf-8")
+        blob = capture + source
+        self.assertNotIn("allocate_new_money", blob)
+        self.assertNotIn("evaluate_official_fund_decision", blob)
+        from services.turkiye_fund_source_capture import assert_official_host
+
+        with self.assertRaises(ValueError):
+            assert_official_host("https://financialmodelingprep.com/x")
+        self.assertNotIn("captcha", blob.casefold())
+        self.assertNotIn("proxy rotation", blob.casefold())
 
 
 if __name__ == "__main__":

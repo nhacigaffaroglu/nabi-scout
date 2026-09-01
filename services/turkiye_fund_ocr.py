@@ -94,7 +94,10 @@ def ocr_official_pdf(
     max_images: int = 24,
 ) -> tuple[Optional[str], Optional[str]]:
     """Return (text, origin) or (None, reason). Never invents fields."""
-    images = extract_pdf_images(payload, max_images=max_images)
+    try:
+        images = extract_pdf_images(payload, max_images=max_images)
+    except Exception:  # noqa: BLE001 — last-resort OCR must fail closed
+        return None, "pdf_unreadable"
     if not images:
         return None, "no_embedded_images"
     engine = ocr_fn or _tesseract_ocr

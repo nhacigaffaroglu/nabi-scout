@@ -378,6 +378,78 @@ E-)BORÇLAR -5.400.553,97 -15,38 %
         self.assertEqual(len(ais.holdings), 120)
         self.assertTrue(ais.weights.weight_reconciled)
 
+    def test_elz_numbered_layout_no_forced_reconciliation(self) -> None:
+        elz = """
+3- FON PORTFÖY DEĞERİ TABLOSU
+                                 İhraççı                        Nominal Değeri               Rayiç Değeri               %
+  A) HİSSE SENETLERİ
+      ALBRK                      ALBARAKA TÜRK                     2.400.000,00              19.032.000,00          %4,83
+                                 KATILIM BANK A.Ş
+      ASELS                      Aselsan Elektronik                   80.000,00              27.380.000,00          %6,94
+                                 Sanayi ve Ticaret A.Ş.
+   TOPLAM:                                                    31.840.615,48            340.247.541,45
+M) KATILMA HESAPLARI
+    QP.KH.Günlük Ziraat Kat. TL %38                            27.084.328,77             27.084.328,77          %6,87
+    TOPLAM:                                                   27.084.328,77              27.084.328,77
+N) KATILMA BELGELERİ
+    EKF                        EKF Qinvest Portföy              4.490.724,00                599.686,79          %0,15
+                               Kira Sertifikası Katılım
+                               (TL) Fonu
+    PDD                        PDD Qinvest Portföy              3.718.321,00             21.733.344,55          %5,51
+                               Katılım Fonu
+    TOPLAM:                                                     8.209.377,00             27.036.244,41
+4- FON TOPLAM DEĞERİ TABLOSU
+  A. FON PORTFÖY DEĞERİ                                                                   394.368.114,63         %99,86
+  B. HAZIR DEĞERLER                                                                             26.187,47          %0,01
+  C. ALACAKLAR                                                                               1.703.000,00          %0,43
+  E. BORÇLAR                                                                                 1.188.052,49         -%0,30
+  FON TOPLAM DEĞERİ                                                                       394.909.249,61
+"""
+        file = parse_kap_pdr_text(elz, fund_code="ELZ", report_period="2026-07")
+        self.assertFalse(file.weights.renormalized)
+        codes = {row.official_code for row in file.holdings}
+        self.assertIn("ALBRK", codes)
+        self.assertIn("ASELS", codes)
+        self.assertIn("EKF", codes)
+        self.assertIn("PDD", codes)
+        albrk = next(row for row in file.holdings if row.official_code == "ALBRK")
+        self.assertEqual(albrk.asset_group, ASSET_GROUP_EQUITY)
+        self.assertAlmostEqual(albrk.portfolio_weight, 4.83)
+        katilma = next(row for row in file.holdings if (row.official_code or "").startswith("QP.KH"))
+        self.assertEqual(katilma.asset_group, ASSET_GROUP_PARTICIPATION_ACCOUNT)
+        self.assertAlmostEqual(katilma.portfolio_weight, 6.87)
+        ekf = next(row for row in file.holdings if row.official_code == "EKF")
+        self.assertEqual(ekf.asset_group, ASSET_GROUP_FUND)
+        hazir = next(row for row in file.holdings if row.security_name_raw == "HAZIR DEĞERLER")
+        self.assertEqual(hazir.asset_group, ASSET_GROUP_CASH)
+        self.assertAlmostEqual(hazir.portfolio_weight, 0.01)
+        borc = next(row for row in file.holdings if row.security_name_raw == "BORÇLAR")
+        self.assertAlmostEqual(borc.portfolio_weight, -0.30)
+        self.assertFalse(any(row.official_code == "FON PORTFÖY DEĞERİ" for row in file.holdings))
+        cache = Path(".cache/turkiye_fund_universe/pdr_text/ELZ_2026.07.txt")
+        if cache.is_file():
+            captured = parse_kap_pdr_text(cache.read_text(encoding="utf-8"), fund_code="ELZ", report_period="2026-07")
+            self.assertGreaterEqual(len(captured.holdings), 20)
+            self.assertFalse(captured.weights.renormalized)
+
+    def test_vdmk_borclanma_is_not_sukuk_group(self) -> None:
+        self.assertNotEqual(normalize_pdr_asset_group("BORÇLANMA SENETLERİ"), ASSET_GROUP_LEASE_CERTIFICATE)
+        self.assertNotEqual(normalize_pdr_asset_group("VDMK"), ASSET_GROUP_LEASE_CERTIFICATE)
+        self.assertEqual(normalize_pdr_asset_group("VARLIĞA DAYALI MENKUL KIYMETLER"), ASSET_GROUP_UNKNOWN)
+        gls = """
+3- FON PORTFÖY DEĞERİ TABLOSU
+I) KİRA SERTİFİKALARI
+   TRD080927T34 HAZİNE 100.000,00 100.000,00 %98,57
+J) VARLIĞA DAYALI MENKUL KIYMETLER
+   TRPTMGDE2617 TMG BORÇLANMA 10.000,00 10.000,00 %1,43
+4- FON TOPLAM DEĞERİ TABLOSU
+FON TOPLAM DEĞERİ 110.000,00
+"""
+        file = parse_kap_pdr_text(gls, fund_code="GLS", report_period="2026-07")
+        vdmk = next(row for row in file.holdings if row.official_code == "TRPTMGDE2617")
+        self.assertNotEqual(vdmk.asset_group, ASSET_GROUP_LEASE_CERTIFICATE)
+        self.assertFalse(file.weights.renormalized)
+
 
 if __name__ == "__main__":
     unittest.main()

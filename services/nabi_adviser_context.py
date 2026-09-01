@@ -938,13 +938,18 @@ def _turkiye_fund_adviser_overlay(
     )
 
     symbol = normalize_symbol(parsed.focus_symbol)
-    if not symbol or symbol not in PILOT_TEFAS_FUND_CODES:
+    if not symbol:
         return None, None
     context = None
     for row in turkiye_fund_contexts or ():
-        if getattr(row, "fund_code", None) == symbol:
+        if normalize_symbol(getattr(row, "fund_code", None)) == symbol:
             context = row
             break
+    # Broad FUND/TR symbols are accepted only when they already arrived through
+    # the canonical scanner/context bridge. Direct fallback remains pilot-only
+    # so an arbitrary ticker cannot be re-routed as a Turkish fund.
+    if context is None and symbol not in PILOT_TEFAS_FUND_CODES:
+        return None, None
     if context is None and client is not None:
         loaded = load_turkiye_fund_portfolio_contexts_from_client(
             client,

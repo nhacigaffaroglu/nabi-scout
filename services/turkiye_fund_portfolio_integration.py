@@ -239,6 +239,8 @@ def load_turkiye_fund_portfolio_contexts_from_client(
                 code,
                 is_holding=held,
                 portfolio_weight=weight,
+                instrument=TURKIYE_FUND_8E_INSTRUMENT,
+                market=TURKIYE_FUND_8E_MARKET,
             )
         except SnapshotReadError as exc:
             rows.append(unavailable_context(code, exc.reason))
@@ -254,6 +256,57 @@ def load_turkiye_fund_portfolio_contexts_from_client(
         )
     return tuple(rows)
 
+
+
+def scanner_ready_fund_codes(scanner_result: Any) -> tuple[str, ...]:
+    """Return canonical scanner-ready FUND/TR codes for downstream 8E reads.
+
+    The scanner remains research-only: this helper does not grant exposure or
+    allocation permission. Participation/research eligibility is required here,
+    and canonical snapshot + 8E gates are applied again by the consumer path.
+    """
+    rows = getattr(scanner_result, "rows", ()) or ()
+    codes: list[str] = []
+    for row in rows:
+        status = str(getattr(row, "scanner_status", "") or "").strip().upper()
+        participation = str(getattr(row, "participation", "") or "").strip().lower()
+        research_allowed = getattr(row, "research_allowed", False) is True
+        if status != "READY" or participation != "uygun" or not research_allowed:
+            continue
+        code = normalize_symbol(getattr(row, "fund_code", None))
+        if code:
+            codes.append(code)
+    return tuple(dict.fromkeys(codes))
+
+
+def load_scanner_ready_portfolio_contexts(
+    scanner_result: Any,
+    *,
+    participation_repo: Any,
+    snapshot_repo: Any,
+    portfolio_view: Any = None,
+) -> tuple[TurkiyeFundPortfolioContext, ...]:
+    """Bridge scanner shortlist into the existing canonical 8E consumer."""
+    return load_turkiye_fund_portfolio_contexts(
+        participation_repo=participation_repo,
+        snapshot_repo=snapshot_repo,
+        portfolio_view=portfolio_view,
+        fund_codes=scanner_ready_fund_codes(scanner_result),
+    )
+
+
+def load_scanner_ready_portfolio_contexts_from_client(
+    scanner_result: Any,
+    client: Any,
+    *,
+    portfolio_view: Any = None,
+) -> tuple[TurkiyeFundPortfolioContext, ...]:
+    """Production read-only bridge; no scanner persistence or live recompute."""
+    return load_turkiye_fund_portfolio_contexts_from_client(
+        client,
+        portfolio_view=portfolio_view,
+        fund_codes=scanner_ready_fund_codes(scanner_result),
+    )
 
 def strategic_layer_for_exposure(primary_exposure: Optional[str]) -> Optional[str]:
     """Existing taxonomy only. cash_like stays cash_like and never becomes CASH."""
@@ -466,8 +519,11 @@ def format_canonical_new_money_caption(
     return f"8E {eight_e}. {EXPLANATION_INCREASE_BLOCKED} Allocation 0 TRY."
 
 
-def _turkish_skip_reasons(plan: Any) -> dict[str, tuple[str, ...]]:
-    out: dict[str, list[str]] = {code: [] for code in PILOT_TEFAS_FUND_CODES}
+def _turkish_skip_reasons(
+    plan: Any,
+    fund_codes: Sequence[str],
+) -> dict[str, tuple[str, ...]]:
+    out: dict[str, list[str]] = {normalize_symbol(code): [] for code in fund_codes}
     for skip in getattr(plan, "skipped", ()) or ():
         symbol = normalize_symbol(getattr(skip, "symbol", None))
         if symbol in out:
@@ -509,7 +565,8 @@ def run_turkiye_new_money_uat(
         enable_hybrid_exposure_allocation=False,
         **kwargs,
     )
-    by_fund = {code: Decimal("0") for code in PILOT_TEFAS_FUND_CODES}
+    context_codes = tuple(dict.fromkeys(context.fund_code for context in contexts))
+    by_fund = {code: Decimal("0") for code in context_codes}
     other = Decimal("0")
     for rec in plan.recommendations:
         symbol = normalize_symbol(rec.symbol)
@@ -530,6 +587,6 @@ def run_turkiye_new_money_uat(
         total_allocated=Decimal(str(plan.total_allocated or 0)),
         residual_cash=Decimal(str(plan.residual_cash or 0)),
         by_fund=by_fund,
-        skip_reasons=_turkish_skip_reasons(plan),
+        skip_reasons=_turkish_skip_reasons(plan, context_codes),
         explanations=explanations,
     )

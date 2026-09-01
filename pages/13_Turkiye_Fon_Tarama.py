@@ -124,6 +124,58 @@ else:
 
 st.caption("Bu liste bir alım listesi değildir.")
 
+newly_uygun = list(payload.get("newly_uygun") or [])
+st.subheader("Yeni Uygun")
+if newly_uygun:
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "FUND": row["fund_code"],
+                    "NAME": row.get("fund_name"),
+                    "MANAGER": row.get("founder"),
+                    "PARTICIPATION": row.get("participation"),
+                    "EXPOSURE": row.get("exposure"),
+                    "FI STATE": row.get("fi_state"),
+                    "STATUS": row.get("scanner_status"),
+                    "REASON": row.get("reason"),
+                }
+                for row in newly_uygun
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+else:
+    st.caption("Pilotlar dışında yeni Uygun fon yok.")
+
+attractive = list(payload.get("attractive_research_candidates") or [])
+st.subheader("ATTRACTIVE araştırma adayları")
+if attractive:
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "FLAG": "NEW_ATTRACTIVE_RESEARCH_CANDIDATE",
+                    "FUND": row["fund_code"],
+                    "NAME": row.get("fund_name"),
+                    "MANAGER": row.get("founder"),
+                    "FI SCORE": row.get("fi_score"),
+                    "FI STATE": row.get("fi_state"),
+                    "PARTICIPATION": row.get("participation"),
+                    "EXPOSURE": row.get("exposure"),
+                    "CONFIDENCE": row.get("confidence"),
+                    "COMPLETENESS": row.get("data_completeness"),
+                }
+                for row in attractive
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+else:
+    st.caption("ATTRACTIVE + Uygun + research_allowed aday yok. 8E yok.")
+
 selected = st.selectbox(
     "Fon detayı",
     ["(seçiniz)"] + [row["fund_code"] for row in payload["rows"]],

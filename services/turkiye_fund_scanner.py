@@ -32,6 +32,7 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_UYGUN,
     PARTICIPATION_STATUS_UYGUN_DEGIL,
 )
+from services.security_intelligence_contract import STATE_ATTRACTIVE
 from services.turkiye_fund_pdr_window import latest_applicable_pdr_period
 from services.turkiye_fund_source_capture import (
     load_cached_evidence_packs,
@@ -119,6 +120,7 @@ CANONICAL_REVIEW_REASONS = (
     "PDR_PARSE_INCOMPLETE",
     "PDR_RECONCILIATION_FAILED",
     "HISTORY_INSUFFICIENT",
+    "TEXT_LAYER_UNAVAILABLE",
     "ECONOMIC_EXPOSURE_UNKNOWN",
     "PARTICIPATION_REVIEW",
     "FI_INSUFFICIENT_DATA",
@@ -150,6 +152,7 @@ _REASON_MAP = {
     "EVIDENCE_STALE": "SOURCE_STALE",
     "SOURCE_STALE": "SOURCE_STALE",
     "SOURCE_ERROR": "SOURCE_ERROR",
+    "TEXT_LAYER_UNAVAILABLE": "TEXT_LAYER_UNAVAILABLE",
     "MANDATE_UNRESOLVED": "PARTICIPATION_REVIEW",
 }
 
@@ -546,6 +549,21 @@ def run_turkiye_fund_scanner(
         for code, pack in packs.items()
         if pack.get("pdr_quality")
     }
+    newly_uygun = tuple(
+        row
+        for row in ranked_rows
+        if row.participation == PARTICIPATION_STATUS_UYGUN
+        and dict(packs.get(row.fund_code) or {}).get("previous_participation_status")
+        not in {None, PARTICIPATION_STATUS_UYGUN}
+    )
+    attractive_candidates = tuple(
+        row
+        for row in ranked_rows
+        if row.scanner_status == SCANNER_READY
+        and row.participation == PARTICIPATION_STATUS_UYGUN
+        and row.research_allowed
+        and row.fi_state == STATE_ATTRACTIVE
+    )
     return TurkiyeFundScannerResult(
         as_of=day.isoformat(),
         calculated_at=datetime.now(timezone.utc).date().isoformat(),
@@ -580,6 +598,8 @@ def run_turkiye_fund_scanner(
         category_coverage=category_coverage,
         fi_distribution=fi_distribution,
         pdr_parser_quality=pdr_quality,
+        newly_uygun=newly_uygun,
+        attractive_research_candidates=attractive_candidates,
         limitations=(
             SCANNER_NOT_A_BUY,
             SCANNER_NOT_EIGHT_E,

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
-from services.fund_product_contract import PILOT_TEFAS_FUND_CODES
+from services.turkiye_fund_snapshot_reader import is_turkiye_fund_production_identity
 from services.portfolio_intelligence_contract import PriceQuote
 from services.turkiye_fund_snapshot_reader import (
     REASON_FI_MISSING,
@@ -32,8 +32,12 @@ FROZEN_CAPTURED_UNIT_PRICES = {
 }
 
 
-def is_turkiye_fund_holding_identity(symbol: str) -> bool:
-    return normalize_symbol(symbol) in PILOT_TEFAS_FUND_CODES
+def is_turkiye_fund_holding_identity(
+    symbol: str, *, instrument: Optional[str] = None, market: Optional[str] = None
+) -> bool:
+    return is_turkiye_fund_production_identity(
+        symbol, instrument=instrument, market=market
+    )
 
 
 def canonical_unit_price(value: Any) -> Optional[float]:
@@ -99,12 +103,9 @@ class TurkiyeFundUnitPrice:
 
 def read_turkiye_fund_unit_price(snapshot_repo: Any, fund_code: str) -> TurkiyeFundUnitPrice:
     code = normalize_symbol(fund_code)
-    if code not in PILOT_TEFAS_FUND_CODES:
+    if not code:
         return TurkiyeFundUnitPrice(
-            fund_code=code,
-            price=None,
-            available=False,
-            error=REASON_MISSING_PRICE,
+            fund_code=code, price=None, available=False, error=REASON_MISSING_PRICE
         )
     try:
         fi = read_fund_intelligence_snapshot(snapshot_repo, code)
@@ -147,10 +148,14 @@ def quote_turkiye_fund_unit_price(
     snapshot_repo: Any = None,
     client: Any = None,
     currency: str = UNIT_PRICE_CURRENCY,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
 ) -> Optional[PriceQuote]:
-    """Return a snapshot quote for AIS/ZPE/IAT. None means not a Turkish fund identity."""
+    """Return canonical snapshot quote only for accepted FUND/TR identity."""
     code = normalize_symbol(symbol)
-    if code not in PILOT_TEFAS_FUND_CODES:
+    if not is_turkiye_fund_holding_identity(
+        code, instrument=instrument, market=market
+    ):
         return None
     repo = snapshot_repo
     if repo is None and client is not None:

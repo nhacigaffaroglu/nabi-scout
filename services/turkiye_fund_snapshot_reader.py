@@ -17,6 +17,8 @@ Does not write snapshots, persist 8E, or call New Money.
 
 from __future__ import annotations
 
+from services.fund_product_contract import PILOT_TEFAS_FUND_CODES
+
 from dataclasses import dataclass, replace
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -27,7 +29,6 @@ from services.fund_product_contract import (
     LAYER_CASH_LIKE,
     METHODOLOGY_TURKIYE_FUND_PARTICIPATION,
     METHODOLOGY_TURKIYE_FUND_PARTICIPATION_VERSION,
-    PILOT_TEFAS_FUND_CODES,
 )
 from services.hybrid_exposure_allocation_policy import HybridPortfolioMode
 from services.participation_assessment_persistence_service import snapshot_from_row as participation_from_row
@@ -330,7 +331,12 @@ def is_turkiye_fund_production_identity(
 ) -> bool:
     """Route by accepted FUND/TR identity, not ticker heuristics."""
     code = normalize_symbol(symbol)
-    if code not in PILOT_TEFAS_FUND_CODES:
+    if not code:
+        return False
+    # Legacy pilot callers may omit identity metadata. Broad-universe symbols must
+    # arrive with an explicit accepted FUND/TR identity so equities cannot be
+    # re-routed merely because they have a non-empty ticker.
+    if code not in PILOT_TEFAS_FUND_CODES and (instrument is None or market is None):
         return False
     resolved_instrument = str(instrument or TURKIYE_FUND_8E_INSTRUMENT).strip().upper()
     resolved_market = str(market or TURKIYE_FUND_8E_MARKET).strip().upper()
@@ -343,6 +349,8 @@ def load_turkiye_fund_canonical_from_client(
     *,
     is_holding: bool = False,
     portfolio_weight: Optional[float] = None,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
 ) -> TurkiyeFundCanonicalRead:
     """Production consumer load. Read-only repos. No TEFAS/KAP compute."""
     from repositories.participation_assessment_repository import (
@@ -354,7 +362,9 @@ def load_turkiye_fund_canonical_from_client(
 
     if client is None:
         raise SnapshotReadError(REASON_PARTICIPATION_MISSING, fund_code=normalize_symbol(fund_code))
-    if not is_turkiye_fund_production_identity(fund_code):
+    if not is_turkiye_fund_production_identity(
+        fund_code, instrument=instrument, market=market
+    ):
         raise SnapshotReadError(REASON_INCOMPATIBLE_METHODOLOGY, fund_code=normalize_symbol(fund_code))
     return read_turkiye_fund_canonical(
         participation_repo=ReadOnlyRepository(ParticipationAssessmentRepository(client)),

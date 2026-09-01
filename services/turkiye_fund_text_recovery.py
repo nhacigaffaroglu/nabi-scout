@@ -162,7 +162,10 @@ def recover_official_document_text(
 
     if allow_ocr and raw_file:
         record["layers_attempted"].append(LAYER_OCR)
-        ocr_text, ocr_meta = ocr_official_pdf(raw_file, ocr_fn=ocr_fn)
+        try:
+            ocr_text, ocr_meta = ocr_official_pdf(raw_file, ocr_fn=ocr_fn)
+        except Exception as exc:  # noqa: BLE001 — OCR must fail closed
+            ocr_text, ocr_meta = None, str(exc)[:240]
         if ocr_text:
             record["source_layer"] = LAYER_OCR
             record["text"] = ocr_text

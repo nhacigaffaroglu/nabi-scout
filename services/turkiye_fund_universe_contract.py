@@ -154,6 +154,8 @@ class TurkiyeFundScannerResult:
     category_coverage: dict[str, dict[str, int]] = field(default_factory=dict)
     fi_distribution: dict[str, int] = field(default_factory=dict)
     pdr_parser_quality: dict[str, Any] = field(default_factory=dict)
+    newly_uygun: tuple[TurkiyeFundScannerRow, ...] = ()
+    attractive_research_candidates: tuple[TurkiyeFundScannerRow, ...] = ()
     limitations: tuple[str, ...] = (
         SCANNER_NOT_A_BUY,
         SCANNER_NOT_EIGHT_E,
@@ -171,4 +173,8 @@ class TurkiyeFundScannerResult:
             for key, value in self.ranked_by_category.items()
         }
         payload["overall_shortlist"] = [row.to_dict() for row in self.overall_shortlist]
+        payload["newly_uygun"] = [row.to_dict() for row in self.newly_uygun]
+        payload["attractive_research_candidates"] = [
+            row.to_dict() for row in self.attractive_research_candidates
+        ]
         return payload

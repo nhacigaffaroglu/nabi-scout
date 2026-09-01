@@ -121,12 +121,17 @@ def format_turkiye_fund_nav_caption(item: TurkiyeFundNavItem) -> str:
     return item.identity_label
 
 
-def build_turkiye_fund_report_handoff(fund_code: str) -> FundReportHandoff:
+def build_turkiye_fund_report_handoff(
+    fund_code: str,
+    *,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
+) -> FundReportHandoff:
     code = str(fund_code or "").strip().upper()
     if not is_turkiye_fund_nav_identity(
         code,
-        instrument=TURKIYE_FUND_8E_INSTRUMENT,
-        market=TURKIYE_FUND_8E_MARKET,
+        instrument=instrument,
+        market=market,
     ):
         raise ValueError(f"not_turkiye_fund_nav_identity:{fund_code}")
     return FundReportHandoff(
@@ -170,8 +175,15 @@ def apply_turkiye_fund_report_handoff(
     session: MutableMapping[str, Any],
     query: MutableMapping[str, Any],
     fund_code: str,
+    *,
+    instrument: Optional[str] = None,
+    market: Optional[str] = None,
 ) -> FundReportHandoff:
-    handoff = build_turkiye_fund_report_handoff(fund_code)
+    handoff = build_turkiye_fund_report_handoff(
+        fund_code,
+        instrument=instrument,
+        market=market,
+    )
     for key in handoff.session_clear:
         _drop_mapping_key(session, key)
     for key, value in handoff.session_set.items():

@@ -7,7 +7,7 @@ Does not persist production Participation/FI snapshots, 8E, or New Money.
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from services.fund_product_contract import IDENTITY_RESOLVED, IDENTITY_UNRESOLVED, PILOT_TEFAS_FUND_CODES
@@ -40,10 +40,12 @@ from services.turkiye_fund_pdr_window import latest_applicable_pdr_period, pdr_r
 from services.turkiye_fund_pdf_text import sha256_hex, try_extract_pdf_text, unwrap_kap_file_bytes
 from services.turkiye_fund_source_capture import (
     CACHE_DIR,
+    KAP_MIN_GAP_SEC,
     TEFAS_RETURNS_URL,
     TEFAS_SNAPSHOT_URL,
     CaptureRunStats,
     OfficialCaptureSession,
+    capture_kap_fund_directory,
     cache_identity,
     load_or_store,
     read_cached_payload,
@@ -55,7 +57,8 @@ from services.turkiye_fund_tefas_history import capture_tefas_history
 from services.turkiye_fund_text_recovery import recover_official_document_text
 from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
 
-EVIDENCE_RECOVERY_VERSION = 8
+EVIDENCE_RECOVERY_VERSION = 9
+ACCEPTED_PACK_VERSIONS = frozenset({8, 9})
 
 KAP_BILDIRIM = "https://www.kap.org.tr/tr/Bildirim/{index}"
 
@@ -216,6 +219,7 @@ def capture_one_fund(
     as_of: Optional[date] = None,
     fetch_prices: bool = True,
     allow_ocr: bool = False,
+    kap_directory: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Capture official evidence for one fund. Failures stay on this fund."""
     day = _as_of(as_of)
@@ -234,7 +238,7 @@ def capture_one_fund(
             "evidence_recovery_version": EVIDENCE_RECOVERY_VERSION,
             "pilot_frozen": True,
         }
-        write_evidence_pack(code, pack)
+        _write_pack(code, pack)
         return pack
     errors: list[str] = []
     reasons: list[str] = []
@@ -255,11 +259,23 @@ def capture_one_fund(
     if identity.tefas_status != TEFAS_STATUS_ACTIVE:
         reasons.append("TEFAS_INACTIVE")
         pack["identity_status"] = IDENTITY_UNRESOLVED
-        write_evidence_pack(code, pack)
+        _write_pack(code, pack)
         return pack
 
-    title = identity.fund_name or ""
-    slug = kap_official_slug(code, title)
+    directory_row = dict((kap_directory or {}).get(code) or {})
+    directory_name = str(directory_row.get("fund_name") or "").strip()
+    directory_founder = str(directory_row.get("founder") or "").strip()
+    title = directory_name or identity.fund_name or ""
+    slug = str(directory_row.get("slug") or "").strip() or kap_official_slug(code, title)
+    if directory_row:
+        pack["kap_directory_identity"] = {
+            "fund_code": code,
+            "fund_name": directory_name or None,
+            "founder": directory_founder or None,
+            "slug": slug or None,
+        }
+        if directory_name and directory_name != (identity.fund_name or ""):
+            pack["identity_name_updated"] = True
     pack["kap_slug"] = slug or None
     pack["ozet_url"] = kap_ozet_url(code, title) or None
     pack["genel_url"] = kap_genel_url(code, title) or None
@@ -271,7 +287,7 @@ def capture_one_fund(
         )
         pack["review_reasons"] = list(dict.fromkeys(reasons))
         pack["errors"] = list(dict.fromkeys(errors))
-        write_evidence_pack(code, pack)
+        _write_pack(code, pack)
         return pack
 
     ozet = {}
@@ -285,17 +301,12 @@ def capture_one_fund(
         ozet = parse_kap_ozet_rsc(str(ozet_text.get("text") or ""))
         pack["ozet_cache_hit"] = ozet_hit
     except Exception as exc:  # noqa: BLE001
+        # Özet is useful for document metadata but must not be a single point
+        # of failure for identity. Continue to the independent KAP Genel page;
+        # a successful exact-slug Genel parse can recover identity while this
+        # source error remains retryable for missing documents.
         errors.append(f"KAP_OZET:{exc}"[:240])
         reasons.append("SOURCE_ERROR")
-        reasons.append("IDENTITY_UNRESOLVED")
-        pack["identity_status"] = IDENTITY_UNRESOLVED
-        _attach_tefas(
-            pack, session=session, code=code, day=day, fetch_prices=fetch_prices, reasons=reasons, errors=errors
-        )
-        pack["review_reasons"] = list(dict.fromkeys(reasons))
-        pack["errors"] = list(dict.fromkeys(errors))
-        write_evidence_pack(code, pack)
-        return pack
 
     if ozet.get("fund_code") and ozet["fund_code"] != code:
         reasons.append("IDENTITY_UNRESOLVED")
@@ -306,12 +317,17 @@ def capture_one_fund(
         )
         pack["review_reasons"] = list(dict.fromkeys(reasons))
         pack["errors"] = list(dict.fromkeys(errors))
-        write_evidence_pack(code, pack)
+        _write_pack(code, pack)
         return pack
 
-    pack["identity_status"] = IDENTITY_RESOLVED if ozet.get("resolved") else IDENTITY_UNRESOLVED
-    pack["founder"] = ozet.get("founder") or identity.founder
-    pack["official_name"] = ozet.get("official_name") or identity.fund_name
+    directory_resolved = bool(directory_row and directory_name)
+    pack["identity_status"] = (
+        IDENTITY_RESOLVED if ozet.get("resolved") or directory_resolved else IDENTITY_UNRESOLVED
+    )
+    if directory_resolved and not ozet.get("resolved"):
+        pack["identity_source"] = "KAP_FUND_DIRECTORY"
+    pack["founder"] = ozet.get("founder") or directory_founder or identity.founder
+    pack["official_name"] = ozet.get("official_name") or directory_name or identity.fund_name
     pack["umbrella_type"] = (ozet.get("ozet_fields") or {}).get("Fonun Bağlı Olduğu Şemsiye Fonun Türü")
     pack["umbrella_name"] = (ozet.get("ozet_fields") or {}).get("Fonun Bağlı Olduğu Şemsiye Fonun Ünvanı")
     pack["fund_type"] = ozet.get("fund_type")
@@ -341,6 +357,10 @@ def capture_one_fund(
             }
         }
         _fill_ozet_from_genel(pack)
+        if pack.get("identity_status") != IDENTITY_RESOLVED and _genel_identity_evidence(genel):
+            pack["identity_status"] = IDENTITY_RESOLVED
+            pack["identity_source"] = "KAP_GENEL_EXACT_SLUG"
+            reasons[:] = [reason for reason in reasons if reason != "IDENTITY_UNRESOLVED"]
     except Exception as exc:  # noqa: BLE001
         errors.append(f"KAP_GENEL:{exc}"[:240])
         reasons.append("SOURCE_ERROR")
@@ -354,6 +374,7 @@ def capture_one_fund(
     ybf_recovery = None
     izah_recovery = None
     if ybf_oid:
+        last_resort = bool(allow_ocr and pack.get("identity_status") == IDENTITY_RESOLVED)
         ybf_recovery = recover_official_document_text(
             session,
             file_oid=str(ybf_oid),
@@ -361,7 +382,7 @@ def capture_one_fund(
             document_type="YBF",
             published_at=str(pack.get("source_as_of") or ""),
             referer=pack["ozet_url"] or "",
-            allow_ocr=allow_ocr,
+            allow_ocr=last_resort,
         )
         ybf_text = ybf_recovery.get("text") if ybf_recovery.get("text_available") else None
         pack["ybf_url"] = kap_file_url(ybf_oid)
@@ -369,9 +390,11 @@ def capture_one_fund(
         pack["ybf_recovery"] = {k: v for k, v in ybf_recovery.items() if k != "text"}
         if ybf_text is None:
             errors.append(f"YBF_TEXT:{ybf_recovery.get('pdf_error') or ybf_recovery.get('ocr_error') or 'unavailable'}"[:240])
+            reasons.append("TEXT_LAYER_UNAVAILABLE")
     else:
         reasons.append("YBF_MISSING")
     if izahname_oid:
+        last_resort = bool(allow_ocr and pack.get("identity_status") == IDENTITY_RESOLVED)
         izah_recovery = recover_official_document_text(
             session,
             file_oid=str(izahname_oid),
@@ -379,7 +402,7 @@ def capture_one_fund(
             document_type="IZAHNAME",
             published_at=str(pack.get("source_as_of") or ""),
             referer=pack["ozet_url"] or "",
-            allow_ocr=allow_ocr,
+            allow_ocr=last_resort,
         )
         izahname_text = izah_recovery.get("text") if izah_recovery.get("text_available") else None
         pack["izahname_url"] = kap_file_url(izahname_oid)
@@ -481,8 +504,42 @@ def capture_one_fund(
 
     pack["review_reasons"] = list(dict.fromkeys(reasons))
     pack["errors"] = list(dict.fromkeys(errors))
-    write_evidence_pack(code, pack)
+    _write_pack(code, pack)
     return pack
+
+
+def _stamp_checkpoint(pack: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    reasons = tuple(pack.get("review_reasons") or ())
+    ybf = dict(pack.get("ybf_recovery") or {})
+    izah = dict(pack.get("izahname_recovery") or {})
+    quality = dict(pack.get("pdr_quality") or {})
+    identity_ok = pack.get("identity_status") == IDENTITY_RESOLVED
+    pack["capture_checkpoint"] = {
+        "identity_status": pack.get("identity_status"),
+        "documents_status": "PRESENT" if pack.get("documents") or pack.get("ybf_url") else "MISSING",
+        "YBF_status": ybf.get("source_layer") or ("MISSING" if "YBF_MISSING" in reasons else None),
+        "izahname_status": izah.get("source_layer"),
+        "PDR_status": (
+            "READY"
+            if quality.get("row_count")
+            else ("PARSE_INCOMPLETE" if "PDR_PARSE_INCOMPLETE" in reasons else ("MISSING" if "PDR_MISSING" in reasons else None))
+        ),
+        "last_attempt": now,
+        "last_success": now if identity_ok and "SOURCE_ERROR" not in reasons else None,
+        "source_identity": pack.get("kap_slug") or pack.get("fund_code"),
+        "file_oid": pack.get("pdr_file_oid") or ((pack.get("documents") or {}).get("BILGI_FORMU") or {}).get("file_oid"),
+        "published_at": pack.get("published_at") or pack.get("source_as_of"),
+        "content_hash": pack.get("ybf_sha256") or pack.get("pdr_sha256"),
+        "document_type": "YBF" if pack.get("ybf_url") else None,
+        "error_type": next((item for item in reasons if item in {"SOURCE_ERROR", "IDENTITY_UNRESOLVED"}), None),
+        "retry_eligible": "SOURCE_ERROR" in reasons or not identity_ok,
+    }
+
+
+def _write_pack(code: str, pack: dict[str, Any]):
+    _stamp_checkpoint(pack)
+    return write_evidence_pack(code, pack)
 
 
 def _safe_pdf(
@@ -501,6 +558,22 @@ def _safe_pdf(
         reasons.append(reason_on_fail)
         return None, None, False
 
+
+
+def _genel_identity_evidence(genel: Mapping[str, Any]) -> bool:
+    """Exact KAP fund slug + substantive Genel fields is sufficient identity evidence.
+
+    This is intentionally narrow: an empty/partial page does not resolve identity.
+    The slug itself is deterministically built from the official fund code/title.
+    """
+    if not bool(genel.get("resolved")):
+        return False
+    items = dict(genel.get("items") or {})
+    return bool(
+        str(genel.get("isin") or "").strip()
+        or str(items.get("kpy81_acc1_kurucu_unvan") or "").strip()
+        or str(items.get("kpy81_acc1_fon_sem_unvan") or "").strip()
+    )
 
 def _fill_ozet_from_genel(pack: dict[str, Any]) -> None:
     """Prefer KAP genel item values when özet RSC captured the label as the value."""
@@ -569,18 +642,31 @@ def capture_universe(
     as_of: Optional[date] = None,
     session: Optional[OfficialCaptureSession] = None,
     resume: bool = True,
+    only_fund_codes: Optional[Sequence[str]] = None,
     limit: Optional[int] = None,
     fetch_prices: bool = True,
-    allow_ocr: bool = False,
+    allow_ocr: bool = True,
     on_fund: Optional[Callable[[str, dict[str, Any]], None]] = None,
 ) -> tuple[dict[str, dict[str, Any]], CaptureRunStats]:
     active = [row for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE]
+    if only_fund_codes is not None:
+        requested = {normalize_fund_code(code) for code in only_fund_codes if normalize_fund_code(code)}
+        active = [row for row in active if row.fund_code in requested]
     if limit is not None:
         active = active[: int(limit)]
-    sess = session or OfficialCaptureSession(live=live, min_gap_sec=0.35 if live else 0.0)
+    sess = session or OfficialCaptureSession(live=live, min_gap_sec=KAP_MIN_GAP_SEC if live else 0.0)
+    directory: dict[str, dict[str, Any]] = {}
+    if live or sess.live:
+        sess.ensure_kap_session()
+        try:
+            directory = capture_kap_fund_directory(sess)
+        except Exception:
+            # Directory is an optimization / identity fallback only. Per-fund
+            # KAP evidence remains authoritative and fail-closed if this page
+            # is temporarily unavailable or changes shape.
+            directory = {}
     started = time.monotonic()
     packs: dict[str, dict[str, Any]] = {}
-    day = _as_of(as_of)
     for identity in active:
         sess.stats.funds_attempted += 1
         if resume:
@@ -588,26 +674,7 @@ def capture_universe(
             if existing and _pack_is_reusable(existing, identity):
                 sess.stats.cache_hits += 1
                 sess.stats.unchanged_documents += 1
-                sess.stats.funds_ok += 1
-                packs[identity.fund_code] = existing
-                if on_fund:
-                    on_fund(identity.fund_code, existing)
-                continue
-            if existing and _pack_needs_tefas_only(existing):
-                reasons = list(existing.get("review_reasons") or [])
-                errors = list(existing.get("errors") or [])
-                _attach_tefas(
-                    existing,
-                    session=sess,
-                    code=identity.fund_code,
-                    day=day,
-                    fetch_prices=fetch_prices,
-                    reasons=reasons,
-                    errors=errors,
-                )
-                existing["review_reasons"] = list(dict.fromkeys(reasons))
-                existing["errors"] = list(dict.fromkeys(errors))
-                write_evidence_pack(identity.fund_code, existing)
+                sess.stats.skipped_unchanged += 1
                 sess.stats.funds_ok += 1
                 packs[identity.fund_code] = existing
                 if on_fund:
@@ -621,6 +688,7 @@ def capture_universe(
                 as_of=as_of,
                 fetch_prices=fetch_prices,
                 allow_ocr=allow_ocr,
+                kap_directory=directory,
             )
             packs[identity.fund_code] = pack
             sess.stats.funds_ok += 1
@@ -633,18 +701,19 @@ def capture_universe(
                 "errors": [str(exc)[:240]],
                 "review_reasons": ["SOURCE_ERROR"],
                 "production_persist": False,
+                "evidence_recovery_version": EVIDENCE_RECOVERY_VERSION,
             }
-            write_evidence_pack(identity.fund_code, pack)
+            _write_pack(identity.fund_code, pack)
             packs[identity.fund_code] = pack
         if on_fund:
             on_fund(identity.fund_code, packs[identity.fund_code])
     sess.stats.runtime_ms = int((time.monotonic() - started) * 1000)
-    _ = CACHE_DIR
     return packs, sess.stats
 
 
 def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIdentity) -> bool:
-    if pack.get("evidence_recovery_version") != EVIDENCE_RECOVERY_VERSION:
+    version = int(pack.get("evidence_recovery_version") or 0)
+    if version not in ACCEPTED_PACK_VERSIONS:
         return False
     if pack.get("fund_code") != identity.fund_code:
         return False

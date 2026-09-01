@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import time
 from dataclasses import asdict, dataclass, field
+from http.cookiejar import CookieJar
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 from services.fund_product_contract import (
     KAP_FUNDS_BY_CRITERIA,
@@ -27,9 +30,11 @@ from services.official_kap_pdr import KAP_HOST
 from services.official_tefas import TEFAS_HOST, normalize_fund_code
 from services.official_turkiye_fund_evidence import EVIDENCE_DIR
 
-USER_AGENT = "NABI-Scout/FUND-6 (official TEFAS/KAP research; polite read-only)"
+USER_AGENT = "NABI-Scout/FUND-7 (official TEFAS/KAP research; polite read-only)"
 CACHE_DIR = Path(".cache/turkiye_fund_universe")
 KAP_PDR_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
+KAP_FUND_DIRECTORY_URL = f"{KAP_HOST}/tr/YatirimFonlari/ALL"
+KAP_PUBLIC_ORIGIN = "https://www.kap.org.tr/"
 TEFAS_SNAPSHOT_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_SNAPSHOT}"
 TEFAS_RETURNS_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_RETURNS}"
 TEFAS_PRICE_URL = f"{TEFAS_HOST}{TEFAS_ENDPOINT_PRICES}"
@@ -39,9 +44,15 @@ SAMPLE_SNAPSHOT_PATH = EVIDENCE_DIR / "tefas_universe_snapshot_sample.json"
 PACK_CACHE_KIND = "evidence_pack"
 PDR_TEXT_DIR = CACHE_DIR / "pdr_text"
 MAX_RETRIES = 3
+MAX_THROTTLE_RETRIES = 2
 BACKOFF_SECONDS = (0.5, 1.0, 2.0)
+THROTTLE_BACKOFF_SECONDS = (8.0, 20.0, 45.0)
 REQUEST_TIMEOUT_SEC = 45
 MIN_REQUEST_GAP_SEC = 0.35
+KAP_MIN_GAP_SEC = 1.0
+KAP_MAX_GAP_SEC = 8.0
+THROTTLE_STATUS = frozenset({429, 502, 503})
+CLIENT_NO_RETRY = frozenset({400, 401, 404, 405, 410})
 PAID_HOST_BLOCKLIST = (
     "yahoo",
     "alphavantage",
@@ -55,18 +66,28 @@ PAID_HOST_BLOCKLIST = (
 @dataclass
 class CaptureRunStats:
     requests_attempted: int = 0
+    successful_requests: int = 0
     cache_hits: int = 0
     new_documents: int = 0
     unchanged_documents: int = 0
     failed_requests: int = 0
     retry_count: int = 0
+    throttle_responses: int = 0
+    wait_seconds: float = 0.0
+    interval_sum: float = 0.0
+    interval_n: int = 0
     runtime_ms: int = 0
     funds_attempted: int = 0
     funds_ok: int = 0
     funds_failed: int = 0
+    skipped_unchanged: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["average_interval_sec"] = (
+            round(self.interval_sum / self.interval_n, 3) if self.interval_n else 0.0
+        )
+        return payload
 
 
 def _sha(text: str) -> str:
@@ -149,6 +170,9 @@ def _http_json(url: str, payload: Mapping[str, Any], *, referer: str = "") -> An
     if referer:
         headers["Origin"] = referer
         headers["Referer"] = referer
+    elif "kap.org.tr" in url:
+        headers["Origin"] = KAP_PUBLIC_ORIGIN
+        headers["Referer"] = KAP_PUBLIC_ORIGIN
     request = Request(
         url,
         data=json.dumps(dict(payload)).encode("utf-8"),
@@ -159,9 +183,116 @@ def _http_json(url: str, payload: Mapping[str, Any], *, referer: str = "") -> An
         return json.loads(response.read().decode("utf-8"))
 
 
+class _KapFundDirectoryTableParser(HTMLParser):
+    """Best-effort parser for the public KAP fund directory table.
+
+    The parser is deliberately conservative: only rows with a plausible fund
+    code plus name/founder are emitted. If KAP changes the page shape and the
+    parser cannot recover enough rows, the caller fails closed and the older
+    per-fund path remains available.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._in_tr = False
+        self._in_td = False
+        self._cells: list[str] = []
+        self._cell_parts: list[str] = []
+        self._row_links: list[str] = []
+        self.rows: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        lower = tag.casefold()
+        if lower == "tr":
+            self._in_tr = True
+            self._cells = []
+            self._row_links = []
+        elif lower in {"td", "th"} and self._in_tr:
+            self._in_td = True
+            self._cell_parts = []
+        elif lower == "a" and self._in_tr:
+            href = dict(attrs).get("href") or ""
+            if href:
+                self._row_links.append(str(href))
+
+    def handle_data(self, data: str) -> None:
+        if self._in_td:
+            text = " ".join(str(data or "").split())
+            if text:
+                self._cell_parts.append(text)
+
+    def handle_endtag(self, tag: str) -> None:
+        lower = tag.casefold()
+        if lower in {"td", "th"} and self._in_td:
+            self._cells.append(" ".join(self._cell_parts).strip())
+            self._cell_parts = []
+            self._in_td = False
+        elif lower == "tr" and self._in_tr:
+            self._finish_row()
+            self._in_tr = False
+
+    def _finish_row(self) -> None:
+        if len(self._cells) < 3:
+            return
+        code = normalize_fund_code(self._cells[0])
+        name = self._cells[1].strip()
+        founder = self._cells[2].strip()
+        if not code or not code.isalnum() or len(code) > 12 or not name or not founder:
+            return
+        slug = ""
+        for href in self._row_links:
+            marker = "/fon-bilgileri/ozet/"
+            if marker in href:
+                slug = href.split(marker, 1)[1].split("?", 1)[0].strip("/")
+                break
+        self.rows.append({"fund_code": code, "fund_name": name, "founder": founder, "slug": slug})
+
+
+def parse_kap_fund_directory_html(text: str) -> dict[str, dict[str, str]]:
+    parser = _KapFundDirectoryTableParser()
+    parser.feed(str(text or ""))
+    out: dict[str, dict[str, str]] = {}
+    for row in parser.rows:
+        code = row["fund_code"]
+        if code not in out:
+            out[code] = row
+    return out
+
+
+def capture_kap_fund_directory(session: "OfficialCaptureSession") -> dict[str, dict[str, str]]:
+    """Capture KAP's public all-funds directory once per cache cycle.
+
+    This is identity evidence only. It does not replace YBF/izahname/PDR
+    evidence and cannot by itself authorize Participation or FI.
+    """
+
+    def _fetch() -> dict[str, Any]:
+        html = session.http_get_text(
+            KAP_FUND_DIRECTORY_URL,
+            accept="text/html",
+            referer=KAP_PUBLIC_ORIGIN,
+        )
+        rows = parse_kap_fund_directory_html(html)
+        if len(rows) < 100:
+            raise ValueError(f"kap_fund_directory_parse_incomplete:{len(rows)}")
+        return {"rows": list(rows.values())}
+
+    payload, _hit = load_or_store(
+        kind="kap_fund_directory_v1",
+        key="ALL",
+        fetcher=_fetch,
+        stats=session.stats,
+    )
+    return {
+        normalize_fund_code(row.get("fund_code")): dict(row)
+        for row in list(payload.get("rows") or [])
+        if normalize_fund_code(row.get("fund_code"))
+    }
+
+
 @dataclass
 class OfficialCaptureSession:
-    """Polite official HTTP with retry/backoff, cache, and per-run stats."""
+    """Polite official HTTP: one client, cookie reuse, adaptive KAP pacing."""
 
     live: bool = False
     stats: CaptureRunStats = field(default_factory=CaptureRunStats)
@@ -171,6 +302,16 @@ class OfficialCaptureSession:
     timeout_sec: int = REQUEST_TIMEOUT_SEC
     min_gap_sec: float = MIN_REQUEST_GAP_SEC
     tefas_warmed: bool = False
+    kap_warmed: bool = False
+    cookie_jar: CookieJar = field(default_factory=CookieJar)
+    jitter_fn: Callable[[], float] = lambda: random.uniform(0.85, 1.15)
+    consecutive_throttles: int = 0
+
+    def __post_init__(self) -> None:
+        if self.opener is None:
+            self._urlopen = build_opener(HTTPCookieProcessor(self.cookie_jar)).open
+        else:
+            self._urlopen = self.opener
 
     def _pace(self) -> None:
         if self.min_gap_sec <= 0:
@@ -179,18 +320,73 @@ class OfficialCaptureSession:
         wait = self.min_gap_sec - (now - self.last_request_at)
         if wait > 0:
             self.sleep(wait)
+            self.stats.wait_seconds += wait
+
+    def _mark_interval(self) -> None:
+        now = time.monotonic()
+        if self.last_request_at > 0:
+            self.stats.interval_sum += now - self.last_request_at
+            self.stats.interval_n += 1
+        self.last_request_at = now
+
+    def _retry_after_seconds(self, exc: HTTPError, attempt: int) -> float:
+        raw = ""
+        try:
+            raw = str((exc.headers or {}).get("Retry-After") or "").strip()
+        except Exception:  # noqa: BLE001
+            raw = ""
+        if raw.isdigit():
+            return min(float(raw), 90.0)
+        base = THROTTLE_BACKOFF_SECONDS[min(attempt, len(THROTTLE_BACKOFF_SECONDS) - 1)]
+        return min(base * self.jitter_fn(), 90.0)
+
+    def _on_throttle(self, exc: HTTPError, attempt: int) -> None:
+        self.stats.throttle_responses += 1
+        self.stats.retry_count += 1
+        self.consecutive_throttles += 1
+        self.min_gap_sec = min(max(self.min_gap_sec * 1.5, KAP_MIN_GAP_SEC), KAP_MAX_GAP_SEC)
+        wait = self._retry_after_seconds(exc, attempt)
+        if self.consecutive_throttles >= 8:
+            wait = max(wait, 30.0)
+            self.consecutive_throttles = 0
+        self.stats.wait_seconds += wait
+        self.sleep(wait)
+
+    def _on_success(self) -> None:
+        self.stats.successful_requests += 1
+        self.consecutive_throttles = 0
+        if self.min_gap_sec > KAP_MIN_GAP_SEC:
+            self.min_gap_sec = max(KAP_MIN_GAP_SEC, round(self.min_gap_sec * 0.9, 3))
 
     def _open(self, request: Request) -> bytes:
-        opener = self.opener or urlopen
         self._pace()
-        self.last_request_at = time.monotonic()
+        self._mark_interval()
         self.stats.requests_attempted += 1
         last_error: Optional[BaseException] = None
+        throttle_tries = 0
         for attempt in range(MAX_RETRIES):
             try:
-                with opener(request, timeout=self.timeout_sec) as response:
-                    return bytes(response.read())
-            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                with self._urlopen(request, timeout=self.timeout_sec) as response:
+                    payload = bytes(response.read())
+                    self._on_success()
+                    return payload
+            except HTTPError as exc:
+                last_error = exc
+                code = int(getattr(exc, "code", 0) or 0)
+                if code in THROTTLE_STATUS:
+                    if throttle_tries >= MAX_THROTTLE_RETRIES:
+                        break
+                    throttle_tries += 1
+                    self._on_throttle(exc, throttle_tries)
+                    continue
+                if code in CLIENT_NO_RETRY:
+                    self.stats.failed_requests += 1
+                    raise
+                self.stats.retry_count += 1
+                if attempt >= MAX_RETRIES - 1:
+                    break
+                self.sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
+            except (URLError, TimeoutError, OSError) as exc:
                 last_error = exc
                 self.stats.retry_count += 1
                 if attempt >= MAX_RETRIES - 1:
@@ -198,6 +394,20 @@ class OfficialCaptureSession:
                 self.sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
         self.stats.failed_requests += 1
         raise last_error or URLError("official_http_failed")
+
+    def ensure_kap_session(self) -> None:
+        """One public homepage hit to obtain KAP's normal session cookies."""
+        if self.kap_warmed:
+            return
+        try:
+            self.http_get_text(
+                KAP_PUBLIC_ORIGIN,
+                accept="text/html",
+                referer=KAP_PUBLIC_ORIGIN,
+            )
+        except Exception:  # noqa: BLE001 — warmup is best-effort
+            pass
+        self.kap_warmed = True
 
     def http_json(self, url: str, payload: Mapping[str, Any], *, referer: str = "") -> Any:
         assert_official_host(url)
@@ -209,6 +419,9 @@ class OfficialCaptureSession:
         if referer:
             headers["Origin"] = referer
             headers["Referer"] = referer
+        elif "kap.org.tr" in url:
+            headers["Origin"] = KAP_PUBLIC_ORIGIN
+            headers["Referer"] = KAP_PUBLIC_ORIGIN
         request = Request(
             url,
             data=json.dumps(dict(payload)).encode("utf-8"),
@@ -230,6 +443,9 @@ class OfficialCaptureSession:
         headers = {"User-Agent": USER_AGENT, "Accept": accept}
         if referer:
             headers["Referer"] = referer
+        if "kap.org.tr" in url:
+            headers.setdefault("Origin", "https://www.kap.org.tr")
+            headers.setdefault("Referer", referer or KAP_PUBLIC_ORIGIN)
         if extra_headers:
             headers.update(dict(extra_headers))
         request = Request(url, headers=headers, method="GET")
