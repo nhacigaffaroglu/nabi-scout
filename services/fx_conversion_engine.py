@@ -108,34 +108,26 @@ def apply_fx_to_position_rows(
                 if fx_cost.converted and fx_cost.converted_amount is not None
                 else row.cost_basis
             )
-            converted_pl = fx.converted_amount - converted_cost
+            converted_pl = (
+                None
+                if row.unrealized_pl is None or row.cost_basis_unresolved
+                else fx.converted_amount - converted_cost
+            )
             adjusted.append(
-                PositionValuationRow(
-                    position_id=row.position_id,
-                    account_id=row.account_id,
-                    asset_id=row.asset_id,
-                    symbol=row.symbol,
-                    asset_class=row.asset_class,
-                    account_name=row.account_name,
-                    quantity=row.quantity,
-                    average_cost=row.average_cost,
+                replace(
+                    row,
                     valuation_currency=native_currency,
-                    price=row.price,
                     price_available=True,
                     market_value=fx.converted_amount,
                     cost_basis=converted_cost,
                     unrealized_pl=converted_pl,
-                    weight_pct=row.weight_pct,
-                    is_cash=row.is_cash,
                     included_in_base_totals=True,
-                    nabi=row.nabi,
                     native_market_value=native_mv,
                     fx_converted=True,
                     fx_rate_used=fx.rate_used,
                     fx_rate_date=fx.rate_date,
                     fx_stale=fx.stale,
                     fx_unavailable=False,
-                    price_as_of=row.price_as_of,
                 )
             )
         else:

@@ -15,6 +15,7 @@ from services.wealth_contract import (
     ASSET_CLASS_CASH,
     CASH_SYMBOL,
     TXN_TYPE_BUY,
+    TXN_TYPE_CORPORATE_ACTION,
     TXN_TYPE_DEPOSIT,
     TXN_TYPE_DIVIDEND,
     TXN_TYPE_FEE,
@@ -215,6 +216,7 @@ class WealthCoreService:
             TXN_TYPE_FEE,
             TXN_TYPE_TRANSFER_OUT,
             TXN_TYPE_TRANSFER_IN,
+            TXN_TYPE_CORPORATE_ACTION,
         } and not asset_id:
             raise WealthValidationError("Bu işlem türü için varlık gerekli.")
 
@@ -243,6 +245,12 @@ class WealthCoreService:
         if normalized_type in {TXN_TYPE_DEPOSIT, TXN_TYPE_WITHDRAW, TXN_TYPE_FEE}:
             if quantity <= 0 and amount <= 0:
                 raise WealthValidationError("Nakit işlemlerde miktar veya tutar gerekli.")
+
+        if normalized_type == TXN_TYPE_CORPORATE_ACTION:
+            if quantity <= 0:
+                raise WealthValidationError("Kurumsal işlemde miktar sıfırdan büyük olmalı.")
+            if abs(float(amount or 0.0)) > 1e-9:
+                raise WealthValidationError("Kurumsal işlem nakit maliyeti oluşturmaz.")
 
         return normalized_type
 

@@ -45,6 +45,7 @@ class PositionValuationRow:
     fx_stale: bool = False
     fx_unavailable: bool = False
     price_as_of: Optional[str] = None
+    cost_basis_unresolved: bool = False
 
 
 @dataclass(frozen=True)

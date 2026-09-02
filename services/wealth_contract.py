@@ -11,6 +11,7 @@ TXN_TYPE_WITHDRAW = "withdraw"
 TXN_TYPE_FEE = "fee"
 TXN_TYPE_TRANSFER_OUT = "transfer_out"
 TXN_TYPE_TRANSFER_IN = "transfer_in"
+TXN_TYPE_CORPORATE_ACTION = "corporate_action"
 
 TXN_TYPES: Tuple[str, ...] = (
     TXN_TYPE_BUY,
@@ -24,6 +25,7 @@ TXN_TYPES: Tuple[str, ...] = (
 )
 
 TRANSFER_TXN_TYPES = frozenset({TXN_TYPE_TRANSFER_OUT, TXN_TYPE_TRANSFER_IN})
+LEDGER_TXN_TYPES: Tuple[str, ...] = (*TXN_TYPES, TXN_TYPE_CORPORATE_ACTION)
 
 ACCOUNT_TYPE_CASH = "cash"
 ACCOUNT_TYPE_BROKERAGE = "brokerage"
@@ -166,7 +168,7 @@ def normalize_market(market: Optional[str]) -> str:
 
 def validate_txn_type(txn_type: str) -> str:
     normalized = str(txn_type or "").strip().lower()
-    if normalized not in TXN_TYPES:
+    if normalized not in LEDGER_TXN_TYPES:
         raise WealthValidationError(f"Geçersiz işlem türü: {txn_type}")
     return normalized
 

@@ -11,6 +11,7 @@ from repositories.wealth_contribution_reconciliation_repository import (
 )
 from services.wealth_contract import (
     TXN_TYPE_BUY,
+    TXN_TYPE_CORPORATE_ACTION,
     TXN_TYPE_DEPOSIT,
     TXN_TYPE_DIVIDEND,
     TXN_TYPE_FEE,
@@ -39,6 +40,7 @@ NON_CONTRIBUTION_TYPES = frozenset(
         TXN_TYPE_FEE,
         TXN_TYPE_TRANSFER_IN,
         TXN_TYPE_TRANSFER_OUT,
+        TXN_TYPE_CORPORATE_ACTION,
     }
 )
 RECONCILIATION_PROVENANCE = "USER_DEFINED"

@@ -66,7 +66,15 @@ def value_position(
     symbol = str(asset.get("symbol") or "")
     asset_class = str(asset.get("asset_class") or "")
     valuation_currency = normalize_currency(asset.get("currency"))
-    cost_basis = compute_cost_basis(quantity, average_cost)
+    covered = position.get("cost_covered_quantity")
+    try:
+        cost_covered_quantity = float(covered) if covered is not None else quantity
+    except (TypeError, ValueError):
+        cost_covered_quantity = quantity
+    unresolved = bool(position.get("cost_basis_unresolved")) or (
+        cost_covered_quantity + 1e-9 < quantity
+    )
+    cost_basis = compute_cost_basis(cost_covered_quantity, average_cost)
     cash = is_cash_asset(symbol, asset_class)
     in_base = position_in_base_currency(valuation_currency, base_currency)
 
@@ -75,7 +83,8 @@ def value_position(
     unrealized_pl: Optional[float] = None
     if price_available:
         market_value = compute_market_value(quantity, float(quote.price))
-        unrealized_pl = compute_unrealized_pl(market_value, cost_basis)
+        if not unresolved:
+            unrealized_pl = compute_unrealized_pl(market_value, cost_basis)
 
     return PositionValuationRow(
         position_id=str(position.get("id") or ""),
@@ -96,6 +105,7 @@ def value_position(
         is_cash=cash,
         included_in_base_totals=in_base,
         price_as_of=getattr(quote, "as_of", None),
+        cost_basis_unresolved=unresolved,
     )
 
 

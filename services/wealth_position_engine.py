@@ -6,6 +6,7 @@ PROPOSED_TXN_SORT_TAIL = "zzzz-proposed"
 
 from services.wealth_contract import (
     TXN_TYPE_BUY,
+    TXN_TYPE_CORPORATE_ACTION,
     TXN_TYPE_DEPOSIT,
     TXN_TYPE_DIVIDEND,
     TXN_TYPE_FEE,
@@ -124,8 +125,9 @@ def materialize_position_from_transactions(
     BUY.amount is the lot's total acquisition cost (execution notional plus
     any commission). BUY.quantity is share count only; commission never
     increases quantity. Ordinary ``txn_type=dividend`` does not change
-    quantity or average cost. ``txn_type=fee`` remains a cash-balance
-    reduction.
+    quantity or average cost. ``txn_type=corporate_action`` issues additional
+    shares at zero incremental cash and leaves total cost unchanged.
+    ``txn_type=fee`` remains a cash-balance reduction.
     """
     quantity = 0.0
     average_cost = 0.0
@@ -172,6 +174,20 @@ def materialize_position_from_transactions(
             total_cost = (quantity * average_cost) + amount
             quantity += qty
             average_cost = total_cost / quantity if quantity > 0 else 0.0
+            continue
+
+        if txn_type == TXN_TYPE_CORPORATE_ACTION:
+            if qty <= 0:
+                raise WealthValidationError(
+                    "Kurumsal işlemde miktar sıfırdan büyük olmalı."
+                )
+            if abs(amount) > 1e-9:
+                raise WealthValidationError(
+                    "Kurumsal işlem nakit maliyeti oluşturmaz."
+                )
+            old_total = quantity * average_cost
+            quantity += qty
+            average_cost = old_total / quantity if quantity > 0 else 0.0
             continue
 
         if txn_type == TXN_TYPE_DIVIDEND:
