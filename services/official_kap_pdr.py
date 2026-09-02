@@ -54,6 +54,37 @@ _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
 _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
 _BIST_CODE_RE = re.compile(r"\b([A-Z0-9]{2,6}\.[EF])\b")
 _TICKER_ROW_RE = re.compile(r"\b([A-Z]{3,6}(?:-[A-Z0-9]{2,10})?)\s+(TL|TRY|USD|EUR|AU1)\b")
+
+_OCR_EQUITY_CODE_RE = re.compile(
+    r"(?<![A-Za-z0-9])([A-Za-z0-9ÇçĞğİıÖöŞşÜü]{2,8}\.E)(?![A-Za-z0-9])"
+)
+
+
+def _ocr_equity_code(line: str, section: Optional[str]) -> Optional[str]:
+    """Recognize an OCR-damaged BIST .E token without inventing its identity.
+
+    Recovery is intentionally narrow:
+    - only inside the canonical EQUITY section,
+    - requires an explicit ``.E`` security token,
+    - requires at least two marked KAP percentage columns.
+
+    The returned token is the official text-layer value exactly as captured.
+    No OCR character substitution is performed here.
+    """
+    if normalize_pdr_asset_group(section) != ASSET_GROUP_EQUITY:
+        return None
+
+    text = _plain(line)
+    match = _OCR_EQUITY_CODE_RE.search(text)
+    if not match:
+        return None
+
+    explicit_pcts = re.findall(r"-?\d+(?:[.,]\d+)?\s*%", text)
+    if len(explicit_pcts) < 2:
+        return None
+
+    return match.group(1)
+
 _FTD_TAIL_RE = re.compile(r"(-?\d+,\d+)\s+(-?\d+,\d+)\s+(-?\d+,\d+)\s*$")
 _NUMBERED_MONEY = r"(?P<{name}>-?\d{{1,3}}(?:\.\d{{3}})*(?:,\d+)?|-?\d+,\d+)"
 _NUMBERED_WEIGHT = r"(?P<wsign>-)?%(?P<w>-?\d+,\d+)(?:\s+\S.*)?$"
@@ -92,9 +123,16 @@ _FILE_RE_REV = re.compile(
     flags=re.I | re.S,
 )
 _NUM_TOKEN = re.compile(
-    r"-?\d{1,3}(?:\.\d{3})+,\d+|-?\d+,\d+|-?\d{1,3}(?:\.\d{3})+|-?\d+"
+    r"(?<![A-Za-z0-9])"
+    r"-?(?:"
+    r"\d{1,3}(?:\.\d{3})+(?:,\d+)?"
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|\d+[.,]\d+"
+    r"|\d+"
+    r")"
+    r"%?"
+    r"(?![A-Za-z0-9])"
 )
-
 _SECTION_MAP = (
     ("kamu kesimi kira", ASSET_GROUP_LEASE_CERTIFICATE),
     ("özel sektör kira", ASSET_GROUP_LEASE_CERTIFICATE),
@@ -385,6 +423,12 @@ def _is_header(line: str) -> bool:
 
 def _section_from_line(line: str) -> Optional[str]:
     folded = _fold(line)
+
+    # KAP compact equity section markers.
+    # Examples seen in official PDR tables: "A.PAY", "A) PAY".
+    compact = re.sub(r"\s+", " ", str(line or "").strip())
+    if re.match(r"(?i)^A\s*[.)-]\s*PAY\s*$", compact):
+        return "HİSSE SENETLERİ"
     if "grup toplam" in folded or ("fon portfoy degeri" in folded and "tablosu" not in folded):
         return None
     if _is_header(line) and "kira" not in folded and "katilim" not in folded and "taahhut" not in folded:
@@ -525,6 +569,21 @@ def _parse_isin_row(
                     name = issuer
             elif _plain(head):
                 issuer = _plain(re.sub(r"\b(TL|TRY|USD|EUR|AU1)\b", " ", head)) or None
+    # Prefer explicit KAP Grup% / Toplam% columns when present.
+    # The final marked percentage is the FTD/Toplam% portfolio weight.
+    explicit_pct_tokens = re.findall(
+        r"(-?\d+(?:[.,]\d+)?)\s*%",
+        text,
+    )
+    explicit_pcts = [
+        parse_tr_number(token.replace(".", ","))
+        for token in explicit_pct_tokens
+    ]
+    explicit_pcts = [item for item in explicit_pcts if item is not None]
+    explicit_portfolio_weight = (
+        explicit_pcts[-1] if len(explicit_pcts) >= 2 else None
+    )
+
     nums = _numbers_without_isins(text)
     weight = None
     market_value = None
@@ -550,6 +609,9 @@ def _parse_isin_row(
             prices = [item for item in values if 1 < item < 200]
             if prices:
                 unit_price = prices[0]
+    if explicit_portfolio_weight is not None:
+        weight = explicit_portfolio_weight
+
     return _holding(
         fund_code=fund_code,
         report_period=report_period,
@@ -758,6 +820,69 @@ def _parse_numbered_holding_row(
         nominal=parse_tr_number(match.group("nom")),
         unit_price=None,
         market_value=parse_tr_number(match.group("mv")),
+        portfolio_weight=weight,
+        fund_total_value=fund_total_value,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
+
+
+def _parse_ocr_equity_row(
+    line: str,
+    *,
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    section: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> Optional[KapPdrHolding]:
+    """Fail-closed recovery for KAP equity rows with OCR-damaged identities."""
+
+    text = _plain(line)
+    code = _ocr_equity_code(text, section)
+    if not code or _is_header(text) or "GRUP TOPLAMI" in text.upper():
+        return None
+
+    pct_tokens = re.findall(r"(-?\d+(?:[.,]\d+)?)\s*%", text)
+    pct_values = [
+        parse_tr_number(token.replace(".", ","))
+        for token in pct_tokens
+    ]
+    pct_values = [value for value in pct_values if value is not None]
+
+    if len(pct_values) < 2:
+        return None
+
+    # KAP's final explicit percentage column is Toplam%.
+    weight = pct_values[-1]
+
+    # OCR fallback establishes the explicit Toplam% weight only.
+    # Do not infer market value from ambiguous numeric column positions.
+    market_value = None
+
+    # Preserve only identities that KAP actually supplied.
+    # A malformed OCR ISIN is deliberately NOT promoted to canonical ISIN.
+    valid_isins = _isin_tokens(text)
+    isin = valid_isins[0] if valid_isins else None
+
+    return _holding(
+        fund_code=fund_code,
+        report_period=report_period,
+        report_date=report_date,
+        asset_group_raw=section,
+        security_name_raw=code,
+        issuer_raw=None,
+        isin=isin,
+        official_code=isin,
+        maturity_date=parse_tr_date(text),
+        currency=None,
+        quantity=None,
+        nominal=None,
+        unit_price=None,
+        market_value=market_value,
         portfolio_weight=weight,
         fund_total_value=fund_total_value,
         source_notification_id=source_notification_id,
@@ -1036,31 +1161,68 @@ def _is_trailing_identity_wrap(line: str) -> bool:
 
 def _is_wrap_continuation(line: str, buf: str) -> bool:
     """Issuer/ISIN wrapped onto the next PDF line of the same official row."""
+
     text = _plain(line)
     prior = _plain(buf)
+
     if not text or not prior:
         return False
+
     if "GRUP TOPLAMI" in text.upper() or _is_header(text) or _is_page_noise(text):
         return False
+
     if _has_ftd_tail(text):
         return False
+
     if _is_numbered_holding_start(text):
         return False
+
     if _BIST_CODE_RE.search(text):
         return False
+
     first = text.split()[0].rstrip(".,;:")
+
     if is_valid_isin(first) and (_has_ftd_tail(text) or len(_numbers(text)) >= 4):
         return False
-    if _TICKER_ROW_RE.match(text) and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text) and len(_numbers(text)) >= 3:
+
+    if (
+        _TICKER_ROW_RE.match(text)
+        and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text)
+        and len(_numbers(text)) >= 3
+    ):
         return False
+
     money = [parse_tr_number(tok) for tok in _numbers(text) if "," in tok]
+
     if any(item is not None and abs(item) > 100 for item in money):
         return False
+
     prior_isins = _isin_tokens(prior)
     line_isins = _isin_tokens(text)
+
     if prior_isins and line_isins and line_isins[0] not in prior_isins:
         return False
-    return True
+
+    # Fail closed. Do not merge an otherwise-unclassified PDF line merely
+    # because no negative rule matched it.
+    if prior_isins and line_isins and line_isins[0] in prior_isins:
+        return True
+
+    if prior_isins and not line_isins:
+        folded = _fold(text)
+        if any(
+            token in folded
+            for token in (
+                "portfoy",
+                "yonetimi",
+                "a.s.",
+                "varlik kiralama",
+                "finans",
+            )
+        ):
+            return True
+
+    return False
 
 
 def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
@@ -1120,7 +1282,7 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if line.startswith("|") and not _BIST_CODE_RE.search(line):
             pipe_buf.append(line)
             continue
-        if _BIST_CODE_RE.search(line):
+        if _BIST_CODE_RE.search(line) or _ocr_equity_code(line, section):
             flush()
             chunks.append((section, line))
             continue
@@ -1158,24 +1320,37 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
 
 
 def _cut_holdings_body(text: str) -> str:
-    body = str(text or "")
-    end = re.search(
-        r"IV-?FON TOPLAM DE[ĞG]ER[İI]|4\s*-?\s*FON TOPLAM DE[ĞG]ER[İI]|4 - TOPLAM DE[ĞG]ER[İI]|VII-PORTF[ÖO]YDEN|7 - PORTF[ÖO]YDEN",
-        body,
-        flags=re.I,
-    )
-    end_at = end.start() if end else len(body)
-    if re.search(r"\b[A-Z0-9]{2,6}\.[EF]\b", body[:end_at]):
-        return body[:end_at]
-    start = re.search(
-        r"III-?FON PORTF[ÖO]Y DE[ĞG]ER[İI] TABLOSU|3\s*-?\s*FON PORTF[ÖO]Y DE[ĞG]ER[İI]",
-        body,
-        flags=re.I,
-    )
-    if start:
-        return body[start.start() : end_at]
-    return body[:end_at]
+    """Return only the official portfolio-holdings table when boundaries exist.
 
+    Prefer the Section III portfolio-value table over earlier monthly
+    composition summaries.  Earlier summaries may contain asset-class names
+    such as "Kira Sertifikaları" and must not leak section state into the
+    actual security rows.
+    """
+    source = text
+
+    # Stop before Section IV / fund-total summary.
+    end_match = re.search(
+        r"(?im)^\s*(?:IV|4)[.\-–—]?\s*FON\s+TOPLAM",
+        source,
+    )
+    if end_match:
+        source = source[:end_match.start()]
+
+    # Prefer the real Section III holdings table whenever it is present.
+    start_patterns = (
+        r"(?im)^\s*III[.\-–—]?\s*FON\s+PORTF[ÖO]Y\s+(?:DE[ĞG]ER|cE[ĞG]ER)",
+        r"(?im)^\s*3[.\-–—]?\s*FON\s+PORTF[ÖO]Y\s+(?:DE[ĞG]ER|cE[ĞG]ER)",
+    )
+
+    for pattern in start_patterns:
+        match = re.search(pattern, source)
+        if match:
+            return source[match.start():]
+
+    # Legacy/fallback layouts may omit an explicit Section III marker.
+    # Keep the bounded text rather than inventing a start point.
+    return source
 
 def _fund_total_from_text(text: str) -> Optional[float]:
     match = re.search(
@@ -1254,6 +1429,23 @@ def parse_kap_pdr_text(
         if ticker:
             holdings.append(ticker)
             continue
+
+        # Conservative fallback for KAP equity rows whose ticker/ISIN text
+        # layer is OCR-damaged. Normal canonical parsers always have priority.
+        ocr_equity = _parse_ocr_equity_row(
+            line,
+            fund_code=code,
+            report_period=report_period,
+            report_date=report_date,
+            section=section,
+            fund_total_value=fund_total,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+        if ocr_equity:
+            holdings.append(ocr_equity)
+            continue
+
         if section and normalize_pdr_asset_group(section) in {
             ASSET_GROUP_PARTICIPATION_ACCOUNT,
             ASSET_GROUP_REPO,
@@ -1435,11 +1627,26 @@ def pdr_rows_to_official_holdings(file: KapPdrHoldingsFile) -> OfficialHoldingsF
     for row in file.holdings:
         if row.portfolio_weight is None:
             continue
+        # Equity rows that look like BIST securities but have no canonical
+        # identity may be OCR-damaged evidence. Keep their raw name for audit,
+        # but do not promote it back into a canonical ticker.
+        raw_name = _plain(row.security_name_raw or "")
+        raw_equity_code = (
+            row.asset_group == ASSET_GROUP_EQUITY
+            and _OCR_EQUITY_CODE_RE.fullmatch(raw_name) is not None
+        )
+        canonical_identity_missing = not row.official_code and not row.isin
+        ticker = (
+            ""
+            if canonical_identity_missing and raw_equity_code
+            else row.official_code or row.isin or row.issuer_raw or row.security_name_raw or ""
+        )
+
         mapped.append(
             OfficialHolding(
                 fund_symbol=file.fund_code,
                 as_of=as_of,
-                ticker=row.official_code or row.isin or row.issuer_raw or row.security_name_raw or "",
+                ticker=ticker,
                 cusip_raw=row.isin or "",
                 security_name=row.security_name_raw or row.issuer_raw or "",
                 weight_pct=float(row.portfolio_weight),
