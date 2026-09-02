@@ -86,6 +86,12 @@ def _ocr_equity_code(line: str, section: Optional[str]) -> Optional[str]:
     return match.group(1)
 
 _FTD_TAIL_RE = re.compile(r"(-?\d+,\d+)\s+(-?\d+,\d+)\s+(-?\d+,\d+)\s*$")
+_FTD_ROW_RE = re.compile(
+    r"(?P<mv>-?\d{1,3}(?:\.\d{3})+,\d{2})\s+"
+    r"(?P<grup>-?\d+,\d+)\s+"
+    r"(?P<fpd>-?\d+,\d+)\s+"
+    r"(?P<ftd>-?\d+,\d+)"
+)
 _NUMBERED_MONEY = r"(?P<{name}>-?\d{{1,3}}(?:\.\d{{3}})*(?:,\d+)?|-?\d+,\d+)"
 _NUMBERED_WEIGHT = r"(?P<wsign>-)?%(?P<w>-?\d+,\d+)(?:\s+\S.*)?$"
 _NUMBERED_HOLDING_RE = re.compile(
@@ -245,6 +251,34 @@ def parse_tr_number(raw: Any) -> Optional[float]:
         text = text.replace(".", "").replace(",", ".")
     try:
         return float(text)
+    except ValueError:
+        return None
+
+
+
+def _parse_kap_number(raw: Any) -> Optional[float]:
+    """Parse KAP numeric cells in either TR or EN separator format."""
+    text = str(raw or "").strip().replace(" ", "").replace("%", "")
+    if not text or text in {":", "-", "—"}:
+        return None
+
+    if not re.fullmatch(r"-?[\d.,]+", text):
+        return None
+
+    if "," in text and "." in text:
+        # Whichever separator appears last is the decimal separator.
+        if text.rfind(",") > text.rfind("."):
+            normalized = text.replace(".", "").replace(",", ".")
+        else:
+            normalized = text.replace(",", "")
+    elif "," in text:
+        # Existing KAP/TR convention: comma is decimal separator.
+        normalized = text.replace(".", "").replace(",", ".")
+    else:
+        normalized = text
+
+    try:
+        return float(normalized)
     except ValueError:
         return None
 
@@ -424,6 +458,20 @@ def _is_header(line: str) -> bool:
 def _section_from_line(line: str) -> Optional[str]:
     folded = _fold(line)
 
+    # A named holding row with an explicit portfolio-% tail is data, not a
+    # section header. This must run before asset-group normalization because
+    # security/issuer names such as ALTNY / ALTINAY may contain words that
+    # otherwise look like asset-class labels.
+    plain = _plain(line)
+    if re.match(
+        r"^[A-Z][A-Z0-9]{2,5}\s+.+?\s+"
+        r"-?\d{1,3}(?:\.\d{3})*,\d{2}\s+"
+        r"-?\d{1,3}(?:\.\d{3})*,\d{2}\s+"
+        r"-?\d+(?:,\d+)?%\s*$",
+        plain,
+    ):
+        return None
+
     # KAP compact equity section markers.
     # Examples seen in official PDR tables: "A.PAY", "A) PAY".
     compact = re.sub(r"\s+", " ", str(line or "").strip())
@@ -580,28 +628,62 @@ def _parse_isin_row(
         for token in explicit_pct_tokens
     ]
     explicit_pcts = [item for item in explicit_pcts if item is not None]
+    # Some KAP PDR layouts expose only one explicit percentage column.
+    # When '%' is explicitly printed, that value is the portfolio weight.
     explicit_portfolio_weight = (
-        explicit_pcts[-1] if len(explicit_pcts) >= 2 else None
+        explicit_pcts[-1] if explicit_pcts else None
     )
 
-    nums = _numbers_without_isins(text)
+    # Prefer the structural KAP market-value + GRUP/FPD/FTD columns.
+    # Wrapped identity/name text may follow the official financial columns;
+    # numbers in that text (for example "KATILIM 30") must not leak into
+    # market value or portfolio weight.
+    isin_tail = text.split(isin, 1)[1] if isin in text else text
+    ftd_row_match = _FTD_ROW_RE.search(isin_tail)
+
+    financial_text = (
+        isin_tail[:ftd_row_match.end()]
+        if ftd_row_match is not None
+        else isin_tail
+    )
+    nums = _numbers_without_isins(financial_text)
+
     weight = None
     market_value = None
     nominal = None
     unit_price = None
+
+    if ftd_row_match is not None:
+        grup = parse_tr_number(ftd_row_match.group("grup"))
+        fpd = parse_tr_number(ftd_row_match.group("fpd"))
+        ftd = parse_tr_number(ftd_row_match.group("ftd"))
+
+        if all(
+            item is not None and abs(item) <= 100.5
+            for item in (grup, fpd, ftd)
+        ):
+            market_value = parse_tr_number(ftd_row_match.group("mv"))
+            weight = ftd
+
     if len(nums) >= 4:
         parsed = [parse_tr_number(tok) for tok in nums]
         values = [item for item in parsed if item is not None]
         pcts = [item for item in values if abs(item) <= 100]
-        if len(values) >= 3 and all(abs(item) <= 100 for item in values[-3:]):
-            weight = values[-1]
-            market_value = next(
-                (item for item in reversed(values[:-3]) if abs(item) >= 1),
-                None,
-            )
-        elif pcts:
-            weight = pcts[-1]
-            market_value = next((item for item in reversed(values) if abs(item) > 100), None)
+
+        if weight is None:
+            if len(values) >= 3 and all(abs(item) <= 100 for item in values[-3:]):
+                weight = values[-1]
+                market_value = next(
+                    (item for item in reversed(values[:-3]) if abs(item) >= 1),
+                    None,
+                )
+            elif pcts:
+                weight = pcts[-1]
+                market_value = next(
+                    (item for item in reversed(values) if abs(item) > 100),
+                    None,
+                )
+
         if len(values) >= 6:
             candidates = [item for item in values if item >= 100]
             if candidates:
@@ -609,6 +691,7 @@ def _parse_isin_row(
             prices = [item for item in values if 1 < item < 200]
             if prices:
                 unit_price = prices[0]
+
     if explicit_portfolio_weight is not None:
         weight = explicit_portfolio_weight
 
@@ -890,6 +973,103 @@ def _parse_ocr_equity_row(
     )
 
 
+_PERCENT_TAIL_TICKER_RE = re.compile(
+    r"^(?P<code>[A-Z][A-Z0-9]{2,5})\s+"
+    r"(?P<name>.+?)\s+"
+    r"(?P<nominal>-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2}))\s+"
+    r"(?P<market_value>-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2}))\s+"
+    r"(?P<weight>-?\d+(?:[.,]\d+)?)%"
+    r"(?:\s+[A-Za-zÇĞİÖŞÜçğıöşü.]+(?:\s+[A-Za-zÇĞİÖŞÜçğıöşü.]+)*)?\s*$"
+)
+
+
+def _buffer_has_completed_percent_tail(line: str) -> bool:
+    """True when a buffer starts with a complete explicit-% holding row.
+
+    PDF name continuations such as "A.Ş." may already have been appended
+    after the completed holding. Only the leading completed row matters
+    when deciding whether a following holding must start a new chunk.
+    """
+    text = _plain(line)
+    if not text:
+        return False
+
+    match = re.match(
+        r"^[A-Z][A-Z0-9]{2,5}\s+.+?\s+"
+        r"-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2})\s+"
+        r"-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d{1,3}(?:,\d{3})*\.\d{2})\s+"
+        r"-?\d+(?:[.,]\d+)?%",
+        text,
+    )
+    return match is not None
+
+
+def _percent_tail_ticker_match(line: str) -> Optional[re.Match[str]]:
+    """Match named KAP rows ending nominal / market value / explicit %."""
+    text = _plain(line)
+    if not text or _isin_tokens(text):
+        return None
+    if "GRUP TOPLAMI" in text.upper() or _is_header(text):
+        return None
+    return _PERCENT_TAIL_TICKER_RE.match(text)
+
+
+def _parse_percent_tail_ticker_row(
+    line: str,
+    *,
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    section: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> Optional[KapPdrHolding]:
+    """Parse named holdings without ISIN/currency when KAP gives explicit %."""
+    if not section:
+        return None
+
+    group = normalize_pdr_asset_group(section)
+    if group == ASSET_GROUP_UNKNOWN:
+        return None
+
+    match = _percent_tail_ticker_match(line)
+    if not match:
+        return None
+
+    nominal = _parse_kap_number(match.group("nominal"))
+    market_value = _parse_kap_number(match.group("market_value"))
+    weight = _parse_kap_number(match.group("weight"))
+
+    if nominal is None or market_value is None or weight is None:
+        return None
+    if weight < 0 or weight > 100.5:
+        return None
+
+    code = match.group("code")
+
+    return _holding(
+        fund_code=fund_code,
+        report_period=report_period,
+        report_date=report_date,
+        asset_group_raw=section,
+        security_name_raw=code,
+        issuer_raw=_plain(match.group("name")) or None,
+        isin=None,
+        official_code=code,
+        maturity_date=None,
+        currency=None,
+        quantity=None,
+        nominal=nominal,
+        unit_price=None,
+        market_value=market_value,
+        portfolio_weight=weight,
+        fund_total_value=fund_total_value,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
+
 def _parse_ticker_row(
     line: str,
     *,
@@ -1130,6 +1310,8 @@ def _is_holding_row_start(line: str) -> bool:
     first = text.split()[0].rstrip(".,;:")
     if is_valid_isin(first):
         return True
+    if _percent_tail_ticker_match(text):
+        return True
     if _TICKER_ROW_RE.match(text) and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text):
         return True
     if re.match(r"^(ALTIN|G[UÜ]M[UÜ][SŞ])\b", text, flags=re.I) and re.search(r"\b(TL|TRY|AU1)\b", text):
@@ -1291,7 +1473,7 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             continue
         if (
             buf
-            and _has_ftd_tail(buf)
+            and (_has_ftd_tail(buf) or _buffer_has_completed_percent_tail(buf))
             and _is_holding_row_start(line)
             and not _is_wrap_continuation(line, buf)
         ):
@@ -1428,6 +1610,20 @@ def parse_kap_pdr_text(
         )
         if ticker:
             holdings.append(ticker)
+            continue
+
+        percent_tail = _parse_percent_tail_ticker_row(
+            line,
+            fund_code=code,
+            report_period=report_period,
+            report_date=report_date,
+            section=section,
+            fund_total_value=fund_total,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+        if percent_tail:
+            holdings.append(percent_tail)
             continue
 
         # Conservative fallback for KAP equity rows whose ticker/ISIN text

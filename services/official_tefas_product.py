@@ -67,7 +67,10 @@ from services.official_turkiye_fund_evidence import (
     load_tefas_official_bundle,
     load_tefas_price_rows,
 )
-from services.official_turkiye_fund_participation import evaluate_turkiye_fund_participation
+from services.official_turkiye_fund_participation import (
+    evaluate_turkiye_fund_participation,
+    load_participation_bundle,
+)
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.security_master_contract import INSTRUMENT_OTHER, RESOLUTION_RESOLVED
 
@@ -254,12 +257,28 @@ class TefasFundProductProvider:
         code = self._require(symbol)
         mandate = self.kap_mandate(code)
         identity = self.turkiye_identity(code)
+        participation_bundle = load_participation_bundle()
+        funds = dict(participation_bundle.get("funds") or {})
+        existing = dict(funds.get(code) or {})
+        pack = dict(self._packs.get(code) or {})
+
+        if not existing.get("mandate_excerpts") and pack:
+            funds[code] = {
+                "mandate_excerpts": list(pack.get("mandate_excerpts") or ()),
+                "governance_excerpts": list(pack.get("governance_excerpts") or ()),
+                "purification_excerpts": list(pack.get("purification_excerpts") or ()),
+                "izahname_url": pack.get("izahname_url") or "",
+                "izahname_date": pack.get("source_as_of") or "",
+            }
+            participation_bundle = {**participation_bundle, "funds": funds}
+
         verdict = evaluate_turkiye_fund_participation(
             code,
             identity_status=identity.identity_status,
             official_name=identity.official_name,
             umbrella_type=mandate.umbrella_type,
             official_profile=mandate.official_profile,
+            bundle=participation_bundle,
         )
         uygun = verdict.participation_status == PARTICIPATION_STATUS_UYGUN
         limitations = ["NO_INVENTED_UYGUN"]

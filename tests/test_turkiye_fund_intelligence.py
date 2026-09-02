@@ -314,6 +314,29 @@ class TurkishFundIntelligenceTests(unittest.TestCase):
         self.assertIsNotNone(partial.score)
         self.assertNotEqual(partial.score, view.score)
 
+    def test_cached_participation_evidence_reaches_fund_intelligence(self) -> None:
+        provider = default_tefas_fund_provider()
+
+        expected = {
+            "KCL": ("CAUTION", 40.73),
+            "KTN": ("CAUTION", 37.14),
+            "YCY": ("NEUTRAL", 47.03),
+        }
+
+        for code, (state, score) in expected.items():
+            sharia = provider.sharia_evidence(code)
+            self.assertEqual(sharia.participation_status, PARTICIPATION_STATUS_UYGUN)
+
+            view = evaluate_official_fund_intelligence(code, provider=provider)
+            self.assertEqual(
+                view.dimension(DIM_PARTICIPATION_MANDATE).status,
+                DIM_STATUS_READY,
+            )
+            self.assertTrue(view.participation.eligible)
+            self.assertTrue(view.publishable)
+            self.assertEqual(view.state, state)
+            self.assertAlmostEqual(view.score, score, places=2)
+
     def test_participation_firewall_and_eight_e_new_money(self) -> None:
         frozen = {"AIS": (70.39, "WATCH"), "ZPE": (66.32, "WATCH"), "IAT": (60.49, "NEUTRAL")}
         for code in PILOT_TEFAS_FUND_CODES:
