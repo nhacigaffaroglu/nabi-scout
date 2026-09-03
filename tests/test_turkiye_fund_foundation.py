@@ -101,6 +101,39 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertEqual(ybf["currency"], "TRY")
         self.assertTrue(ybf["max_maturity_184"])
 
+    def test_explicit_participation_fund_type_profiles(self) -> None:
+        money_market = parse_kap_ybf_text(
+            "Bu fon, para piyasası katılım fonudur."
+        )
+        self.assertTrue(money_market["money_market_participation"])
+        self.assertEqual(
+            official_profile_from_kap(
+                umbrella_type="Serbest",
+                ybf=money_market,
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+
+        short_term = parse_kap_ybf_text(
+            "Bu fon, kısa vadeli katılım serbest fondur."
+        )
+        self.assertTrue(short_term["short_term_participation"])
+        self.assertEqual(
+            official_profile_from_kap(
+                umbrella_type="Serbest",
+                ybf=short_term,
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+
+        # Umbrella alone must never create a profile.
+        self.assertIsNone(
+            official_profile_from_kap(
+                umbrella_type="Katılım Şemsiye Fonu",
+                ybf={},
+            )
+        )
+
     def test_profile_from_official_mandate_not_name(self) -> None:
         self.assertIsNone(
             official_profile_from_kap(

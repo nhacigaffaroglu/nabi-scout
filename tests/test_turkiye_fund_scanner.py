@@ -1144,5 +1144,122 @@ class TurkiyeFund7KapCompletionTests(unittest.TestCase):
         self.assertNotIn("proxy rotation", blob.casefold())
 
 
+    def test_fi_missing_dimensions_map_to_specific_review_reasons(self) -> None:
+        from types import SimpleNamespace
+
+        from services.fund_product_contract import DIM_STATUS_MISSING
+        from services.turkiye_fund_scanner import fund_intelligence_review_reasons
+
+        view = SimpleNamespace(
+            dimensions=(
+                SimpleNamespace(
+                    status=DIM_STATUS_MISSING,
+                    missing_facts=("official_return_history",),
+                ),
+                SimpleNamespace(
+                    status=DIM_STATUS_MISSING,
+                    missing_facts=("unknown_or_unreconciled_weights",),
+                ),
+                SimpleNamespace(
+                    status=DIM_STATUS_MISSING,
+                    missing_facts=("official_pdr_maturity_date",),
+                ),
+                SimpleNamespace(
+                    status=DIM_STATUS_MISSING,
+                    missing_facts=("kap_management_fee",),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            fund_intelligence_review_reasons(view),
+            (
+                "HISTORY_INSUFFICIENT",
+                "PDR_RECONCILIATION_FAILED",
+                "PDR_PARSE_INCOMPLETE",
+                "FI_INSUFFICIENT_DATA",
+            ),
+        )
+
+
+
+def test_current_reconciled_pdr_supersedes_cached_reconciliation_blocker() -> None:
+    from types import SimpleNamespace
+
+    from services.turkiye_fund_scanner import (
+        supersede_cached_pdr_reconciliation_reasons,
+    )
+
+    pdr = SimpleNamespace(
+        weights=SimpleNamespace(weight_reconciled=True)
+    )
+
+    result = supersede_cached_pdr_reconciliation_reasons(
+        [
+            "PDR_RECONCILIATION_FAILED",
+            "PDR_WEIGHTS_UNRECONCILED",
+            "PARTICIPATION_REVIEW",
+        ],
+        pdr,
+    )
+
+    assert result == ["PARTICIPATION_REVIEW"]
+
+
+def test_unreconciled_current_pdr_keeps_cached_reconciliation_blocker() -> None:
+    from types import SimpleNamespace
+
+    from services.turkiye_fund_scanner import (
+        supersede_cached_pdr_reconciliation_reasons,
+    )
+
+    pdr = SimpleNamespace(
+        weights=SimpleNamespace(weight_reconciled=False)
+    )
+
+    result = supersede_cached_pdr_reconciliation_reasons(
+        ["PDR_RECONCILIATION_FAILED"],
+        pdr,
+    )
+
+    assert result == ["PDR_RECONCILIATION_FAILED"]
+
+
+def test_unavailable_current_pdr_keeps_cached_reconciliation_blocker() -> None:
+    from services.turkiye_fund_scanner import (
+        supersede_cached_pdr_reconciliation_reasons,
+    )
+
+    result = supersede_cached_pdr_reconciliation_reasons(
+        ["PDR_RECONCILIATION_FAILED"],
+        None,
+    )
+
+    assert result == ["PDR_RECONCILIATION_FAILED"]
+
+def test_reconciled_current_pdr_clears_stale_blocker_even_when_profile_unrouted() -> None:
+    from types import SimpleNamespace
+    from services.turkiye_fund_scanner import (
+        supersede_cached_pdr_reconciliation_reasons,
+    )
+
+    pdr = SimpleNamespace(
+        weights=SimpleNamespace(weight_reconciled=True)
+    )
+
+    reasons = [
+        "PDR_RECONCILIATION_FAILED",
+        "PARTICIPATION_REVIEW",
+        "FI_PROFILE_UNROUTED",
+    ]
+
+    result = supersede_cached_pdr_reconciliation_reasons(
+        reasons,
+        pdr,
+    )
+
+    assert "PDR_RECONCILIATION_FAILED" not in result
+    assert "PARTICIPATION_REVIEW" in result
+    assert "FI_PROFILE_UNROUTED" in result
 if __name__ == "__main__":
     unittest.main()

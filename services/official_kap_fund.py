@@ -131,6 +131,12 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
                 flags=re.I,
             )
         ),
+        "money_market_participation": bool(
+            re.search(r"para piyasası katılım (?:serbest )?fon", body, flags=re.I)
+        ),
+        "short_term_participation": bool(
+            re.search(r"kısa vadeli katılım (?:serbest )?fon", body, flags=re.I)
+        ),
         "tl_assets_only": bool(re.search(r"sadece TL cinsi varlıklar", body, flags=re.I)),
     }
 
@@ -142,7 +148,14 @@ def official_profile_from_kap(
 ) -> Optional[str]:
     """Profile from official KAP type + YBF mandate facts. Not from the fund name."""
     facts = dict(ybf or {})
-    if facts.get("max_maturity_184") and facts.get("avg_maturity_45"):
+    if (
+        facts.get("money_market_participation")
+        or facts.get("short_term_participation")
+        or (
+            facts.get("max_maturity_184")
+            and facts.get("avg_maturity_45")
+        )
+    ):
         return PROFILE_SHORT_TERM_PARTICIPATION
     if facts.get("min_80_equity_katilim_index"):
         return PROFILE_PARTICIPATION_EQUITY
@@ -174,6 +187,8 @@ def parse_kap_mandate(
     ybf = dict(ybf_payload or {})
     umbrella_type = ozet.get(OZET_LABEL_UMBRELLA_TYPE)
     merged_ybf = {
+        "money_market_participation": parsed.get("money_market_participation", False),
+        "short_term_participation": parsed.get("short_term_participation", False),
         "max_maturity_184": parsed.get("max_maturity_184")
         or bool(re.search(r"184 gün", str(ybf.get("strategy") or ""), flags=re.I)),
         "avg_maturity_45": parsed.get("avg_maturity_45")

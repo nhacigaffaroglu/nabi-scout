@@ -17,6 +17,7 @@ from services.fund_product_contract import (
     DIM_DIVERSIFICATION_EVAL,
     DIM_PERFORMANCE_EVAL,
     DIM_RISK_EVAL,
+    DIM_STATUS_MISSING,
     MIN_READY_WEIGHT_COVERAGE,
     TURKISH_FI_PROFILES,
 )
@@ -227,6 +228,74 @@ def _rank_key(row: TurkiyeFundScannerRow) -> tuple:
     )
 
 
+
+def supersede_cached_pdr_reconciliation_reasons(
+    reasons: Sequence[str],
+    pdr: Any,
+) -> list[str]:
+    """Drop stale cached PDR reconciliation blockers only when current
+    canonical official PDR evidence proves reconciliation succeeded.
+
+    Fail-closed:
+    - current PDR unavailable -> keep blocker
+    - reconciliation False/unknown -> keep blocker
+    - reconciliation True -> cached reconciliation blocker is superseded
+
+    Current FI evaluation remains authoritative and may add the blocker again
+    later if its own canonical evidence requires it.
+    """
+    weights = getattr(pdr, "weights", None)
+    if getattr(weights, "weight_reconciled", None) is not True:
+        return list(reasons)
+
+    stale_codes = {
+        "PDR_RECONCILIATION_FAILED",
+        "PDR_WEIGHTS_UNRECONCILED",
+    }
+
+    return [
+        reason
+        for reason in reasons
+        if str(reason or "").split(":", 1)[0].strip() not in stale_codes
+    ]
+
+
+def fund_intelligence_review_reasons(view: Any) -> tuple[str, ...]:
+    """Map canonical FI missing facts to canonical scanner review reasons.
+
+    Diagnostics only: this does not modify FI scoring, thresholds,
+    Participation, 8E, New Money, or portfolio behavior.
+    """
+    reasons: list[str] = []
+
+    for dimension in tuple(getattr(view, "dimensions", ()) or ()):
+        if getattr(dimension, "status", None) != DIM_STATUS_MISSING:
+            continue
+
+        facts = set(getattr(dimension, "missing_facts", ()) or ())
+
+        if facts & {
+            "official_return_history",
+            "official_short_horizon",
+            "official_drawdown_series",
+        }:
+            reasons.append("HISTORY_INSUFFICIENT")
+        elif "official_holdings" in facts:
+            reasons.append("PDR_MISSING")
+        elif "unknown_or_unreconciled_weights" in facts:
+            reasons.append("PDR_RECONCILIATION_FAILED")
+        elif facts & {
+            "official_pdr_maturity_date",
+            "official_pdr_issuer",
+        }:
+            reasons.append("PDR_PARSE_INCOMPLETE")
+        else:
+            reasons.append("FI_INSUFFICIENT_DATA")
+
+    return canonicalize_review_reasons(reasons)
+
+
+
 def _row_status(
     *,
     active: bool,
@@ -328,17 +397,27 @@ def _evaluate_one(
         research_allowed = bool(verdict.research_allowed)
         if verdict.blockers:
             missing.extend(verdict.blockers)
+        # Current canonical PDR may supersede stale cached reconciliation
+        # blockers even when the mandate/profile cannot yet be routed.
+        # Participation and FI gates remain fail-closed.
+        pdr = None
+        try:
+            pdr = provider.pdr_holdings(code)
+        except (FileNotFoundError, ValueError):
+            pdr = None
+
+        missing = supersede_cached_pdr_reconciliation_reasons(
+            missing,
+            pdr,
+        )
+
         mandate = try_mandate_from_kap(kap)
         if mandate is None:
             missing.append("FI_PROFILE_UNROUTED")
         else:
             profile_name = mandate.vehicle
             category = mandate.primary_layer or category
-            pdr = None
-            try:
-                pdr = provider.pdr_holdings(code)
-            except (FileNotFoundError, ValueError):
-                pdr = None
+
             classification = classify_official_turkiye_fund_exposure(mandate, pdr)
             if classification is None:
                 missing.append("ECONOMIC_EXPOSURE_UNKNOWN")
@@ -355,6 +434,7 @@ def _evaluate_one(
             return_1y = performance.return_1y
             max_drawdown = performance.drawdown
             if not publishable:
+                missing.extend(fund_intelligence_review_reasons(view))
                 missing.append("FI_NOT_PUBLISHABLE")
     else:
         verdict = evaluate_turkiye_fund_participation(
