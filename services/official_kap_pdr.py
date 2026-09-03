@@ -929,7 +929,20 @@ def _parse_ocr_equity_row(
     if not code or _is_header(text) or "GRUP TOPLAMI" in text.upper():
         return None
 
-    pct_tokens = re.findall(r"(-?\d+(?:[.,]\d+)?)\s*%", text)
+    # OCR-damaged percentage tails (for example ``S.92%`` or ``0.S4%``)
+    # are not numeric evidence.  Do not salvage an interior numeric suffix
+    # such as ``92%``/``4%`` from them; that can manufacture a material
+    # portfolio weight.
+    trailing_pct_token = re.search(r"(\S+%)\s*$", text)
+    if trailing_pct_token and not re.fullmatch(
+        r"-?\d+(?:[.,]\d+)?%", trailing_pct_token.group(1)
+    ):
+        return None
+
+    pct_tokens = re.findall(
+        r"(?<![A-Za-z0-9.,])(-?\d+(?:[.,]\d+)?)\s*%",
+        text,
+    )
     pct_values = [
         parse_tr_number(token.replace(".", ","))
         for token in pct_tokens
@@ -1385,9 +1398,17 @@ def _is_wrap_continuation(line: str, buf: str) -> bool:
     if prior_isins and line_isins and line_isins[0] not in prior_isins:
         return False
 
-    # Fail closed. Do not merge an otherwise-unclassified PDF line merely
-    # because no negative rule matched it.
+    # A repeated ISIN can be either a wrapped continuation or a new lot.
+    # When both physical lines already carry explicit percentage columns,
+    # treat the later line as a new official holding row.  Otherwise KAP
+    # layouts with several lots of the same security get collapsed into one
+    # chunk and the trailing group-total percentage can become the holding
+    # weight.
     if prior_isins and line_isins and line_isins[0] in prior_isins:
+        prior_pct_count = len(re.findall(r"-?\d+(?:[.,]\d+)?\s*%", prior))
+        line_pct_count = len(re.findall(r"-?\d+(?:[.,]\d+)?\s*%", text))
+        if prior_pct_count >= 2 and line_pct_count >= 2:
+            return False
         return True
 
     if prior_isins and not line_isins:
@@ -1429,7 +1450,7 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         buf = ""
         if not text or text.upper().startswith("GRUP TOPLAMI"):
             return
-        text = re.split(r"GRUP TOPLAMI", text, flags=re.I)[0].strip()
+        text = re.split(r"(?:ARA|ANA)?\s*GRUP\s+TOPLAM", text, maxsplit=1, flags=re.I)[0].strip()
         if not text or _is_page_noise(text):
             return
         parts = [part.strip() for part in _ISIN_HOLDING_SPLIT.split(text) if part.strip()]
@@ -1468,9 +1489,22 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             flush()
             chunks.append((section, line))
             continue
-        if "GRUP TOPLAMI" in line.upper() and not _isin_tokens(line):
+        if re.search(r"\b(?:ARA|ANA)?\s*GRUP\s+TOPLAM", line, flags=re.I) and not _isin_tokens(line):
             flush()
             continue
+        # Repeated complete ISIN lots are distinct official rows, not wraps.
+        if buf:
+            buf_first = _plain(buf).split()[0].rstrip(".,;:") if _plain(buf).split() else ""
+            line_first = _plain(line).split()[0].rstrip(".,;:") if _plain(line).split() else ""
+            if (
+                is_valid_isin(buf_first)
+                and is_valid_isin(line_first)
+                and len(re.findall(r"-?\d+(?:[.,]\d+)?\s*%", buf)) >= 2
+                and len(re.findall(r"-?\d+(?:[.,]\d+)?\s*%", line)) >= 2
+            ):
+                flush()
+                buf = line
+                continue
         if (
             buf
             and (_has_ftd_tail(buf) or _buffer_has_completed_percent_tail(buf))

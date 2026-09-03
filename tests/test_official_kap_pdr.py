@@ -163,6 +163,41 @@ Y) DİĞER
         # Anonymous rows remain fail-closed: no identity is invented.
         self.assertNotIn(None, rows)
 
+    def test_repeated_complete_isin_rows_are_not_merged_into_group_total(self) -> None:
+        pdr = _parse(
+            """
+A) ÖZEL SEKTÖR KİRA SERTİFİKA YP
+XS2699906512 ZİRAAT KATILIM VARLIK KİRALAMA A.Ş. 12.11.2026 XS2699906512 9.38% 2 1,000,000.00 101.72 07.07.2025 0.00% 0 0.00 103.27 48,891,872.99 1.69% 1.54%
+XS2699906512 ZİRAAT KATILIM VARLIK KİRALAMA A.Ş. 12.11.2026 XS2699906512 9.38% 2 6,000,000.00 101.73 22.08.2025 0.00% 0 0.00 103.27 293,351,237.96 10.14% 9.26%
+Ara Grup Toplamı 7,000,000.00 342,243,110.95 11.83% 10.80%
+Ana Grup Toplamı 60,300,000.00 2,891,978,324.75 100.03% 91.29%
+"""
+        )
+        self.assertEqual([row.portfolio_weight for row in pdr.holdings], [1.54, 9.26])
+        self.assertAlmostEqual(pdr.weights.reported_weight_sum, 10.80)
+
+    def test_ocr_damaged_group_total_line_does_not_become_holding_weight(self) -> None:
+        pdr = _parse(
+            """
+A) ÖZEL SEKTÖR KİRA SERTİFİKA YP
+XS2699906512 ZİRAAT KATILIM VARLIK KİRALAMA A.Ş. 12.11.2026 XS2699906512 9.38% 2 1,000,000.00 101.72 07.07.2025 0.00% 0 0.00 103.27 48,891,872.99 1.69% 1.54%
+Ara Grup Toplam/idotless 1,000,000.00 48,891,872.99 1.69% 1.54%
+Ana Grup Toplam/idotless 60,300,000.00 2,891,978,324.75 100.03% 91.29%
+"""
+        )
+        self.assertEqual(len(pdr.holdings), 1)
+        self.assertAlmostEqual(pdr.holdings[0].portfolio_weight, 1.54)
+
+    def test_ocr_equity_does_not_salvage_numeric_suffix_from_corrupt_percent(self) -> None:
+        pdr = _parse(
+            """
+A) HİSSE SENETLERİ
+AgBRK.E ALBARAKA TÜRK KATILIM BANKASI TREAgBK00011 0.00% 0 S,000,000.00 8.2S 0S.06.2026 0.00% 0 0 7.9S 2S,790,000.00 15.49% S.92%
+AgBRK.E ALBARAKA TÜRK KATILIM BANKASI TREAgBK00011 0.00% 0 449,286.00 7.99 02.06.2026 0.00% 0 0 7.9S S,562,8S7.98 2.S2% 0.59%
+"""
+        )
+        self.assertEqual(len(pdr.holdings), 1)
+        self.assertAlmostEqual(pdr.holdings[0].portfolio_weight, 0.59)
 
 if __name__ == "__main__":
     unittest.main()
