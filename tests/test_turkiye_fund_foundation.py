@@ -11,6 +11,7 @@ from services.fund_product_contract import (
     PILOT_FUND_SYMBOLS,
     PILOT_TEFAS_FUND_CODES,
     PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROVIDER_TEFAS,
@@ -157,6 +158,45 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertIn("184", ais.strategy_text or "")
         self.assertIn("BIST Katılım 100", zpe.strategy_text or "")
         self.assertIn("kira sertifikaları", iat.strategy_text or "")
+
+
+    def test_high_confidence_strategy_profile_overrides_broad_asset_mentions(self) -> None:
+        mixed = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "strategy": (
+                    "Fon portföyünde çoklu varlık yönetim modeli benimsenir. "
+                    "Portföye kira sertifikaları ve altın işlemleri dahil edilebilir."
+                )
+            },
+        )
+        self.assertEqual(mixed.official_profile, PROFILE_MIXED_MULTI_ASSET_PARTICIPATION)
+
+        equity = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "strategy": (
+                    "Bu fon, hisse senedi fonudur. Portföye dahil edilebilecek varlıklar "
+                    "faizsiz finans ilkelerine uyumlu finansal varlıklardan ibarettir. "
+                    "Kira sertifikaları da portföye alınabilir."
+                )
+            },
+        )
+        self.assertEqual(equity.official_profile, PROFILE_PARTICIPATION_EQUITY)
+
+        short_term = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "strategy": (
+                    "Kısa vadeli katılım serbest fon. "
+                    "Fon'un portföyünün aylık ağırlıklı ortalama vadesi 25-90 gün olacaktır."
+                )
+            },
+        )
+        self.assertEqual(short_term.official_profile, PROFILE_SHORT_TERM_PARTICIPATION)
 
     def test_basic_official_facts(self) -> None:
         facts = self.provider.facts("AIS")

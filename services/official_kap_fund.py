@@ -131,6 +131,17 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
                 flags=re.I,
             )
         ),
+        "explicit_multi_asset_strategy": bool(
+            re.search(r"çoklu\s+varlık\s+yönetim\s+modeli|coklu\s+varlik\s+yonetim\s+modeli", body, flags=re.I)
+        ),
+        "explicit_equity_participation_strategy": bool(
+            re.search(r"hisse\s+senedi\s+fonudur", body, flags=re.I)
+            and re.search(
+                r"faizsiz(?:/katılım)?\s+finans\s+ilkelerine|katılım\s+bankacılığı\s+ilkelerine",
+                body,
+                flags=re.I,
+            )
+        ),
         "money_market_participation": bool(
             re.search(r"para piyasası katılım (?:serbest )?fon", body, flags=re.I)
         ),
@@ -157,8 +168,10 @@ def official_profile_from_kap(
         )
     ):
         return PROFILE_SHORT_TERM_PARTICIPATION
-    if facts.get("min_80_equity_katilim_index"):
+    if facts.get("min_80_equity_katilim_index") or facts.get("explicit_equity_participation_strategy"):
         return PROFILE_PARTICIPATION_EQUITY
+    if facts.get("explicit_multi_asset_strategy"):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
     if facts.get("min_80_kira_sertifikasi"):
         return PROFILE_SUKUK_LEASE_CERTIFICATE
     if facts.get("precious_metals_mandate"):
@@ -188,7 +201,11 @@ def parse_kap_mandate(
     umbrella_type = ozet.get(OZET_LABEL_UMBRELLA_TYPE)
     merged_ybf = {
         "money_market_participation": parsed.get("money_market_participation", False),
-        "short_term_participation": parsed.get("short_term_participation", False),
+        "short_term_participation": parsed.get("short_term_participation", False)
+        or (
+            bool(re.search(r"kısa vadeli katılım(?: serbest)?", str(ybf.get("strategy") or ""), flags=re.I))
+            and bool(re.search(r"ağırlıklı ortalama vadesi", str(ybf.get("strategy") or ""), flags=re.I))
+        ),
         "max_maturity_184": parsed.get("max_maturity_184")
         or bool(re.search(r"184 gün", str(ybf.get("strategy") or ""), flags=re.I)),
         "avg_maturity_45": parsed.get("avg_maturity_45")
@@ -207,6 +224,13 @@ def parse_kap_mandate(
         ),
         "real_estate_mandate": parsed.get("real_estate_mandate")
         or bool(re.search(r"gayrimenkul.{0,80}(yatırım|portföy|sertifika)", str(ybf.get("strategy") or ""), flags=re.I | re.S)),
+        "explicit_multi_asset_strategy": parsed.get("explicit_multi_asset_strategy", False)
+        or bool(re.search(r"çoklu\s+varlık\s+yönetim\s+modeli|coklu\s+varlik\s+yonetim\s+modeli", str(ybf.get("strategy") or ""), flags=re.I)),
+        "explicit_equity_participation_strategy": parsed.get("explicit_equity_participation_strategy", False)
+        or bool(
+            re.search(r"hisse\s+senedi\s+fonudur", str(ybf.get("strategy") or ""), flags=re.I)
+            and re.search(r"faizsiz(?:/katılım)?\s+finans\s+ilkelerine|katılım\s+bankacılığı\s+ilkelerine", str(ybf.get("strategy") or ""), flags=re.I)
+        ),
         "mixed_mandate": parsed.get("mixed_mandate")
         or bool(
             re.search(
