@@ -75,11 +75,59 @@ def parse_kap_ozet_html(html: str) -> dict[str, str]:
 def parse_kap_ybf_text(text: str) -> dict[str, Any]:
     body = re.sub(r"\s+", " ", str(text or "")).strip()
     isin_match = re.search(r"ISIN\s+KODU:\s*([A-Z0-9]+)", body, flags=re.I)
+    # Prefer the value printed directly next to the official YBF management-fee
+    # label. The extracted PDF text is whitespace-normalized above, so a legacy
+    # line-end pattern can otherwise drift to an unrelated page/footer or
+    # distribution percentage later in the document.
     fee_match = re.search(
-        r"Yönetim ücreti[^\n%]{0,80}.*?(\d+(?:[.,]\d+)?)\s*$",
+        r"\bYönetim\s+ücreti(?:\s*\(\s*yıllık\s*\))?"
+        r"\s*(?:\(\s*BSMV\s+dahil\s*\)|\(\s*\*\s*\)|\*)?"
+        r"\s*(?:A\s+Grubu\s*:\s*)?%?\s*"
+        r"(\d{1,2}(?:[.,]\d{1,6})?)\b",
         body,
-        flags=re.I | re.M,
+        flags=re.I,
     )
+    if fee_match is None:
+        # Some official YBF tables place an integer-valued annual fee directly
+        # after the "Kurucu ile Dağıtıcı Kuruluş arasında" allocation anchor.
+        # Keep this deliberately narrow so allocation percentages (%35/%65)
+        # cannot be mistaken for the management fee.
+        fee_match = re.search(
+            r"\bYönetim\s+ücreti(?:\s*\(\s*yıllık\s*\))?"
+            r"(?:(?!\b(?:Portföy\s+Saklayıcısı|Portföy\s+Saklama(?:\s+Ücreti)?|"
+            r"Saklama\s+Ücreti|Diğer\s+Giderler)\b).){0,600}?"
+            r"\bKurucu\s+ile\s+Dağıtıcı\s+Kuruluş\s+arasında\s+"
+            r"%?\s*(\d{1,2}(?:[.,]\d{1,6})?)\b",
+            body,
+            flags=re.I,
+        )
+
+    if fee_match is None:
+        # Some official YBF PDFs flatten a multi-column fee table so that
+        # distributor allocation percentages (%35/%65) appear between the
+        # management-fee label and the actual annual fee.
+        #
+        # Require an official management-fee label, a Kurucu table anchor,
+        # and then an explicit decimal-valued fee. Integer allocation
+        # percentages such as 35 and 65 must never become management fees.
+        fee_match = re.search(
+            r"\bYönetim\s+ücreti(?:\s*\(\s*yıllık\s*\))?"
+            r"(?:(?!\b(?:Portföy\s+Saklayıcısı|Portföy\s+Saklama(?:\s+Ücreti)?|Saklama\s+ücreti|Diğer\s+giderler)\b).){0,500}?"
+            r"\bKurucu(?:/Yönetici)?\b"
+            r"(?:(?!\b(?:Portföy\s+Saklayıcısı|Portföy\s+Saklama(?:\s+Ücreti)?|Saklama\s+ücreti|Diğer\s+giderler)\b).){0,320}?"
+            r"%?\s*(\d{1,2}[.,]\d{1,6})\b",
+            body,
+            flags=re.I,
+        )
+
+    if fee_match is None:
+        # Backward-compatible fallback for older YBF table extractions where
+        # the value is separated from the label. Keep it fail-closed below.
+        fee_match = re.search(
+            r"Yönetim ücreti[^\n%]{0,80}.*?(\d+(?:[.,]\d+)?)\s*$",
+            body,
+            flags=re.I | re.M,
+        )
     if fee_match is None:
         fee_match = re.search(
             r"Yönetim ücreti\s*\(yıllık\).*?(\d+(?:[.,]\d+)?)",
@@ -89,9 +137,13 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
     fee = None
     if fee_match:
         try:
-            fee = float(fee_match.group(1).replace(",", "."))
+            candidate = float(fee_match.group(1).replace(",", "."))
         except ValueError:
-            fee = None
+            candidate = None
+        # KAP YBF management fee is an annual percentage. Reject implausible
+        # table-column leakage such as the recurring distributor split %35/%65.
+        if candidate is not None and 0.0 <= candidate <= 10.0:
+            fee = candidate
     currency = None
     if re.search(r"para birimi\s+TL", body, flags=re.I):
         currency = "TRY"

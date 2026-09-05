@@ -103,6 +103,79 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
         self.assertTrue(ybf["katilim_fonu_status"])
         self.assertEqual(ybf["currency"], "TRY")
         self.assertTrue(ybf["max_maturity_184"])
+        self.assertEqual(ybf["management_fee_annual_pct"], 0.85)
+
+    def test_kap_ybf_management_fee_prefers_direct_official_value(self) -> None:
+        direct = parse_kap_ybf_text(
+            "Fon’dan Karşılanan Giderler (yıllık) % "
+            "Yönetim Ücreti 3,20 - Kurucu/Yönetici (Asgari %35, azami %65)"
+        )
+        self.assertEqual(direct["management_fee_annual_pct"], 3.20)
+
+        allocation_after_split = parse_kap_ybf_text(
+            "Yönetim ücreti (yıllık) "
+            "- Kurucu/Yönetici Asgari %35, azami %65 1,10 "
+            "- Fon Dağıtım Kuruluşu"
+        )
+        self.assertEqual(
+            allocation_after_split["management_fee_annual_pct"],
+            1.10,
+        )
+
+        two_row_allocation = parse_kap_ybf_text(
+            "Yönetim ücreti (yıllık) "
+            "- Kurucu/Yönetici Asgari %35, azami %65 "
+            "- Fon Dağıtım Kuruluşu : Asgari %35, azami %65 "
+            "1,00 Saklama ücreti 0,05"
+        )
+        self.assertEqual(
+            two_row_allocation["management_fee_annual_pct"],
+            1.00,
+        )
+
+        interleaved_columns = parse_kap_ybf_text(
+            "Yönetim ücreti (yıllık) "
+            "Kurucu %35 (En az) 2,25 riski, likidite riski"
+        )
+        self.assertEqual(
+            interleaved_columns["management_fee_annual_pct"],
+            2.25,
+        )
+
+        percent_prefixed_fee = parse_kap_ybf_text(
+            "Yönetim ücreti (yıllık) Kurucu piyasa "
+            "(Asgari %35, azami %65) ile Fon %3,20 "
+            "kaynaklanabilecek riskleri"
+        )
+        self.assertEqual(
+            percent_prefixed_fee["management_fee_annual_pct"],
+            3.20,
+        )
+
+        integer_fee_before_custody = parse_kap_ybf_text(
+            "Fon’dan karşılanan giderler % "
+            "Yönetim ücreti (yıllık) temel yatırım riskleri "
+            "Kurucu ile Dağıtıcı Kuruluş arasında 1 "
+            "maruz kalabileceği temel riskler "
+            "Asgari %35-Azami %65 oranında paylaştırılır. "
+            "Portföy Saklayıcısı 0,08 Diğer Giderler 0,20"
+        )
+        self.assertEqual(
+            integer_fee_before_custody["management_fee_annual_pct"],
+            1.0,
+        )
+
+        trailing_page_number = parse_kap_ybf_text(
+            "Yıllık Azami Fon Toplam Gider Oranı 3,65 "
+            "Yönetim Ücreti (Yıllık) 3,00 Saklama Ücreti 0,12 "
+            "Bu form 20/07/2026 tarihi itibarıyla günceldir. 2"
+        )
+        self.assertEqual(trailing_page_number["management_fee_annual_pct"], 3.00)
+
+        distributor_split_only = parse_kap_ybf_text(
+            "Yönetim ücreti (yıllık) Kurucu/Yönetici Asgari %35, azami %65"
+        )
+        self.assertIsNone(distributor_split_only["management_fee_annual_pct"])
 
     def test_explicit_participation_fund_type_profiles(self) -> None:
         money_market = parse_kap_ybf_text(
