@@ -12,6 +12,7 @@ from services.fund_product_contract import (
     PILOT_TEFAS_FUND_CODES,
     PROFILE_PARTICIPATION_EQUITY,
     PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+    PROFILE_PRECIOUS_METALS_PARTICIPATION,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
     PROVIDER_TEFAS,
@@ -33,6 +34,7 @@ from services.official_sp_funds_product import (
 from services.official_tefas import parse_tefas_price_history
 from services.official_tefas_product import default_tefas_fund_provider
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.official_turkiye_fund_participation import _explicit_governance, _explicit_mandate
 
 TEFAS_SRC = Path("services/official_tefas_product.py")
 KAP_SRC = Path("services/official_kap_fund.py")
@@ -197,6 +199,46 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
             },
         )
         self.assertEqual(short_term.official_profile, PROFILE_SHORT_TERM_PARTICIPATION)
+
+        precious = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "strategy": (
+                    "Fon toplam değerinin en az %80’i devamlı olarak borsada işlem gören "
+                    "altın ve altına dayalı sermaye piyasası araçlarına yatırılır. "
+                    "Kalan bölümde kira sertifikaları ve BIST Katılım 100 araçları bulunabilir."
+                )
+            },
+        )
+        self.assertEqual(precious.official_profile, PROFILE_PRECIOUS_METALS_PARTICIPATION)
+
+    def test_explicit_faizsiz_finans_strategy_is_mandate_evidence(self) -> None:
+        self.assertTrue(
+            _explicit_mandate((
+                "Fon portföyü faizsiz finans ilkelerine uygun para ve sermaye "
+                "piyasası araçlarına yatırılacaktır.",
+            ))
+        )
+        self.assertFalse(
+            _explicit_mandate((
+                "Fon hesabına faizsiz finansman sağlanmasından kaynaklanan giderler.",
+            ))
+        )
+
+    def test_binding_independent_adviser_is_governance_evidence(self) -> None:
+        self.assertTrue(
+            _explicit_governance((
+                "Uluslararası kabul görmüş faizsiz finans ilkelerine uygunluğunun "
+                "belirlenmesinde bağımsız bir danışman kararı aranacak ve bu karar "
+                "bağlayıcı olacaktır.",
+            ))
+        )
+        self.assertFalse(
+            _explicit_governance((
+                "Bağımsız danışmanlık hizmeti alınabilir.",
+            ))
+        )
 
     def test_basic_official_facts(self) -> None:
         facts = self.provider.facts("AIS")

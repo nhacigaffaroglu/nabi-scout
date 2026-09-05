@@ -155,6 +155,7 @@ _SECTION_MAP = (
     ("satis vaadiyle alis", ASSET_GROUP_REPO),
     ("kıymetli maden", ASSET_GROUP_PRECIOUS_METALS),
     ("kiymetli maden", ASSET_GROUP_PRECIOUS_METALS),
+    ("d.maden", ASSET_GROUP_PRECIOUS_METALS),
     ("altın", ASSET_GROUP_PRECIOUS_METALS),
     ("altin", ASSET_GROUP_PRECIOUS_METALS),
     ("gümüş", ASSET_GROUP_PRECIOUS_METALS),

@@ -163,6 +163,22 @@ Y) DİĞER
         # Anonymous rows remain fail-closed: no identity is invented.
         self.assertNotIn(None, rows)
 
+
+    def test_d_maden_section_abbreviation_is_precious_metals(self) -> None:
+        pdr = _parse(
+            """
+N) KATILMA BELGELERİ
+KSV KATILIM FONU TRYAAAA00001 100,00 1.000,00 1,00%
+D.Maden
+ALTIN LBMA 995 TL TRKAU0000014 100,00 99.000,00 99,00%
+"""
+        )
+
+        self.assertEqual(len(pdr.holdings), 2)
+        self.assertEqual(pdr.holdings[0].asset_group, "FUND")
+        self.assertEqual(pdr.holdings[1].asset_group, "PRECIOUS_METALS")
+        self.assertAlmostEqual(pdr.holdings[1].portfolio_weight, 99.00)
+
     def test_repeated_complete_isin_rows_are_not_merged_into_group_total(self) -> None:
         pdr = _parse(
             """

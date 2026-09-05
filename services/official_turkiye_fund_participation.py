@@ -204,6 +204,15 @@ def mandate_from_umbrella_only(umbrella_type: str) -> str:
 
 def _explicit_mandate(excerpts: tuple[str, ...]) -> bool:
     blob = " ".join(excerpts).casefold()
+
+    # A fund-specific YBF strategy can state the participation mandate directly
+    # as "faizsiz finans ilkelerine uygun" without also repeating the word
+    # "katılım" in the same extracted mandate excerpt. Treat that exact
+    # strategy language as positive mandate evidence; do not infer from generic
+    # "faizsiz finansman" expense/financing text.
+    if "faizsiz finans ilkelerine uygun" in blob:
+        return True
+
     return any(
         token in blob
         for token in (
@@ -218,6 +227,11 @@ def _explicit_mandate(excerpts: tuple[str, ...]) -> bool:
 
 def _explicit_governance(excerpts: tuple[str, ...]) -> bool:
     blob = " ".join(excerpts).casefold()
+    if (
+        "bağımsız bir danışman kararı" in blob
+        and "bağlayıcı olacaktır" in blob
+    ):
+        return True
     return any(
         token in blob
         for token in (

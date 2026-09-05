@@ -168,6 +168,8 @@ def official_profile_from_kap(
         )
     ):
         return PROFILE_SHORT_TERM_PARTICIPATION
+    if facts.get("explicit_precious_metals_80_strategy"):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
     if facts.get("min_80_equity_katilim_index") or facts.get("explicit_equity_participation_strategy"):
         return PROFILE_PARTICIPATION_EQUITY
     if facts.get("explicit_multi_asset_strategy"):
@@ -224,6 +226,14 @@ def parse_kap_mandate(
         ),
         "real_estate_mandate": parsed.get("real_estate_mandate")
         or bool(re.search(r"gayrimenkul.{0,80}(yatırım|portföy|sertifika)", str(ybf.get("strategy") or ""), flags=re.I | re.S)),
+        "explicit_precious_metals_80_strategy": parsed.get("explicit_precious_metals_80_strategy", False)
+        or bool(
+            re.search(
+                r"(?:en\s+az|asgari)\s*%\s*80[^.]{0,180}\b(?:altın|gümüş|kıymetli\s+maden)",
+                str(ybf.get("strategy") or ""),
+                flags=re.I | re.S,
+            )
+        ),
         "explicit_multi_asset_strategy": parsed.get("explicit_multi_asset_strategy", False)
         or bool(re.search(r"çoklu\s+varlık\s+yönetim\s+modeli|coklu\s+varlik\s+yonetim\s+modeli", str(ybf.get("strategy") or ""), flags=re.I)),
         "explicit_equity_participation_strategy": parsed.get("explicit_equity_participation_strategy", False)
