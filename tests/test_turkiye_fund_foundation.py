@@ -11,7 +11,9 @@ from services.fund_product_contract import (
     PILOT_FUND_SYMBOLS,
     PILOT_TEFAS_FUND_CODES,
     PROFILE_PARTICIPATION_EQUITY,
+    PROFILE_LIQUIDITY_PARTICIPATION_FUND,
     PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+    PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND,
     PROFILE_PRECIOUS_METALS_PARTICIPATION,
     PROFILE_SHORT_TERM_PARTICIPATION,
     PROFILE_SUKUK_LEASE_CERTIFICATE,
@@ -21,7 +23,10 @@ from services.fund_product_contract import (
 )
 from services.official_kap_fund import (
     match_tefas_kap_identity,
+    official_fi_profile_from_general_strategy,
     official_profile_from_kap,
+    _explicit_min_80_kira_sertifikasi,
+    participation_holdings_profile_from_kap_fund10,
     parse_kap_mandate,
     parse_kap_ozet_html,
     parse_kap_ybf_text,
@@ -32,7 +37,14 @@ from services.official_sp_funds_product import (
     default_official_sp_funds_provider,
 )
 from services.official_tefas import parse_tefas_price_history
-from services.official_tefas_product import default_tefas_fund_provider
+from services.official_tefas_product import (
+    TefasFundProductProvider as OfficialTefasFundProductProvider,
+    default_tefas_fund_provider,
+)
+from services.turkiye_fund_kap_rsc import (
+    kap_genel_investment_strategy,
+    parse_kap_genel_rsc,
+)
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.official_turkiye_fund_participation import _explicit_governance, _explicit_mandate
 
@@ -285,6 +297,232 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
             },
         )
         self.assertEqual(precious.official_profile, PROFILE_PRECIOUS_METALS_PARTICIPATION)
+
+    def test_min_80_semantics_require_explicit_minimum(self) -> None:
+        bare_equity = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={"strategy": "BIST Katılım 100 Endeksi referans alınabilir."},
+        )
+        self.assertIsNone(bare_equity.official_profile)
+
+        bare_sukuk = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={"strategy": "Portföyde kira sertifikaları bulunabilir."},
+        )
+        self.assertIsNone(bare_sukuk.official_profile)
+
+        for prefix in ("en az", "asgari"):
+            equity = parse_kap_mandate(
+                fund_code="TST",
+                ozet_fields={},
+                ybf_payload={
+                    "strategy": (
+                        f"Fon toplam değerinin {prefix} %80'i devamlı olarak "
+                        "BIST Katılım 100 Endeksindeki paylara yatırılır."
+                    )
+                },
+            )
+            self.assertEqual(
+                equity.official_profile,
+                PROFILE_PARTICIPATION_EQUITY,
+            )
+
+            sukuk = parse_kap_mandate(
+                fund_code="TST",
+                ozet_fields={},
+                ybf_payload={
+                    "strategy": (
+                        f"Fon toplam değerinin {prefix} %80'i devamlı olarak "
+                        "kira sertifikalarına yatırılır."
+                    )
+                },
+            )
+            self.assertEqual(
+                sukuk.official_profile,
+                PROFILE_SUKUK_LEASE_CERTIFICATE,
+            )
+
+
+    def test_participation_holdings_profile_is_fund10_methodology_freeze(self) -> None:
+        fi = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={"strategy": "Portföyde kira sertifikaları bulunabilir."},
+        )
+        self.assertIsNone(fi.official_profile)
+
+        legacy = participation_holdings_profile_from_kap_fund10(
+            umbrella_type="Katılım Şemsiye Fonu",
+            ybf_payload={"strategy": "Portföyde kira sertifikaları bulunabilir."},
+        )
+        self.assertEqual(legacy, PROFILE_SUKUK_LEASE_CERTIFICATE)
+
+        bky_like = participation_holdings_profile_from_kap_fund10(
+            umbrella_type="Serbest Şemsiye Fon",
+            ybf_text=(
+                "Fon toplam değerinin en az %80’i devamlı olarak, T.C. Hazine ve "
+                "günlerde 10.30) sonra verilen talimatları ilk pay fiyatı Maliye "
+                "Bakanlığı tarafından döviz cinsinden ihraç edilen hesaplamasından "
+                "sonra verilmiş olarak kabul edilerek ve kira sertifikaları ile "
+                "yerli ihraççıların katılım esasına uygun araçlarına yatırılacaktır."
+            ),
+        )
+        self.assertEqual(bky_like, PROFILE_SUKUK_LEASE_CERTIFICATE)
+
+    def test_min_80_sukuk_tolerates_official_ocr_interleaving(self) -> None:
+        bky = (
+            "Fon toplam değerinin en az %80’i devamlı olarak, T.C. Hazine ve "
+            "günlerde 10.30) sonra verilen talimatları ilk pay fiyatı Maliye "
+            "Bakanlığı tarafından döviz cinsinden ihraç edilen hesaplamasından "
+            "sonra verilmiş olarak kabul edilerek ve kira sertifikaları ile "
+            "yerli ihraççıların katılım esasına uygun araçlarına yatırılacaktır."
+        )
+        ktn = (
+            "Fon toplam değerinin e n az % 80’i - Katılma payı satın almak veya "
+            "elden çıkarmak isteyen kamu ve özel sektör tarafından ihraç edilen "
+            "kira yatırımcılar, Kurucunun ilan ettiği sertifikalarına yatırılır."
+        )
+        unrelated = (
+            "Fon toplam değerinin en az %80’i ortaklık paylarına yatırılır. "
+            "Portföyde kira sertifikaları bulunabilir."
+        )
+
+        self.assertTrue(_explicit_min_80_kira_sertifikasi(bky))
+        self.assertTrue(_explicit_min_80_kira_sertifikasi(ktn))
+        self.assertFalse(_explicit_min_80_kira_sertifikasi(unrelated))
+
+    def test_general_strategy_fi_classifier_is_deliberately_narrow(self) -> None:
+        self.assertEqual(
+            official_fi_profile_from_general_strategy(
+                "Bu fon kısa vadeli katılım fonudur."
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+        self.assertEqual(
+            official_fi_profile_from_general_strategy(
+                "Fon türü Kısa Vadeli Katılım Fonu olarak belirlenmiştir."
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+        self.assertEqual(
+            official_fi_profile_from_general_strategy(
+                "Portföye vadesine en fazla 184 gün kalmış araçlar alınır ve "
+                "ağırlıklı ortalama vadesi 45 günü aşamaz."
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+        self.assertEqual(
+            official_fi_profile_from_general_strategy(
+                "Fon portföyünde çoklu varlık yönetim modeli uygulanır."
+            ),
+            PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+        )
+        for strategy in (
+            "BIST Katılım 100 Endeksi referans alınabilir.",
+            "Portföyde kira sertifikaları bulunabilir.",
+            "Portföyde altın bulunabilir.",
+            "Teknoloji payları, kira sertifikaları ve altın birlikte bulunabilir.",
+        ):
+            self.assertIsNone(
+                official_fi_profile_from_general_strategy(strategy)
+            )
+
+    def test_kap_genel_strategy_requires_exact_unambiguous_label(self) -> None:
+        exact = parse_kap_genel_rsc(
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy","value":"ABC"'
+        )
+        self.assertEqual(kap_genel_investment_strategy(exact), "ABC")
+
+        unrelated = parse_kap_genel_rsc(
+            '"itemName":"Yatırım Stratejisi Notu","itemKey":"strategy","value":"ABC"'
+        )
+        self.assertIsNone(kap_genel_investment_strategy(unrelated))
+
+        same_key_conflict = parse_kap_genel_rsc(
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy","value":"ABC"'
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy","value":"XYZ"'
+        )
+        self.assertEqual(same_key_conflict["items"]["strategy"], "ABC")
+        self.assertIsNone(kap_genel_investment_strategy(same_key_conflict))
+
+        different_key_conflict = parse_kap_genel_rsc(
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy1","value":"ABC"'
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy2","value":"XYZ"'
+        )
+        self.assertIsNone(kap_genel_investment_strategy(different_key_conflict))
+
+        duplicate_same_value = parse_kap_genel_rsc(
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy1","value":"ABC"'
+            '"itemName":"Yatırım Stratejisi","itemKey":"strategy2","value":"ABC"'
+        )
+        self.assertEqual(
+            kap_genel_investment_strategy(duplicate_same_value),
+            "ABC",
+        )
+
+    def test_provider_general_strategy_fallback_is_fi_only(self) -> None:
+        pack = {
+            "fund_code": "TST",
+            "identity_status": IDENTITY_RESOLVED,
+            "tefas_snapshot": {
+                "fonKodu": "TST",
+                "fonUnvan": "TEST FONU",
+            },
+            "tefas_returns": {"fonKodu": "TST"},
+            "ozet_fields": {},
+            "ybf": {},
+            "general_strategy": "Bu fon kısa vadeli katılım fonudur.",
+            "genel_url": "https://www.kap.org.tr/tr/fon-bilgileri/genel/tst",
+        }
+        provider = OfficialTefasFundProductProvider(
+            tefas_bundle={"snapshot": {}, "returns": {}},
+            kap_bundle={"funds": {}},
+            evidence_packs={"TST": pack},
+        )
+
+        self.assertTrue(provider.supports("TST"))
+        self.assertIsNone(provider.kap_mandate("TST").official_profile)
+
+        fallback = provider.mandate("TST")
+        self.assertEqual(
+            fallback.vehicle,
+            PROFILE_LIQUIDITY_PARTICIPATION_FUND,
+        )
+        self.assertEqual(fallback.confidence, "MEDIUM")
+        self.assertIn(
+            "FI_ONLY_KAP_GENERAL_STRATEGY_FALLBACK",
+            fallback.limitations,
+        )
+        self.assertIn("NOT_PARTICIPATION_EVIDENCE", fallback.limitations)
+        self.assertEqual(fallback.source_url, pack["genel_url"])
+        self.assertIsNone(provider.facts("TST").strategy)
+
+        canonical_pack = {
+            **pack,
+            "ybf": {
+                "strategy": (
+                    "Fon portföyünde çoklu varlık yönetim modeli benimsenir."
+                )
+            },
+            "general_strategy": "Bu fon kısa vadeli katılım fonudur.",
+        }
+        canonical_provider = OfficialTefasFundProductProvider(
+            tefas_bundle={"snapshot": {}, "returns": {}},
+            kap_bundle={"funds": {}},
+            evidence_packs={"TST": canonical_pack},
+        )
+        canonical = canonical_provider.mandate("TST")
+        self.assertEqual(
+            canonical.vehicle,
+            PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND,
+        )
+        self.assertEqual(canonical.confidence, "HIGH")
+        self.assertNotIn(
+            "FI_ONLY_KAP_GENERAL_STRATEGY_FALLBACK",
+            canonical.limitations,
+        )
 
     def test_explicit_faizsiz_finans_strategy_is_mandate_evidence(self) -> None:
         self.assertTrue(

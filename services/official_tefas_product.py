@@ -48,6 +48,8 @@ from services.official_kap_fund import (
     OZET_LABEL_FOUNDER,
     OZET_LABEL_UMBRELLA_TYPE,
     match_tefas_kap_identity,
+    official_fi_profile_from_general_strategy,
+    participation_holdings_profile_from_kap_fund10,
     parse_kap_mandate,
     parse_kap_ozet_html,
     parse_kap_portfolio_report_audit,
@@ -231,8 +233,58 @@ class TefasFundProductProvider:
             as_of=str((kap.get("ybf") or {}).get("as_of") or "") or None,
         )
 
+
+    def participation_holdings_profile(self, symbol: str) -> Optional[str]:
+        """FUND-10 Participation holdings whitelist profile; never FI fallback."""
+        code = self._require(symbol)
+        kap = _kap_fund(code, self._kap, self._packs)
+        ozet = dict(kap.get("ozet_fields") or {})
+        return participation_holdings_profile_from_kap_fund10(
+            umbrella_type=ozet.get(OZET_LABEL_UMBRELLA_TYPE),
+            ybf_text=str(kap.get("ybf_text") or ""),
+            ybf_payload=dict(kap.get("ybf") or {}),
+        )
+
     def mandate(self, symbol: str) -> OfficialFundMandate:
-        return mandate_from_kap(self.kap_mandate(symbol))
+        code = self._require(symbol)
+        canonical = self.kap_mandate(code)
+        canonical_mandate = try_mandate_from_kap(canonical)
+        if canonical_mandate is not None:
+            return canonical_mandate
+
+        kap = _kap_fund(code, self._kap, self._packs)
+        strategy = str(kap.get("general_strategy") or "").strip()
+        profile = official_fi_profile_from_general_strategy(strategy)
+        if profile is None:
+            raise ValueError(
+                f"unsupported_kap_official_profile:{canonical.official_profile}"
+            )
+
+        if profile == PROFILE_SHORT_TERM_PARTICIPATION:
+            layer = "cash_like"
+            vehicle = PROFILE_LIQUIDITY_PARTICIPATION_FUND
+        elif profile == PROFILE_MIXED_MULTI_ASSET_PARTICIPATION:
+            layer = "multi_asset"
+            vehicle = PROFILE_MIXED_MULTI_ASSET_PARTICIPATION_FUND
+        else:
+            raise ValueError(f"unsupported_general_strategy_profile:{profile}")
+
+        mandate = OfficialFundMandate(
+            symbol=code,
+            primary_layer=layer,
+            region=REGION_TR,
+            vehicle=vehicle,
+            confidence="MEDIUM",
+            source=PROVIDER_KAP_FUND,
+            source_url=str(kap.get("genel_url") or ""),
+            evidence_excerpt=strategy,
+            limitations=(
+                "FI_ONLY_KAP_GENERAL_STRATEGY_FALLBACK",
+                "NOT_PARTICIPATION_EVIDENCE",
+            ),
+        )
+        mandate.validate()
+        return mandate
 
     def economic_classification(self, symbol: str) -> Optional[OfficialFundEconomicClassification]:
         from services.official_turkiye_fund_exposure import classify_official_turkiye_fund_exposure
@@ -277,7 +329,7 @@ class TefasFundProductProvider:
             identity_status=identity.identity_status,
             official_name=identity.official_name,
             umbrella_type=mandate.umbrella_type,
-            official_profile=mandate.official_profile,
+            official_profile=self.participation_holdings_profile(code),
             bundle=participation_bundle,
         )
         uygun = verdict.participation_status == PARTICIPATION_STATUS_UYGUN
@@ -320,7 +372,7 @@ class TefasFundProductProvider:
             identity_status=identity.identity_status,
             official_name=identity.official_name,
             umbrella_type=kap_mandate.umbrella_type,
-            official_profile=kap_mandate.official_profile,
+            official_profile=self.participation_holdings_profile(code),
         )
         required = False if verdict.purification_state == PURIFICATION_NOT_REQUIRED else None
         return FundPurificationEvidence(

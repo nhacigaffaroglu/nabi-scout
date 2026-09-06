@@ -42,6 +42,180 @@ _H3_PAIR = re.compile(
 _TAG = re.compile(r"<[^>]+>")
 
 
+def _explicit_min_80_equity_katilim_index(text: Any) -> bool:
+    body = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not body:
+        return False
+    return bool(
+        re.search(
+            r"(?:en\s+az|asgari)\s*%\s*80"
+            r"(?:(?![.!?]).){0,320}?"
+            r"\bBIST\s+Katılım\s+100\b",
+            body,
+            flags=re.I | re.S,
+        )
+    )
+
+
+def _explicit_min_80_kira_sertifikasi(text: Any) -> bool:
+    body = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not body:
+        return False
+
+    # KAP PDF text extraction can interleave table columns into the mandate
+    # sentence. Normalize punctuation that is demonstrably non-sentence
+    # punctuation (T.C. and numeric time/decimal separators), while preserving
+    # real sentence boundaries so a later bare sukuk mention cannot satisfy
+    # an unrelated minimum-allocation statement.
+    evidence_body = re.sub(r"\bT\s*\.\s*C\s*\.", "TC", body, flags=re.I)
+    evidence_body = re.sub(r"(?<=\d)[.:](?=\d)", "_", evidence_body)
+
+    return bool(
+        re.search(
+            # Accept normal "en az" plus OCR-spaced "e n az".
+            r"(?:e\s*n\s+az|asgari)\s*%\s*80"
+            r"(?:(?![.!?]).){0,700}?"
+            r"\bkira\b(?:(?![.!?]).){0,180}?\bsertifika[a-zçğıöşü]*\b",
+            evidence_body,
+            flags=re.I | re.S,
+        )
+    )
+
+
+def official_fi_profile_from_general_strategy(strategy: Any) -> Optional[str]:
+    """Route official KAP Genel strategy for FI only."""
+    body = re.sub(r"\s+", " ", str(strategy or "")).strip()
+    if not body:
+        return None
+
+    explicit_short_term = bool(
+        re.search(
+            r"\bkısa\s+vadeli\s+katılım(?:\s+serbest)?\s+fon(?:u(?:dur)?|dur)?\b",
+            body,
+            flags=re.I,
+        )
+    )
+    bounded_maturity = bool(
+        re.search(r"\bvadesine\s+en\s+fazla\s+184\s+gün\b", body, flags=re.I)
+        and re.search(
+            r"\bağırlıklı\s+ortalama\s+vadesi\s+45\s+günü\s+aşamaz\b",
+            body,
+            flags=re.I,
+        )
+    )
+    if explicit_short_term or bounded_maturity:
+        return PROFILE_SHORT_TERM_PARTICIPATION
+
+    if re.search(
+        r"\bçoklu\s+varlık\s+yönetim\s+modeli\b"
+        r"|\bcoklu\s+varlik\s+yonetim\s+modeli\b",
+        body,
+        flags=re.I,
+    ):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
+    return None
+
+
+
+def participation_holdings_profile_from_kap_fund10(
+    *,
+    umbrella_type: Optional[str],
+    ybf_text: str = "",
+    ybf_payload: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    """Freeze FUND-10 holdings-profile semantics for Participation only.
+
+    This helper intentionally preserves the pre-FUND11 profile used only to
+    select the Participation holdings whitelist. It is NOT an FI min-80 fact,
+    NOT recommendation evidence, and MUST NOT be used by provider.mandate().
+    """
+    body = re.sub(r"\s+", " ", str(ybf_text or "")).strip()
+    ybf = dict(ybf_payload or {})
+    strategy = str(ybf.get("strategy") or "")
+    parsed = parse_kap_ybf_text(body) if body else {}
+
+    legacy = {
+        "money_market_participation": parsed.get("money_market_participation", False),
+        "short_term_participation": parsed.get("short_term_participation", False)
+        or (
+            bool(re.search(r"kısa vadeli katılım(?: serbest)?", strategy, flags=re.I))
+            and bool(re.search(r"ağırlıklı ortalama vadesi", strategy, flags=re.I))
+        ),
+        "max_maturity_184": parsed.get("max_maturity_184")
+        or bool(re.search(r"184 gün", strategy, flags=re.I)),
+        "avg_maturity_45": parsed.get("avg_maturity_45")
+        or bool(re.search(r"45 günü aşamaz", strategy, flags=re.I)),
+        "min_80_equity_katilim_index": bool(
+            re.search(r"en az %80.*BIST Katılım 100", body, flags=re.I | re.S)
+        )
+        or bool(re.search(r"BIST Katılım 100", strategy, flags=re.I)),
+        "min_80_kira_sertifikasi": bool(
+            re.search(
+                r"en az %80.{0,400}kira.{0,80}sertifikalar",
+                body,
+                flags=re.I | re.S,
+            )
+        )
+        or bool(re.search(r"kira sertifikalar", strategy, flags=re.I)),
+        "precious_metals_mandate": parsed.get("precious_metals_mandate")
+        or bool(
+            re.search(
+                r"(altın|kıymetli maden|gümüş).{0,80}(yatırım|portföy)",
+                strategy,
+                flags=re.I | re.S,
+            )
+        ),
+        "real_estate_mandate": parsed.get("real_estate_mandate")
+        or bool(
+            re.search(
+                r"gayrimenkul.{0,80}(yatırım|portföy|sertifika)",
+                strategy,
+                flags=re.I | re.S,
+            )
+        ),
+        "explicit_precious_metals_80_strategy": bool(
+            re.search(
+                r"(?:en\s+az|asgari)\s*%\s*80[^.]{0,180}"
+                r"\b(?:altın|gümüş|kıymetli\s+maden)",
+                strategy,
+                flags=re.I | re.S,
+            )
+        ),
+        "explicit_multi_asset_strategy": parsed.get(
+            "explicit_multi_asset_strategy", False
+        )
+        or bool(
+            re.search(
+                r"çoklu\s+varlık\s+yönetim\s+modeli"
+                r"|coklu\s+varlik\s+yonetim\s+modeli",
+                strategy,
+                flags=re.I,
+            )
+        ),
+        "explicit_equity_participation_strategy": parsed.get(
+            "explicit_equity_participation_strategy", False
+        )
+        or bool(
+            re.search(r"hisse\s+senedi\s+fonudur", strategy, flags=re.I)
+            and re.search(
+                r"faizsiz(?:/katılım)?\s+finans\s+ilkelerine"
+                r"|katılım\s+bankacılığı\s+ilkelerine",
+                strategy,
+                flags=re.I,
+            )
+        ),
+        "mixed_mandate": parsed.get("mixed_mandate")
+        or bool(
+            re.search(
+                r"(fon sepeti fonu|değişken fon|degisken fon|karma fon)",
+                strategy,
+                flags=re.I,
+            )
+        ),
+    }
+    return official_profile_from_kap(umbrella_type=umbrella_type, ybf=legacy)
+
 def match_tefas_kap_identity(
     *,
     tefas_code: Any,
@@ -160,12 +334,8 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
         "management_fee_annual_pct": fee,
         "max_maturity_184": bool(re.search(r"vadesine en fazla 184 gün", body, flags=re.I)),
         "avg_maturity_45": bool(re.search(r"ağırlıklı ortalama vadesi 45 günü aşamaz", body, flags=re.I)),
-        "min_80_equity_katilim_index": bool(
-            re.search(r"en az %80.*BIST Katılım 100", body, flags=re.I | re.S)
-        ),
-        "min_80_kira_sertifikasi": bool(
-            re.search(r"en az %80.{0,400}kira.{0,80}sertifikalar", body, flags=re.I | re.S)
-        ),
+        "min_80_equity_katilim_index": _explicit_min_80_equity_katilim_index(body),
+        "min_80_kira_sertifikasi": _explicit_min_80_kira_sertifikasi(body),
         "precious_metals_mandate": bool(
             re.search(
                 r"(altın|kıymetli maden|kiymetli maden|gümüş).{0,80}(yatırım|portföy)",
@@ -265,9 +435,9 @@ def parse_kap_mandate(
         "avg_maturity_45": parsed.get("avg_maturity_45")
         or bool(re.search(r"45 günü aşamaz", str(ybf.get("strategy") or ""), flags=re.I)),
         "min_80_equity_katilim_index": parsed.get("min_80_equity_katilim_index")
-        or bool(re.search(r"BIST Katılım 100", str(ybf.get("strategy") or ""), flags=re.I)),
+        or _explicit_min_80_equity_katilim_index(ybf.get("strategy")),
         "min_80_kira_sertifikasi": parsed.get("min_80_kira_sertifikasi")
-        or bool(re.search(r"kira sertifikalar", str(ybf.get("strategy") or ""), flags=re.I)),
+        or _explicit_min_80_kira_sertifikasi(ybf.get("strategy")),
         "precious_metals_mandate": parsed.get("precious_metals_mandate")
         or bool(
             re.search(

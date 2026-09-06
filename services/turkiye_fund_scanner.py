@@ -22,7 +22,7 @@ from services.fund_product_contract import (
     TURKISH_FI_PROFILES,
 )
 from services.official_tefas import normalize_fund_code
-from services.official_tefas_product import default_tefas_fund_provider, try_mandate_from_kap
+from services.official_tefas_product import default_tefas_fund_provider
 from services.official_turkiye_fund_exposure import classify_official_turkiye_fund_exposure
 from services.official_turkiye_fund_participation import (
     evaluate_turkiye_fund_participation,
@@ -321,6 +321,14 @@ def _row_status(
     return SCANNER_READY
 
 
+def _try_provider_fi_mandate(provider: Any, code: str):
+    """Resolve FI mandate without altering canonical Participation evidence."""
+    try:
+        return provider.mandate(code)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
 def _evaluate_one(
     identity: TurkiyeFundUniverseIdentity,
     *,
@@ -384,17 +392,20 @@ def _evaluate_one(
         identity_row = provider.turkiye_identity(code)
         kap = provider.kap_mandate(code)
         official_profile = kap.official_profile
+        participation_profile = provider.participation_holdings_profile(code)
         verdict = evaluate_turkiye_fund_participation(
             code,
             identity_status=identity_row.identity_status,
             official_name=identity_row.official_name,
             umbrella_type=kap.umbrella_type,
             as_of=as_of,
-            official_profile=official_profile,
+            official_profile=participation_profile,
             bundle=bundle,
         )
         participation_status = verdict.participation_status
         research_allowed = bool(verdict.research_allowed)
+        if participation_status == PARTICIPATION_STATUS_KONTROL_ET:
+            missing.append("PARTICIPATION_REVIEW")
         if verdict.blockers:
             missing.extend(verdict.blockers)
         # Current canonical PDR may supersede stale cached reconciliation
@@ -411,7 +422,7 @@ def _evaluate_one(
             pdr,
         )
 
-        mandate = try_mandate_from_kap(kap)
+        mandate = _try_provider_fi_mandate(provider, code)
         if mandate is None:
             missing.append("FI_PROFILE_UNROUTED")
         else:
@@ -447,6 +458,8 @@ def _evaluate_one(
         )
         participation_status = verdict.participation_status
         research_allowed = bool(verdict.research_allowed)
+        if participation_status == PARTICIPATION_STATUS_KONTROL_ET:
+            missing.append("PARTICIPATION_REVIEW")
         missing.extend(verdict.blockers or ("KAP_YBF_MISSING", "TEFAS_HISTORY_MISSING"))
         if "GOVERNANCE_NOT_CONFIRMED" in (verdict.blockers or ()):
             missing.append("KAP_GOVERNANCE_EVIDENCE_MISSING")

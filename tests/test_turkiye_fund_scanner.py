@@ -185,6 +185,22 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         self.assertEqual(adverse.participation_status, PARTICIPATION_STATUS_UYGUN_DEGIL)
         self.assertFalse(adverse.research_allowed)
 
+    def test_general_strategy_fallback_keeps_participation_firewall(self) -> None:
+        source = SCANNER.read_text(encoding="utf-8")
+        self.assertIn("official_profile = kap.official_profile", source)
+        self.assertIn(
+            "participation_profile = provider.participation_holdings_profile(code)",
+            source,
+        )
+        self.assertIn("official_profile=participation_profile", source)
+        self.assertIn("_try_provider_fi_mandate(provider, code)", source)
+        self.assertNotIn("official_profile=official_profile", source)
+        self.assertNotIn("mandate = try_mandate_from_kap(kap)", source)
+        self.assertEqual(
+            source.count('missing.append("PARTICIPATION_REVIEW")'),
+            2,
+        )
+
     def test_generalized_pdr_and_reconciliation_fail_closed(self) -> None:
         missing = try_load_captured_pdr_holdings("APGLD")
         self.assertIsNone(missing)

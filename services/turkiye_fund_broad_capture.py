@@ -32,6 +32,7 @@ from services.turkiye_fund_evidence_extract import (
 )
 from services.turkiye_fund_kap_rsc import (
     kap_file_url,
+    kap_genel_investment_strategy,
     parse_kap_bildirim_rsc,
     parse_kap_genel_rsc,
     parse_kap_ozet_rsc,
@@ -346,6 +347,10 @@ def capture_one_fund(
         )
         genel = parse_kap_genel_rsc(str(genel_text.get("text") or ""))
         pack["isin"] = genel.get("isin")
+        general_strategy = kap_genel_investment_strategy(genel)
+        if general_strategy:
+            pack["general_strategy"] = general_strategy
+            pack["general_strategy_provenance"] = "KAP_GENEL_YATIRIM_STRATEJISI"
         pack["genel_items"] = {
             key: value
             for key, value in dict(genel.get("items") or {}).items()

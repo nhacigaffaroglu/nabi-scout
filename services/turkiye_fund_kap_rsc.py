@@ -7,7 +7,7 @@ private APIs. File identity is the official fileOid / disclosureIndex.
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from services.official_kap_fund import (
     OZET_LABEL_FOUNDER,
@@ -42,6 +42,48 @@ _OZET_VALUE = re.compile(
 DOC_KIND_YBF = "BILGI_FORMU"
 DOC_KIND_IZAHNAME = "IZAHNAME"
 DOC_KIND_ICTUZUK = "ICTUZUK"
+GENERAL_LABEL_INVESTMENT_STRATEGY = "Yatırım Stratejisi"
+
+
+def exact_genel_label_value(
+    parsed: Mapping[str, Any],
+    label: str,
+) -> Optional[str]:
+    target = str(label or "").strip()
+    if not target:
+        return None
+
+    rows = tuple(parsed.get("rows") or ())
+    if rows:
+        values = {
+            str(row.get("value") or "").strip()
+            for row in rows
+            if str(row.get("item_name") or "").strip() == target
+            and str(row.get("value") or "").strip()
+        }
+    else:
+        items = dict(parsed.get("items") or {})
+        labels = dict(parsed.get("labels") or {})
+        values = {
+            str(items.get(key) or "").strip()
+            for key, name in labels.items()
+            if str(name or "").strip() == target
+            and str(items.get(key) or "").strip()
+        }
+
+    if len(values) != 1:
+        return None
+    return next(iter(values))
+
+
+def kap_genel_investment_strategy(
+    parsed: Mapping[str, Any],
+) -> Optional[str]:
+    return exact_genel_label_value(
+        parsed,
+        GENERAL_LABEL_INVESTMENT_STRATEGY,
+    )
+
 
 
 def parse_kap_ozet_rsc(text: str) -> dict[str, Any]:
@@ -87,10 +129,19 @@ def parse_kap_ozet_rsc(text: str) -> dict[str, Any]:
 def parse_kap_genel_rsc(text: str) -> dict[str, Any]:
     items: dict[str, str] = {}
     labels: dict[str, str] = {}
+    rows: list[dict[str, str]] = []
     for match in _ITEM.finditer(str(text or "")):
         key = str(match.group("itemKey") or "").strip()
         value = str(match.group("value") or "").strip()
         name = str(match.group("itemName") or "").strip()
+        if key and value:
+            rows.append(
+                {
+                    "item_key": key,
+                    "item_name": name,
+                    "value": value,
+                }
+            )
         if key and value and key not in items:
             items[key] = value
             labels[key] = name
@@ -98,6 +149,7 @@ def parse_kap_genel_rsc(text: str) -> dict[str, Any]:
     return {
         "items": items,
         "labels": labels,
+        "rows": tuple(rows),
         "isin": isin,
         "resolved": bool(items),
     }
