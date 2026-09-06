@@ -471,6 +471,65 @@ class TurkiyeFundBroadEvidenceTests(unittest.TestCase):
         failed = {**reusable, "review_reasons": ["SOURCE_ERROR"]}
         self.assertFalse(_pack_is_reusable(failed, identity))
 
+    def test_pdr_pack_reuse_requires_current_parser_version(self) -> None:
+        from services.official_kap_pdr import PDR_PARSER_VERSION
+        from services.turkiye_fund_broad_capture import _pack_is_reusable
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="BAI",
+            fund_name="BV PORTFÖY ALTIN KATILIM FONU",
+            isin=None,
+            founder="BV PORTFÖY",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+            kap_disclosure_index=1,
+        )
+        base = {
+            "fund_code": "BAI",
+            "identity_status": "RESOLVED",
+            "kap_disclosure_index": 1,
+            "production_persist": False,
+            "evidence_recovery_version": 9,
+            "pdr_file_oid": "pdr-oid",
+        }
+
+        self.assertFalse(_pack_is_reusable(base, identity))
+        self.assertFalse(
+            _pack_is_reusable(
+                {**base, "pdr_parser_version": "kap-pdr-old"},
+                identity,
+            )
+        )
+        self.assertTrue(
+            _pack_is_reusable(
+                {**base, "pdr_parser_version": PDR_PARSER_VERSION},
+                identity,
+            )
+        )
+
+    def test_ybf_only_pack_does_not_require_pdr_parser_version(self) -> None:
+        from services.turkiye_fund_broad_capture import _pack_is_reusable
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="BAI",
+            fund_name="BV PORTFÖY ALTIN KATILIM FONU",
+            isin=None,
+            founder="BV PORTFÖY",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+            kap_disclosure_index=1,
+        )
+        pack = {
+            "fund_code": "BAI",
+            "identity_status": "RESOLVED",
+            "documents": {"BILGI_FORMU": {"file_oid": "ybf-oid"}},
+            "kap_disclosure_index": 1,
+            "production_persist": False,
+            "evidence_recovery_version": 9,
+        }
+
+        self.assertTrue(_pack_is_reusable(pack, identity))
+
     def test_broad_universe_scanner_without_live_fetch(self) -> None:
         result = run_turkiye_fund_scanner(persist=False, sample_only=False, evidence_packs={})
         self.assertGreaterEqual(result.discovered_count, 200)

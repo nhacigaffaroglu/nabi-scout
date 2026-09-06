@@ -18,6 +18,7 @@ from services.official_kap_fund import (
     parse_kap_ybf_text,
 )
 from services.official_kap_pdr import (
+    PDR_PARSER_VERSION,
     asset_group_weights,
     discover_latest_pdr,
     parse_kap_pdr_text,
@@ -484,6 +485,7 @@ def capture_one_fund(
                         )
                         quality = pdr_parser_quality(parsed_pdr)
                         pack["pdr_quality"] = quality
+                        pack["pdr_parser_version"] = PDR_PARSER_VERSION
                         if not parsed_pdr.holdings:
                             reasons.append("PDR_PARSE_INCOMPLETE")
                         if quality.get("reconciliation") is False:
@@ -727,6 +729,8 @@ def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIden
         return False
     docs = dict(pack.get("documents") or {})
     ybf = (docs.get("BILGI_FORMU") or {}).get("file_oid") or pack.get("ybf_url")
+    if pack.get("pdr_file_oid") and pack.get("pdr_parser_version") != PDR_PARSER_VERSION:
+        return False
     if identity.kap_disclosure_index and pack.get("kap_disclosure_index") not in {
         identity.kap_disclosure_index,
         None,

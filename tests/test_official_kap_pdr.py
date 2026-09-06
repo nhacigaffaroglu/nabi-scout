@@ -50,20 +50,21 @@ ASEgS.E ASEgSAN ELEKTRONİK TRAASEgS91H2 TL 100 10 1000 0.50% 0.37%
         self.assertEqual(holding.asset_group, "EQUITY")
         self.assertAlmostEqual(holding.portfolio_weight, 0.37)
 
-        # OCR-corrupted identity must remain raw evidence only.
-        # It must not be promoted to canonical ISIN/official_code.
-        self.assertIsNone(holding.isin)
-        self.assertIsNone(holding.official_code)
+        # Bounded OCR recovery may promote exactly one checksum-valid ISIN.
+        # The raw OCR security token remains unchanged.
+        self.assertEqual(holding.security_name_raw, "ASEgS.E")
+        self.assertEqual(holding.isin, "TRAASELS91H2")
+        self.assertEqual(holding.official_code, "TRAASELS91H2")
         self.assertIsNone(holding.market_value)
 
         rec = reconcile_pdr_weights(pdr.holdings)
         self.assertAlmostEqual(rec.reported_weight_sum, 0.37)
-        self.assertAlmostEqual(rec.known_weight, 0.0)
-        self.assertAlmostEqual(rec.unknown_weight, 0.37)
+        self.assertAlmostEqual(rec.known_weight, 0.37)
+        self.assertAlmostEqual(rec.unknown_weight, 0.0)
 
         official = pdr_rows_to_official_holdings(pdr)
         self.assertEqual(len(official.holdings), 1)
-        self.assertEqual(official.holdings[0].ticker, "")
+        self.assertEqual(official.holdings[0].ticker, "TRAASELS91H2")
 
     def test_valid_equity_identity_remains_available_downstream(self) -> None:
         pdr = _parse(
@@ -217,3 +218,37 @@ AgBRK.E ALBARAKA TÜRK KATILIM BANKASI TREAgBK00011 0.00% 0 449,286.00 7.99 02.0
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ocr_equity_recovers_single_checksum_valid_isin() -> None:
+    pdr = _parse(
+        """
+A.PAY
+ASEgS.E ASEgSAN ELEKTRONİK TRAASEgS91H2 TL 100 10 1000 0.50% 0.37%
+"""
+    )
+
+    assert len(pdr.holdings) == 1
+    holding = pdr.holdings[0]
+
+    assert holding.security_name_raw == "ASEgS.E"
+    assert holding.isin == "TRAASELS91H2"
+    assert holding.official_code == "TRAASELS91H2"
+    assert holding.market_value is None
+    assert holding.portfolio_weight == 0.37
+
+
+def test_ocr_equity_rejects_repair_when_checksum_invalid() -> None:
+    pdr = _parse(
+        """
+A.PAY
+ASEgS.E ASEgSAN ELEKTRONİK TRAASEgS91H3 TL 100 10 1000 0.50% 0.37%
+"""
+    )
+
+    assert len(pdr.holdings) == 1
+    holding = pdr.holdings[0]
+
+    assert holding.security_name_raw == "ASEgS.E"
+    assert holding.isin is None
+    assert holding.official_code is None

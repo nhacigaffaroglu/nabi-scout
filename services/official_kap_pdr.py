@@ -49,6 +49,7 @@ except ImportError:  # pragma: no cover
 KAP_HOST = _KAP_HOST
 PDR_DISCOVERY_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
 PROVENANCE_KAP_PDR = "kap_pdr_official"
+PDR_PARSER_VERSION = "kap-pdr-v3"
 
 _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
 _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
@@ -435,8 +436,65 @@ def is_valid_isin(token: Any) -> bool:
     return True
 
 
+def _isin_checksum_valid(token: Any) -> bool:
+    """Validate the ISO 6166 ISIN check digit with the Luhn algorithm."""
+    text = str(token or "").strip().upper()
+    if not is_valid_isin(text):
+        return False
+
+    digits = ""
+    for char in text:
+        if char.isdigit():
+            digits += char
+        else:
+            digits += str(ord(char) - 55)
+
+    total = 0
+    for index, digit in enumerate(reversed(digits)):
+        value = int(digit)
+        if index % 2 == 1:
+            value *= 2
+        total += (value // 10) + (value % 10)
+
+    return total % 10 == 0
+
+
 def _isin_tokens(text: str) -> list[str]:
     return [token for token in _ISIN_RE.findall(text) if is_valid_isin(token)]
+
+
+def _recover_ocr_equity_isin(text: str, code: Optional[str]) -> Optional[str]:
+    """Recover exactly one checksum-valid ISIN from bounded OCR damage."""
+    raw_code = str(code or "")
+
+    if not raw_code.endswith(".E"):
+        return None
+
+    # Recovery is allowed only when the observed BIST code itself shows
+    # the known lowercase OCR damage pattern.
+    if "g" not in raw_code and "c" not in raw_code:
+        return None
+
+    raw_candidates = re.findall(
+        r"(?<![A-Za-z0-9])(TR[A-Za-z0-9]{10})(?![A-Za-z0-9])",
+        str(text or ""),
+    )
+
+    recovered = []
+
+    for raw in raw_candidates:
+        if "g" not in raw and "c" not in raw:
+            continue
+
+        candidate = raw.replace("g", "L").replace("c", "D").upper()
+
+        if not _isin_checksum_valid(candidate):
+            continue
+
+        if candidate not in recovered:
+            recovered.append(candidate)
+
+    return recovered[0] if len(recovered) == 1 else None
 
 
 def _plain(text: str) -> str:
@@ -960,10 +1018,10 @@ def _parse_ocr_equity_row(
     # Do not infer market value from ambiguous numeric column positions.
     market_value = None
 
-    # Preserve only identities that KAP actually supplied.
-    # A malformed OCR ISIN is deliberately NOT promoted to canonical ISIN.
+    # Preserve a normal official ISIN whenever one is already valid.
+    # Only if normal parsing fails may bounded OCR recovery run.
     valid_isins = _isin_tokens(text)
-    isin = valid_isins[0] if valid_isins else None
+    isin = valid_isins[0] if valid_isins else _recover_ocr_equity_isin(text, code)
 
     return _holding(
         fund_code=fund_code,
