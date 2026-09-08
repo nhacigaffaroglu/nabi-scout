@@ -1582,7 +1582,35 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             and _TR_DATE_RE.search(line)
             and _has_ftd_tail(line)
         ):
-            buf = f"{buf} {line}".strip() if buf else line
+            complete_new_row = bool(
+                _TICKER_ROW_RE.match(_plain(line))
+            )
+            unresolved_buf = bool(
+                buf
+                and _isin_tokens(buf)
+                and not _has_ftd_tail(buf)
+                and not _buffer_has_completed_percent_tail(buf)
+                and not _is_numbered_holding_start(buf)
+            )
+            if complete_new_row and unresolved_buf:
+                plain_buf = _plain(buf)
+                embedded_match = _TICKER_ROW_RE.search(plain_buf)
+                recovered = None
+                if embedded_match is not None:
+                    candidate = plain_buf[embedded_match.start():]
+                    ftd_match = _FTD_ROW_RE.search(candidate)
+                    if ftd_match is not None:
+                        candidate = candidate[:ftd_match.end()].strip()
+                        if (
+                            _TICKER_ROW_RE.search(candidate)
+                            and _has_ftd_tail(candidate)
+                        ):
+                            recovered = candidate
+                if recovered:
+                    chunks.append((section, recovered))
+                buf = line
+            else:
+                buf = f"{buf} {line}".strip() if buf else line
             flush()
             continue
         if _isin_tokens(line) and buf and _isin_tokens(buf) and re.search(r"\b(TL|TRY|AU1)\b", buf):
@@ -1643,6 +1671,295 @@ def _fund_total_from_text(text: str) -> Optional[float]:
     if match:
         return parse_tr_number(match.group(1))
     return None
+
+
+
+_OCR_NUMERIC_FIELD_CORRUPTION_RE = re.compile(
+    r"(?:"
+    r"\d[A-Za-zÇĞİÖŞÜçğıöşü](?=[\d.,%])"
+    r"|"
+    r"[A-Za-zÇĞİÖŞÜçğıöşü]\d(?=[\d.,%])"
+    r")"
+)
+
+
+def _parse_flexible_printed_number(token: str) -> Optional[float]:
+    value = str(token or "").strip()
+    if not value:
+        return None
+
+    negative = value.startswith("-")
+    if negative:
+        value = value[1:]
+
+    if "," in value and "." in value:
+        if value.rfind(".") > value.rfind(","):
+            value = value.replace(",", "")
+        else:
+            value = value.replace(".", "").replace(",", ".")
+    elif "," in value:
+        parts = value.split(",")
+        if len(parts) > 2 or (
+            len(parts) == 2 and len(parts[-1]) == 3
+        ):
+            value = value.replace(",", "")
+        else:
+            value = value.replace(",", ".")
+    elif value.count(".") > 1:
+        value = value.replace(".", "")
+
+    try:
+        result = float(value)
+    except ValueError:
+        return None
+    return -result if negative else result
+
+
+def _holding_weight_signature(
+    row: KapPdrHolding,
+) -> tuple[Optional[str], Optional[float], Optional[float]]:
+    return (
+        row.asset_group,
+        round(float(row.market_value), 2)
+        if row.market_value is not None
+        else None,
+        round(float(row.portfolio_weight), 4)
+        if row.portfolio_weight is not None
+        else None,
+    )
+
+
+def _recover_physical_pdr_rows(
+    body: str,
+    *,
+    holdings: list[KapPdrHolding],
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> list[KapPdrHolding]:
+    """Recover explicit official rows missed by wrapped/OCR PDF text.
+
+    Recovery is evidence-only:
+    - never infers a residual;
+    - never renormalizes weights;
+    - rejects alphabetically corrupted numeric fields;
+    - de-duplicates against already parsed weighted holdings.
+    """
+
+    recovered = list(holdings)
+    seen = {
+        _holding_weight_signature(row)
+        for row in recovered
+        if row.portfolio_weight is not None
+    }
+
+    section: Optional[str] = None
+
+    for raw in _cut_holdings_body(body).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+
+        header = _section_from_line(line)
+        if (
+            header
+            and not _isin_tokens(line)
+            and not _BIST_CODE_RE.search(line)
+        ):
+            section = header
+
+        group = (
+            normalize_pdr_asset_group(section)
+            if section
+            else None
+        )
+
+        # Complete physical fund rows:
+        # TICKER - DESCRIPTION  TL  ISSUER ... GRUP FPD FTD
+        if group == ASSET_GROUP_FUND:
+            match = re.match(
+                r"^(?P<ticker>[A-Z0-9]{2,10})"
+                r"\s*-\s*(?P<name>.+?)"
+                r"\s+(?P<ccy>TL|TRY)\s+",
+                _plain(line),
+                flags=re.I,
+            )
+
+            if match and _has_ftd_tail(line):
+                nums = [
+                    parse_tr_number(tok)
+                    for tok in _numbers_without_isins(
+                        _plain(line)
+                    )
+                ]
+                values = [
+                    item
+                    for item in nums
+                    if item is not None
+                ]
+
+                if (
+                    len(values) >= 3
+                    and all(
+                        abs(item) <= 100.5
+                        for item in values[-3:]
+                    )
+                ):
+                    weight = float(values[-1])
+                    market_value = next(
+                        (
+                            item
+                            for item in reversed(values[:-3])
+                            if abs(item) >= 1
+                        ),
+                        None,
+                    )
+
+                    if market_value is not None:
+                        candidate = _holding(
+                            fund_code=fund_code,
+                            report_period=report_period,
+                            report_date=report_date,
+                            asset_group_raw=section or "YATIRIM FONU",
+                            security_name_raw=match.group("ticker").upper(),
+                            issuer_raw=match.group("name").strip(),
+                            isin=None,
+                            official_code=match.group("ticker").upper(),
+                            maturity_date=parse_tr_date(line),
+                            currency=match.group("ccy").upper(),
+                            quantity=None,
+                            nominal=None,
+                            unit_price=None,
+                            market_value=market_value,
+                            portfolio_weight=weight,
+                            fund_total_value=fund_total_value,
+                            source_notification_id=source_notification_id,
+                            source_attachment=source_attachment,
+                        )
+                        sig = _holding_weight_signature(candidate)
+                        if sig not in seen:
+                            recovered.append(candidate)
+                            seen.add(sig)
+
+        # Strict OCR-damaged participation/deposit rows.
+        if _isin_tokens(line):
+            continue
+
+        folded = _fold(line)
+        pct_tokens = re.findall(
+            r"(-?\d+(?:[.,]\d+)?)\s*%",
+            line,
+        )
+
+        has_bank_evidence = (
+            "bank" in folded
+            or "katilim" in folded
+            or "katigim" in folded
+            or "vakif kati" in folded
+            or "ziraat kati" in folded
+        )
+        has_date = bool(
+            re.search(
+                r"\b\d{2}[./]\d{2}[./]\d{4}\b",
+                line,
+            )
+        )
+        starts_deposit_like = bool(
+            re.match(
+                r"^\s*VA[A-Za-zÇĞİÖŞÜçğıöşü]{2,8}\b",
+                line,
+                flags=re.I,
+            )
+        )
+
+        if not (
+            len(pct_tokens) >= 2
+            and has_bank_evidence
+            and has_date
+            and starts_deposit_like
+        ):
+            continue
+
+        # Fail closed when OCR letters contaminate printed numeric fields.
+        if _OCR_NUMERIC_FIELD_CORRUPTION_RE.search(line):
+            continue
+
+        weight = _parse_flexible_printed_number(
+            pct_tokens[-1]
+        )
+
+        money_tokens = re.findall(
+            r"-?\d{1,3}(?:[.,]\d{3})+[.,]\d{2}",
+            line,
+        )
+        money_values = [
+            _parse_flexible_printed_number(token)
+            for token in money_tokens
+        ]
+        money_values = [
+            item
+            for item in money_values
+            if item is not None
+        ]
+        market_value = (
+            money_values[-1]
+            if money_values
+            else None
+        )
+
+        if (
+            weight is None
+            or abs(weight) > 100.5
+            or market_value is None
+            or abs(market_value) < 1
+        ):
+            continue
+
+        first_date = re.search(
+            r"\b\d{2}[./]\d{2}[./]\d{4}\b",
+            line,
+        )
+        issuer_blob = (
+            line[:first_date.start()]
+            if first_date
+            else line
+        )
+        issuer_blob = re.sub(
+            r"^\s*\S+\s+",
+            "",
+            issuer_blob,
+        ).strip()
+
+        candidate = _holding(
+            fund_code=fund_code,
+            report_period=report_period,
+            report_date=report_date,
+            asset_group_raw="KATILIM HESABI",
+            security_name_raw=issuer_blob or None,
+            issuer_raw=issuer_blob or None,
+            isin=None,
+            official_code=None,
+            maturity_date=parse_tr_date(line),
+            currency="TRY",
+            quantity=None,
+            nominal=None,
+            unit_price=None,
+            market_value=market_value,
+            portfolio_weight=weight,
+            fund_total_value=fund_total_value,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+
+        sig = _holding_weight_signature(candidate)
+        if sig not in seen:
+            recovered.append(candidate)
+            seen.add(sig)
+
+    return recovered
 
 
 def parse_kap_pdr_text(
@@ -1853,8 +2170,20 @@ def parse_kap_pdr_text(
         if _fold(extra.security_name_raw) in seen_overlay:
             continue
         holdings.append(extra)
+    holdings = _recover_physical_pdr_rows(
+        body,
+        holdings=holdings,
+        fund_code=code,
+        report_period=report_period,
+        report_date=report_date,
+        fund_total_value=fund_total,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
     if not holdings:
         raise KapPdrError(f"PDR produced no holdings for {code}")
+
     weights = reconcile_pdr_weights(holdings)
     return KapPdrHoldingsFile(
         fund_code=code,

@@ -644,3 +644,94 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from services.official_kap_pdr import (
+    ASSET_GROUP_FUND,
+    ASSET_GROUP_PARTICIPATION_ACCOUNT,
+    KapPdrError,
+    parse_kap_pdr_text,
+)
+
+
+def test_pdr_recovers_embedded_complete_equity_row_without_residual_fill():
+    text = """
+III-FON PORTFÖY DEĞERİ
+HİSSE SENETLERİ
+KİMYA SANAYİ VE TREMRCN00023 TİCARET A.Ş. ORGE TL ORGE TREORGE00011 25.000,00 19,498977 21/08/26 80100511 24,020000 600.500,00 11,08 5,18 5,28 ENERJİ
+RGYAS TL RÖNESAN 2.600,00 153,436385 04/08/26 80100511 215,400000 560.040,00 10,34 4,83 4,92
+IV-FON TOPLAM DEĞERİ TABLOSU
+"""
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="TST",
+        report_period="2026-08",
+    )
+    weights = [
+        row.portfolio_weight
+        for row in parsed.holdings
+        if row.portfolio_weight is not None
+    ]
+    assert 5.28 in weights
+    assert 4.92 in weights
+
+
+def test_pdr_recovers_complete_physical_fund_row():
+    text = """
+III-FON PORTFÖY DEĞERİ
+YATIRIM FONU
+ZGOLD - ZİRAAT TL ZİRAAT 6.880,00 653,216500 31/08/26 80100103 713,000000 4.905.440,00 10,30 4,14 4,49
+IV-FON TOPLAM DEĞERİ TABLOSU
+"""
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="TST",
+        report_period="2026-08",
+    )
+    assert any(
+        row.asset_group == ASSET_GROUP_FUND
+        and row.portfolio_weight == 4.49
+        for row in parsed.holdings
+    )
+
+
+def test_pdr_recovers_clean_ocr_participation_account_row():
+    text = """
+III-FON PORTFÖY DEĞERİ
+MEVcUAT
+VAcEgI T FINANS KATIgIM BANKASI 01.09.2026 VAcEgI 36.50% 11,681,670.00 11,670,000.00 31.08.2026 0.00% 0 0 0 11,681,670.00 33.33% 2.96%
+IV-FON TOPLAM DEĞERİ TABLOSU
+"""
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="TST",
+        report_period="2026-08",
+    )
+    assert any(
+        row.asset_group == ASSET_GROUP_PARTICIPATION_ACCOUNT
+        and row.portfolio_weight == 2.96
+        for row in parsed.holdings
+    )
+
+
+def test_pdr_rejects_ocr_corrupted_numeric_participation_row():
+    text = """
+III-FON PORTFÖY DEĞERİ
+MEVcUAT
+VAcEgI ZİRAAT KATIgIM BANKASI A.Ş. 01.09.2026 VAcEgI 38.7S% 3S,237,369.86 3S,200,000.00 31.08.2026 0.00% 0 0 0 3S,237,369.86 49.89% 0.77%
+IV-FON TOPLAM DEĞERİ TABLOSU
+"""
+    try:
+        parsed = parse_kap_pdr_text(
+            text,
+            fund_code="TST",
+            report_period="2026-08",
+        )
+    except KapPdrError:
+        return
+
+    assert not any(
+        row.asset_group == ASSET_GROUP_PARTICIPATION_ACCOUNT
+        and row.portfolio_weight == 0.77
+        for row in parsed.holdings
+    )
