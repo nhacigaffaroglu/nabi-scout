@@ -81,3 +81,16 @@ def test_push_and_pr_paths_cover_fund14a_contract_surface():
     )
     for path in paths:
         assert data.count(f'"{path}"') >= 2, path
+
+def test_workflow_saves_research_cache_after_live_capture_before_activation_gate():
+    data = text()
+
+    assert "actions/cache/restore@v4" in data
+    assert "actions/cache/save@v4" in data
+    assert data.count("${{ github.run_attempt }}") == 2
+
+    live_pos = data.index("- name: Run FUND14A live research snapshot")
+    save_pos = data.index("- name: Save FUND14A research cache")
+    validate_pos = data.index("- name: Validate FUND14A research firewall")
+
+    assert live_pos < save_pos < validate_pos

@@ -88,6 +88,34 @@ def select_shard(
     )
 
 
+def select_broad_capture_codes(
+    active_codes: Iterable[str],
+    *,
+    shard_count: int,
+    shard_index: int,
+    protected_codes: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Rolling shard plus active codes required by the activation baseline."""
+    active = {
+        str(code).strip().upper()
+        for code in active_codes
+        if str(code).strip()
+    }
+    rolling = set(
+        select_shard(
+            active,
+            shard_count=shard_count,
+            shard_index=shard_index,
+        )
+    )
+    protected = {
+        str(code).strip().upper()
+        for code in protected_codes
+        if str(code).strip()
+    }
+    return tuple(sorted(rolling | (protected & active)))
+
+
 def kap_windows(day: date, lookback_days: int) -> tuple[tuple[str, str], ...]:
     """KAP uses ISO YYYY-MM-DD; split lookback at year boundaries."""
     if lookback_days <= 0:
@@ -568,10 +596,14 @@ def main() -> None:
         for row in identities
         if row.tefas_status == TEFAS_STATUS_ACTIVE
     )
-    broad_shard = select_shard(
+    protected_capture_codes = (
+        set(APPROVED_UYGUN_BASELINE) - set(PILOT_TEFAS_FUND_CODES)
+    )
+    broad_shard = select_broad_capture_codes(
         active_codes,
         shard_count=args.capture_shards,
         shard_index=capture_shard_index,
+        protected_codes=protected_capture_codes,
     )
 
     # Every non-pilot broad-capture fund gets a same-run TEFAS snapshot refresh,
@@ -601,10 +633,11 @@ def main() -> None:
         for row in identities
         if row.tefas_status == TEFAS_STATUS_ACTIVE
     )
-    broad_shard = select_shard(
+    broad_shard = select_broad_capture_codes(
         active_codes,
         shard_count=args.capture_shards,
         shard_index=capture_shard_index,
+        protected_codes=protected_capture_codes,
     )
 
     kap_capture_session = OfficialCaptureSession(
@@ -720,6 +753,7 @@ def main() -> None:
             "tefas_discovery_shard_index": tefas_shard_index,
             "capture_shards": args.capture_shards,
             "capture_shard_index": capture_shard_index,
+            "protected_capture_codes": sorted(protected_capture_codes),
             "all_kap_codes": len(all_kap_codes),
             "new_live_kap_codes": list(new_live_codes),
             "tefas_discovery_codes_attempted": sorted(tefas_discovery_codes),

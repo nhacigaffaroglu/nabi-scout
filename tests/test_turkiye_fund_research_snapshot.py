@@ -39,6 +39,30 @@ class Fund14AResearchSnapshotTests(unittest.TestCase):
             for j in range(i + 1, 5):
                 self.assertFalse(groups[i] & groups[j])
 
+    def test_broad_capture_keeps_rolling_shard_and_adds_active_protected_codes(self):
+        active = [f"F{i:03d}" for i in range(20)]
+        rolling = set(
+            mod.select_shard(
+                active,
+                shard_count=5,
+                shard_index=2,
+            )
+        )
+        protected = next(code for code in active if code not in rolling)
+
+        selected = set(
+            mod.select_broad_capture_codes(
+                active,
+                shard_count=5,
+                shard_index=2,
+                protected_codes={protected, "NOT_ACTIVE"},
+            )
+        )
+
+        self.assertTrue(rolling.issubset(selected))
+        self.assertIn(protected, selected)
+        self.assertNotIn("NOT_ACTIVE", selected)
+
     def test_kap_windows_are_iso_and_split_year(self):
         self.assertEqual(
             mod.kap_windows(date(2027, 1, 10), 20),

@@ -88,11 +88,12 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Restore FUND14A research cache
-        uses: actions/cache@v4
+        id: fund14a_cache_restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             .cache/turkiye_fund_universe
-          key: fund14a-research-${{ github.ref_name }}-${{ github.run_id }}
+          key: fund14a-research-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             fund14a-research-${{ github.ref_name }}-
             fund14a-research-
@@ -129,6 +130,13 @@ jobs:
             --out .artifacts/fund14a/research_snapshot.json \
             --run-state .artifacts/fund14a/run_state.json \
             2>&1 | tee .artifacts/fund14a/run.log
+
+      - name: Save FUND14A research cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .cache/turkiye_fund_universe
+          key: fund14a-research-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Validate FUND14A research firewall
         env:
