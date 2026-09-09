@@ -1,0 +1,202 @@
+name: FUND14B Candidate Artifact
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_candidate_artifact.py"
+      - "scripts/run_turkiye_fund_candidate_artifact.py"
+      - "tests/test_turkiye_fund_candidate_artifact.py"
+      - "tests/test_fund14b_candidate_workflow.py"
+      - ".github/workflows/fund14a_research_snapshot.yml"
+      - ".github/workflows/fund14b_candidate_artifact.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_candidate_artifact.py"
+      - "scripts/run_turkiye_fund_candidate_artifact.py"
+      - "tests/test_turkiye_fund_candidate_artifact.py"
+      - "tests/test_fund14b_candidate_workflow.py"
+      - ".github/workflows/fund14a_research_snapshot.yml"
+      - ".github/workflows/fund14b_candidate_artifact.yml"
+  workflow_run:
+    workflows:
+      - "FUND14A Research Snapshot"
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fund14b-candidate-artifact-${{ github.event.workflow_run.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND14B focused tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q             tests/test_turkiye_fund_candidate_artifact.py             tests/test_fund14b_candidate_workflow.py
+
+  build-candidate-artifact:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact FUND14A source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download exact FUND14A evidence artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: fund14a-research-snapshot-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/fund14a
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate upstream FUND14A provenance and firewall
+        env:
+          FUND14A_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ["RUNNER_TEMP"]) / "fund14a" / "research_snapshot.json"
+          if not p.is_file():
+              raise SystemExit("FUND14A research snapshot artifact missing")
+
+          d = json.loads(p.read_text(encoding="utf-8"))
+          expected_head = os.environ["FUND14A_HEAD_SHA"]
+
+          assert d.get("schema_version") == "fund14a_research_snapshot_3"
+          assert d.get("source_head") == expected_head
+          assert d.get("research_only") is True
+          assert d.get("activation_safe") is True
+
+          proof = d.get("write_proof") or {}
+          assert proof.get("persist") is False
+          assert proof.get("production_writes") in ([], None)
+          assert proof.get("eight_e_calls", 0) == 0
+          assert proof.get("new_money_calls", 0) == 0
+          assert proof.get("trades", 0) == 0
+          assert proof.get("portfolio_writes", 0) == 0
+
+          delta = d.get("participation_baseline_delta") or {}
+          assert delta.get("manual_review_required") is False
+          assert delta.get("added") == []
+          assert delta.get("removed") == []
+
+          print("PASS: exact FUND14A provenance + research firewall")
+          print("source_head:", d.get("source_head"))
+          print("as_of:", d.get("as_of"))
+          print("activation_safe:", d.get("activation_safe"))
+          PY
+
+      - name: Build FUND14B candidate artifact
+        env:
+          PYTHONPATH: .
+          FUND14A_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/fund14b
+          python scripts/run_turkiye_fund_candidate_artifact.py             --input "${RUNNER_TEMP}/fund14a/research_snapshot.json"             --output .artifacts/fund14b/candidate_artifact.json             --expected-source-head "${FUND14A_HEAD_SHA}"             2>&1 | tee .artifacts/fund14b/run.log
+
+      - name: Validate FUND14B closed-promotion contract
+        env:
+          FUND14A_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(".artifacts/fund14b/candidate_artifact.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+
+          assert d.get("schema_version") == "fund14b_candidate_artifact_4"
+          source = d.get("source") or {}
+          assert source.get("fund14a_schema_version") == "fund14a_research_snapshot_3"
+          assert source.get("source_head") == os.environ["FUND14A_HEAD_SHA"]
+
+          assert d.get("research_only") is True
+          assert d.get("execution_authority") is False
+          assert d.get("production_persist") is False
+
+          threshold = d.get("threshold_policy") or {}
+          assert threshold.get("locked") is False
+          assert threshold.get("fi_min") is None
+
+          gate = d.get("promotion_gate") or {}
+          assert gate.get("open") is False
+          assert gate.get("reasons") == ["THRESHOLD_UNLOCKED"]
+          assert gate.get("meaning") == "research_candidate_promotion_only"
+          assert gate.get("execution_authority") is False
+
+          assert d.get("promotion_eligible") == []
+
+          proof = d.get("write_proof") or {}
+          expected_zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+          assert proof == expected_zero
+
+          print("PASS: FUND14B threshold remains unlocked")
+          print("PASS: promotion gate remains closed")
+          print("PASS: execution/write authority remains zero")
+          print("candidate_count:", (d.get("counts") or {}).get("eligible_candidates"))
+          PY
+
+      - name: Upload FUND14B research candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund14b-candidate-artifact-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .artifacts/fund14b/candidate_artifact.json
+            .artifacts/fund14b/run.log
