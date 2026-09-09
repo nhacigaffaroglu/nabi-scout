@@ -1,0 +1,190 @@
+name: FUND14A Research Snapshot
+
+on:
+  pull_request:
+    paths:
+      - "scripts/run_turkiye_fund_research_snapshot.py"
+      - "tests/test_turkiye_fund_research_snapshot.py"
+      - "tests/test_fund14a_research_workflow.py"
+      - "services/turkiye_fund_source_capture.py"
+      - "services/turkiye_fund_broad_capture.py"
+      - "services/turkiye_fund_scanner.py"
+      - "services/turkiye_fund_universe_discovery.py"
+      - "services/turkiye_fund_universe_contract.py"
+      - "services/turkiye_fund_tefas_history.py"
+      - ".github/workflows/fund14a_research_snapshot.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/run_turkiye_fund_research_snapshot.py"
+      - "tests/test_turkiye_fund_research_snapshot.py"
+      - "tests/test_fund14a_research_workflow.py"
+      - "services/turkiye_fund_source_capture.py"
+      - "services/turkiye_fund_broad_capture.py"
+      - "services/turkiye_fund_scanner.py"
+      - "services/turkiye_fund_universe_discovery.py"
+      - "services/turkiye_fund_universe_contract.py"
+      - "services/turkiye_fund_tefas_history.py"
+      - ".github/workflows/fund14a_research_snapshot.yml"
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Optional Europe/Istanbul YYYY-MM-DD research date"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund14a-research-snapshot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND14A focused tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_research_snapshot.py \
+            tests/test_fund14a_research_workflow.py
+
+  live-research-snapshot:
+    if: github.event_name == 'workflow_dispatch'
+    needs: focused-contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Restore FUND14A research cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/turkiye_fund_universe
+          key: fund14a-research-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            fund14a-research-${{ github.ref_name }}-
+            fund14a-research-
+
+      - name: Resolve research date
+        id: research_date
+        shell: bash
+        env:
+          REQUESTED_AS_OF: ${{ inputs.as_of }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED_AS_OF}" ]; then
+            AS_OF="${REQUESTED_AS_OF}"
+          else
+            AS_OF="$(TZ=Europe/Istanbul date +%F)"
+          fi
+          python - "${AS_OF}" <<'PY'
+          from datetime import date
+          import sys
+          date.fromisoformat(sys.argv[1])
+          PY
+          echo "as_of=${AS_OF}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Europe/Istanbul research date: ${AS_OF}"
+
+      - name: Run FUND14A live research snapshot
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/fund14a
+          python scripts/run_turkiye_fund_research_snapshot.py \
+            --live \
+            --as-of "${{ steps.research_date.outputs.as_of }}" \
+            --out .artifacts/fund14a/research_snapshot.json \
+            --run-state .artifacts/fund14a/run_state.json \
+            2>&1 | tee .artifacts/fund14a/run.log
+
+      - name: Validate FUND14A research firewall
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          artifact_path = Path(".artifacts/fund14a/research_snapshot.json")
+          if not artifact_path.is_file():
+              raise SystemExit("FUND14A artifact missing")
+
+          d = json.loads(artifact_path.read_text(encoding="utf-8"))
+          head = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+
+          assert d.get("schema_version") == "fund14a_research_snapshot_3"
+          assert d.get("source_head") == head
+          assert d.get("research_only") is True
+
+          proof = d.get("write_proof") or {}
+          assert proof.get("persist") is False
+          assert proof.get("production_writes") in ([], None)
+          assert proof.get("eight_e_calls", 0) == 0
+          assert proof.get("new_money_calls", 0) == 0
+          assert proof.get("trades", 0) == 0
+          assert proof.get("portfolio_writes", 0) == 0
+
+          delta = d.get("participation_baseline_delta") or {}
+          print("source_head:", d.get("source_head"))
+          print("as_of:", d.get("as_of"))
+          print("scanner_counts:", d.get("scanner_counts"))
+          print("participation_baseline_delta:", delta)
+          print("activation_safe:", d.get("activation_safe"))
+          print("write_proof:", proof)
+
+          if d.get("activation_safe") is not True:
+              raise SystemExit(
+                  "FUND14A activation_safe is false; artifact retained for human review"
+              )
+
+          print("PASS: FUND14A research firewall and activation gate")
+          PY
+
+      - name: Upload FUND14A evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund14a-research-snapshot-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            .artifacts/fund14a/research_snapshot.json
+            .artifacts/fund14a/run_state.json
+            .artifacts/fund14a/run.log
