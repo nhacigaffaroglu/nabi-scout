@@ -49,7 +49,7 @@ except ImportError:  # pragma: no cover
 KAP_HOST = _KAP_HOST
 PDR_DISCOVERY_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
 PROVENANCE_KAP_PDR = "kap_pdr_official"
-PDR_PARSER_VERSION = "kap-pdr-v3"
+PDR_PARSER_VERSION = "kap-pdr-v4"
 
 _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
 _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")

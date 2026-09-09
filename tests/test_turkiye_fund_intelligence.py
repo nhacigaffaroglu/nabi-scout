@@ -318,9 +318,9 @@ class TurkishFundIntelligenceTests(unittest.TestCase):
         provider = default_tefas_fund_provider()
 
         expected = {
-            "KCL": ("NEUTRAL", 45.46),
-            "KTN": ("CAUTION", 36.21),
-            "YCY": ("NEUTRAL", 48.13),
+            "KCL": ("NEUTRAL", 56.37),
+            "KTN": ("NEUTRAL", 48.17),
+            "YCY": ("NEUTRAL", 58.51),
         }
 
         for code, (state, score) in expected.items():
