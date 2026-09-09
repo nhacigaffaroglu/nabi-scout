@@ -653,6 +653,7 @@ def capture_universe(
     limit: Optional[int] = None,
     fetch_prices: bool = True,
     allow_ocr: bool = True,
+    require_participation_evidence_codes: Optional[Sequence[str]] = None,
     on_fund: Optional[Callable[[str, dict[str, Any]], None]] = None,
 ) -> tuple[dict[str, dict[str, Any]], CaptureRunStats]:
     active = [row for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE]
@@ -661,6 +662,13 @@ def capture_universe(
         active = [row for row in active if row.fund_code in requested]
     if limit is not None:
         active = active[: int(limit)]
+
+    participation_evidence_required = {
+        normalize_fund_code(code)
+        for code in (require_participation_evidence_codes or ())
+        if normalize_fund_code(code)
+    }
+
     sess = session or OfficialCaptureSession(live=live, min_gap_sec=KAP_MIN_GAP_SEC if live else 0.0)
     directory: dict[str, dict[str, Any]] = {}
     if live or sess.live:
@@ -678,7 +686,13 @@ def capture_universe(
         sess.stats.funds_attempted += 1
         if resume:
             existing = read_evidence_pack(identity.fund_code)
-            if existing and _pack_is_reusable(existing, identity):
+            if existing and _pack_is_reusable(
+                existing,
+                identity,
+                require_participation_evidence=(
+                    identity.fund_code in participation_evidence_required
+                ),
+            ):
                 sess.stats.cache_hits += 1
                 sess.stats.unchanged_documents += 1
                 sess.stats.skipped_unchanged += 1
@@ -718,7 +732,12 @@ def capture_universe(
     return packs, sess.stats
 
 
-def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIdentity) -> bool:
+def _pack_is_reusable(
+    pack: Mapping[str, Any],
+    identity: TurkiyeFundUniverseIdentity,
+    *,
+    require_participation_evidence: bool = False,
+) -> bool:
     version = int(pack.get("evidence_recovery_version") or 0)
     if version not in ACCEPTED_PACK_VERSIONS:
         return False
@@ -728,6 +747,11 @@ def _pack_is_reusable(pack: Mapping[str, Any], identity: TurkiyeFundUniverseIden
         return False
     if pack.get("pilot_frozen") and identity.fund_code in PILOT_TEFAS_FUND_CODES:
         return True
+    if require_participation_evidence and (
+        not pack.get("mandate_excerpts")
+        or not pack.get("governance_excerpts")
+    ):
+        return False
     if "SOURCE_ERROR" in tuple(pack.get("review_reasons") or ()):
         return False
     if pack.get("identity_status") != IDENTITY_RESOLVED:

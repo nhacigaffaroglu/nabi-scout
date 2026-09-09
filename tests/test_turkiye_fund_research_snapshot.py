@@ -6,6 +6,12 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from services.fund_product_contract import IDENTITY_RESOLVED
+from services.turkiye_fund_broad_capture import (
+    EVIDENCE_RECOVERY_VERSION,
+    _pack_is_reusable,
+)
+
 SCRIPT = Path("scripts/run_turkiye_fund_research_snapshot.py")
 spec = importlib.util.spec_from_file_location("fund14a_runner", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
@@ -62,6 +68,72 @@ class Fund14AResearchSnapshotTests(unittest.TestCase):
         self.assertTrue(rolling.issubset(selected))
         self.assertIn(protected, selected)
         self.assertNotIn("NOT_ACTIVE", selected)
+
+    def test_protected_pack_requires_participation_evidence_before_reuse(self):
+        identity = DummyIdentity("KCL", 123)
+
+        complete = {
+            "fund_code": "KCL",
+            "evidence_recovery_version": EVIDENCE_RECOVERY_VERSION,
+            "production_persist": False,
+            "identity_status": IDENTITY_RESOLVED,
+            "kap_disclosure_index": 123,
+            "documents": {
+                "BILGI_FORMU": {
+                    "file_oid": "official-ybf-oid",
+                },
+            },
+            "mandate_excerpts": [
+                'Fon "Katılım Fonu" statüsündedir.',
+            ],
+            "governance_excerpts": [
+                "Danışma Komitesi tarafından icazet verilmiştir.",
+            ],
+            "review_reasons": [],
+        }
+
+        self.assertTrue(
+            _pack_is_reusable(
+                complete,
+                identity,
+                require_participation_evidence=True,
+            )
+        )
+
+        degraded = {
+            **complete,
+            "mandate_excerpts": [],
+            "governance_excerpts": [],
+            "review_reasons": [
+                "YBF_MISSING",
+                "TEXT_LAYER_UNAVAILABLE",
+                "GOVERNANCE_EVIDENCE_MISSING",
+            ],
+        }
+
+        # Ordinary incremental reuse remains backward compatible.
+        self.assertTrue(
+            _pack_is_reusable(
+                degraded,
+                identity,
+            )
+        )
+
+        # Protected FUND14A activation evidence must be recaptured.
+        self.assertFalse(
+            _pack_is_reusable(
+                degraded,
+                identity,
+                require_participation_evidence=True,
+            )
+        )
+
+    def test_fund14a_wires_protected_codes_into_strict_pack_reuse(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            "require_participation_evidence_codes=protected_capture_codes",
+            source,
+        )
 
     def test_kap_windows_are_iso_and_split_year(self):
         self.assertEqual(
