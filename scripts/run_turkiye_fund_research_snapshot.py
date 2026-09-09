@@ -17,7 +17,7 @@ COMPATIBLE_DEPENDENCY_BLOBS = {
     "services/turkiye_fund_source_capture.py": "6d02e7e874a52fcbcf906287541b3b810647742c",
     "services/turkiye_fund_broad_capture.py": "2833ed61f276a9ee3f29881b0f2080e1e4ee5e31",
     "services/turkiye_fund_scanner.py": "9767ae44527d4ae34263f5efe1863709f2707bc4",
-    "services/turkiye_fund_universe_discovery.py": "ebaa1dd3bd3ba7c7f1de7402109960f8313cad77",
+    "services/turkiye_fund_universe_discovery.py": "5c1f884d326433df2cc0140caa4f01b4a00c173e",
     "services/turkiye_fund_universe_contract.py": "18306f6cfdbdb0b36a673be569f528bdd26a9a9e",
     "services/turkiye_fund_tefas_history.py": "f4b8c67c6c369b79aebc25ac614c718b6dfb3a34",
 }

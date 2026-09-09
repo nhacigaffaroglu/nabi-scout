@@ -1003,3 +1003,40 @@ IV-FON TOPLAM DEĞERİ TABLOSU
         and row.portfolio_weight == 0.77
         for row in parsed.holdings
     )
+
+
+
+def test_fund10_participation_profile_freeze_is_independent_from_fi_router():
+    from services.fund_product_contract import (
+        PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+        PROFILE_PRECIOUS_METALS_PARTICIPATION,
+    )
+    from services.official_kap_fund import (
+        official_profile_from_kap,
+        participation_holdings_profile_from_kap_fund10,
+    )
+
+    # Deliberately ambiguous legacy evidence:
+    # - broad precious-metals mention
+    # - fund-of-funds / mixed mandate
+    #
+    # FUND-10 Participation must retain its historical precedence,
+    # while canonical FI uses the corrected structural routing.
+    frozen = participation_holdings_profile_from_kap_fund10(
+        umbrella_type="Katılım Şemsiye Fonu",
+        ybf_text=(
+            "Fon sepeti fonu kapsamında altın portföy yatırımları "
+            "bulundurulabilir."
+        ),
+    )
+
+    canonical_fi = official_profile_from_kap(
+        umbrella_type="Katılım Şemsiye Fonu",
+        ybf={
+            "precious_metals_mandate": True,
+            "mixed_mandate": True,
+        },
+    )
+
+    assert frozen == PROFILE_PRECIOUS_METALS_PARTICIPATION
+    assert canonical_fi == PROFILE_MIXED_MULTI_ASSET_PARTICIPATION

@@ -178,6 +178,62 @@ def official_fi_profile_from_general_strategy(strategy: Any) -> Optional[str]:
 
 
 
+
+def _fund10_participation_profile_from_legacy_facts(
+    *,
+    umbrella_type: Optional[str],
+    ybf: Mapping[str, Any],
+) -> Optional[str]:
+    """Frozen pre-FUND11 Participation holdings-profile precedence.
+
+    This intentionally preserves the historical FUND-10 whitelist-profile
+    semantics independently from the canonical FI classification router.
+
+    Do not reuse this function for FI classification, recommendation,
+    ranking, thresholding, 8E, New Money, or portfolio decisions.
+    """
+    facts = dict(ybf or {})
+
+    if (
+        facts.get("money_market_participation")
+        or facts.get("short_term_participation")
+        or (
+            facts.get("max_maturity_184")
+            and facts.get("avg_maturity_45")
+        )
+    ):
+        return PROFILE_SHORT_TERM_PARTICIPATION
+
+    if facts.get("explicit_precious_metals_80_strategy"):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
+
+    if (
+        facts.get("min_80_equity_katilim_index")
+        or facts.get("explicit_equity_participation_strategy")
+    ):
+        return PROFILE_PARTICIPATION_EQUITY
+
+    if facts.get("explicit_multi_asset_strategy"):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
+    if facts.get("min_80_kira_sertifikasi"):
+        return PROFILE_SUKUK_LEASE_CERTIFICATE
+
+    # Historical FUND-10 Participation whitelist precedence.
+    # These broad fallbacks are intentionally preserved ONLY here.
+    if facts.get("precious_metals_mandate"):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
+
+    if facts.get("real_estate_mandate"):
+        return PROFILE_REAL_ESTATE_PARTICIPATION
+
+    if facts.get("mixed_mandate"):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
+    _ = umbrella_type
+    return None
+
+
 def participation_holdings_profile_from_kap_fund10(
     *,
     umbrella_type: Optional[str],
@@ -274,7 +330,10 @@ def participation_holdings_profile_from_kap_fund10(
             )
         ),
     }
-    return official_profile_from_kap(umbrella_type=umbrella_type, ybf=legacy)
+    return _fund10_participation_profile_from_legacy_facts(
+        umbrella_type=umbrella_type,
+        ybf=legacy,
+    )
 
 def match_tefas_kap_identity(
     *,
