@@ -94,3 +94,27 @@ def test_workflow_saves_research_cache_after_live_capture_before_activation_gate
     validate_pos = data.index("- name: Validate FUND14A research firewall")
 
     assert live_pos < save_pos < validate_pos
+
+
+def test_live_workflow_installs_turkish_ocr_runtime():
+    data = text()
+
+    required = (
+        "- name: Install Turkish OCR runtime",
+        "tesseract-ocr",
+        "tesseract-ocr-tur",
+        "tesseract-ocr-eng",
+        "command -v tesseract",
+        "tesseract --version",
+        "tesseract --list-langs | grep -Fx tur",
+        "tesseract --list-langs | grep -Fx eng",
+    )
+
+    for token in required:
+        assert token in data, token
+
+    install_pos = data.index("- name: Install Turkish OCR runtime")
+    restore_pos = data.index("- name: Restore FUND14A research cache")
+    live_pos = data.index("- name: Run FUND14A live research snapshot")
+
+    assert install_pos < restore_pos < live_pos

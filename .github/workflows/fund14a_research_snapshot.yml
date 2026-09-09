@@ -87,6 +87,19 @@ jobs:
       - name: Install application dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install Turkish OCR runtime
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-tur \
+            tesseract-ocr-eng
+          command -v tesseract
+          tesseract --version
+          tesseract --list-langs | grep -Fx tur
+          tesseract --list-langs | grep -Fx eng
+
       - name: Restore FUND14A research cache
         id: fund14a_cache_restore
         uses: actions/cache/restore@v4
