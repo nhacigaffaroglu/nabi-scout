@@ -58,28 +58,88 @@ def _explicit_min_80_equity_katilim_index(text: Any) -> bool:
 
 
 def _explicit_min_80_kira_sertifikasi(text: Any) -> bool:
-    body = re.sub(r"\s+", " ", str(text or "")).strip()
+    """Explicit >=80% generic kira-sertifikasi mandate.
+
+    A precious-metal-linked lease certificate such as
+    "altına dayalı kira sertifikaları" is part of precious-metal
+    exposure and must not independently create a sukuk FI profile.
+    """
+    body = re.sub(
+        r"\s+",
+        " ",
+        str(text or ""),
+    ).strip()
+
     if not body:
         return False
 
-    # KAP PDF text extraction can interleave table columns into the mandate
-    # sentence. Normalize punctuation that is demonstrably non-sentence
-    # punctuation (T.C. and numeric time/decimal separators), while preserving
-    # real sentence boundaries so a later bare sukuk mention cannot satisfy
-    # an unrelated minimum-allocation statement.
-    evidence_body = re.sub(r"\bT\s*\.\s*C\s*\.", "TC", body, flags=re.I)
-    evidence_body = re.sub(r"(?<=\d)[.:](?=\d)", "_", evidence_body)
-
-    return bool(
-        re.search(
-            # Accept normal "en az" plus OCR-spaced "e n az".
-            r"(?:e\s*n\s+az|asgari)\s*%\s*80"
-            r"(?:(?![.!?]).){0,700}?"
-            r"\bkira\b(?:(?![.!?]).){0,180}?\bsertifika[a-zçğıöşü]*\b",
-            evidence_body,
-            flags=re.I | re.S,
-        )
+    # KAP PDF extraction may interleave table columns.
+    evidence_body = re.sub(
+        r"\bT\s*\.\s*C\s*\.",
+        "TC",
+        body,
+        flags=re.I,
     )
+    evidence_body = re.sub(
+        r"(?<=\d)[.:](?=\d)",
+        "_",
+        evidence_body,
+    )
+
+    minimum = re.compile(
+        r"(?:e\s*n\s+az|asgari)\s*%\s*80",
+        flags=re.I,
+    )
+
+    certificate = re.compile(
+        r"\bkira\b"
+        r"(?:(?![.!?]).){0,180}?"
+        r"\bsertifika[a-zçğıöşü]*\b",
+        flags=re.I | re.S,
+    )
+
+    precious_link = re.compile(
+        r"(?:"
+        r"altın[a-zçğıöşü]*"
+        r"|gümüş[a-zçğıöşü]*"
+        r"|kıymetli\s+maden[a-zçğıöşü]*"
+        r")"
+        r"\s+dayalı\s*$",
+        flags=re.I,
+    )
+
+    for minimum_match in minimum.finditer(
+        evidence_body
+    ):
+        tail = evidence_body[
+            minimum_match.end():
+            minimum_match.end() + 700
+        ]
+
+        # Do not cross a genuine sentence boundary.
+        boundary = re.search(r"[.!?]", tail)
+        if boundary:
+            tail = tail[:boundary.start()]
+
+        cert_match = certificate.search(tail)
+
+        if cert_match is None:
+            continue
+
+        # The first lease-certificate phrase following the minimum
+        # determines whether this minimum is generic sukuk evidence.
+        prefix = tail[
+            max(0, cert_match.start() - 100):
+            cert_match.start()
+        ]
+
+        if precious_link.search(prefix):
+            # e.g. "altına dayalı kira sertifikaları"
+            continue
+
+        return True
+
+    return False
 
 
 def official_fi_profile_from_general_strategy(strategy: Any) -> Optional[str]:
@@ -374,13 +434,141 @@ def parse_kap_ybf_text(text: str) -> dict[str, Any]:
     }
 
 
+def _official_name_profile_hint(
+    official_name: Optional[str],
+) -> Optional[str]:
+    """Strict structural FI hint from the official KAP/YBF fund name.
+
+    Primary asset structure is more specific than a maturity modifier.
+
+    Examples:
+    - "Kısa Vadeli Kira Sertifikaları" -> sukuk
+    - "Kısa Vadeli Katılım Fonu"       -> short-term/liquidity
+    - "Altıncı Katılım Fonu"           -> no precious-metals hint
+    """
+    name = re.sub(
+        r"\s+",
+        " ",
+        str(official_name or ""),
+    ).strip()
+
+    if not name:
+        return None
+
+    # Explicit money-market structure is inherently liquidity.
+    if re.search(
+        r"\bpara\s+piyasası\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_SHORT_TERM_PARTICIPATION
+
+    # Specific primary asset classes precede generic "kısa vadeli".
+    if re.search(
+        r"\bhisse\s+senedi\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_PARTICIPATION_EQUITY
+
+    if re.search(
+        r"\bkira\s+sertifika(?:sı|ları)?\b|\bsukuk\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_SUKUK_LEASE_CERTIFICATE
+
+    if re.search(
+        r"\baltın\b|\bgümüş\b|"
+        r"\bkıymetli\s+maden(?:ler)?\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
+
+    if re.search(
+        r"\bgayrimenkul\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_REAL_ESTATE_PARTICIPATION
+
+    if re.search(
+        r"\bçoklu\s+varlık\b|"
+        r"\bfon\s+sepeti\s+fonu\b|"
+        r"\bdeğişken\s+fon\b|"
+        r"\bkarma\s+fon\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
+    # Generic short-term is a maturity/liquidity structure only when
+    # no more specific primary asset class is stated.
+    if re.search(
+        r"\bkısa\s+vadeli\b",
+        name,
+        flags=re.I,
+    ):
+        return PROFILE_SHORT_TERM_PARTICIPATION
+
+    return None
+
+
 def official_profile_from_kap(
     *,
     umbrella_type: Optional[str],
     ybf: Mapping[str, Any],
+    official_name: Optional[str] = None,
 ) -> Optional[str]:
-    """Profile from official KAP type + YBF mandate facts. Not from the fund name."""
+    """Fail-closed FI profile from official structural evidence.
+
+    Primary asset class takes precedence over maturity modifiers.
+
+    A short-term sukuk fund is therefore routed as sukuk; its short
+    duration remains a maturity characteristic of that sukuk profile.
+
+    Broad mentions that an asset may be held are never FI-profile
+    authority.
+    """
     facts = dict(ybf or {})
+
+    name_profile = _official_name_profile_hint(
+        official_name
+    )
+
+    # Strong explicit primary-asset evidence.
+    if facts.get(
+        "explicit_precious_metals_80_strategy"
+    ):
+        return PROFILE_PRECIOUS_METALS_PARTICIPATION
+
+    if (
+        facts.get("min_80_equity_katilim_index")
+        or facts.get(
+            "explicit_equity_participation_strategy"
+        )
+    ):
+        return PROFILE_PARTICIPATION_EQUITY
+
+    if facts.get("explicit_multi_asset_strategy"):
+        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
+    if facts.get("min_80_kira_sertifikasi"):
+        return PROFILE_SUKUK_LEASE_CERTIFICATE
+
+    # A strict official structural fund name is valid primary-asset
+    # evidence. Specific asset classes beat generic maturity terms.
+    if name_profile in {
+        PROFILE_PARTICIPATION_EQUITY,
+        PROFILE_SUKUK_LEASE_CERTIFICATE,
+        PROFILE_PRECIOUS_METALS_PARTICIPATION,
+        PROFILE_REAL_ESTATE_PARTICIPATION,
+        PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+    }:
+        return name_profile
+
+    # Only now route generic short-term / liquidity structure.
     if (
         facts.get("money_market_participation")
         or facts.get("short_term_participation")
@@ -388,22 +576,16 @@ def official_profile_from_kap(
             facts.get("max_maturity_184")
             and facts.get("avg_maturity_45")
         )
+        or name_profile
+        == PROFILE_SHORT_TERM_PARTICIPATION
     ):
         return PROFILE_SHORT_TERM_PARTICIPATION
-    if facts.get("explicit_precious_metals_80_strategy"):
-        return PROFILE_PRECIOUS_METALS_PARTICIPATION
-    if facts.get("min_80_equity_katilim_index") or facts.get("explicit_equity_participation_strategy"):
-        return PROFILE_PARTICIPATION_EQUITY
-    if facts.get("explicit_multi_asset_strategy"):
-        return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
-    if facts.get("min_80_kira_sertifikasi"):
-        return PROFILE_SUKUK_LEASE_CERTIFICATE
-    if facts.get("precious_metals_mandate"):
-        return PROFILE_PRECIOUS_METALS_PARTICIPATION
-    if facts.get("real_estate_mandate"):
-        return PROFILE_REAL_ESTATE_PARTICIPATION
+
+    # Structural mixed/fund-of-funds evidence remains an allowed
+    # fallback. Broad precious-metals and real-estate mentions do not.
     if facts.get("mixed_mandate"):
         return PROFILE_MIXED_MULTI_ASSET_PARTICIPATION
+
     _ = umbrella_type
     return None
 
@@ -533,7 +715,11 @@ def parse_kap_mandate(
         ),
         benchmark=str(ybf.get("benchmark") or "") or None,
         management_fee_annual_pct=float(fee) if fee is not None else None,
-        official_profile=official_profile_from_kap(umbrella_type=umbrella_type, ybf=merged_ybf),
+        official_profile=official_profile_from_kap(
+            umbrella_type=umbrella_type,
+            ybf=merged_ybf,
+            official_name=str(ybf.get("official_name") or "") or None,
+        ),
         source=PROVIDER_KAP_FUND,
         source_url=ybf_url or source_url,
         as_of=as_of

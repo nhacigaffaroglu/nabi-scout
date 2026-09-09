@@ -235,8 +235,23 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         self.assertNotEqual(ASSET_GROUP_PRECIOUS_METALS, ASSET_GROUP_CASH)
         ybf = parse_kap_ybf_text("Fon portföyü altın ve kıymetli maden yatırım araçlarından oluşur.")
         self.assertTrue(ybf["precious_metals_mandate"])
+        # Broad asset mention is diagnostic evidence only.
+        # It must not create FI routing authority.
+        self.assertIsNone(
+            official_profile_from_kap(
+                umbrella_type="Katılım",
+                ybf={"precious_metals_mandate": True},
+            )
+        )
+
+        # Strong structural mandate evidence still routes precious metals.
         self.assertEqual(
-            official_profile_from_kap(umbrella_type="Katılım", ybf={"precious_metals_mandate": True}),
+            official_profile_from_kap(
+                umbrella_type="Katılım",
+                ybf={
+                    "explicit_precious_metals_80_strategy": True,
+                },
+            ),
             PROFILE_PRECIOUS_METALS_PARTICIPATION,
         )
         routed = mandate_from_kap(

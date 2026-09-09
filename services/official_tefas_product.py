@@ -223,14 +223,47 @@ class TefasFundProductProvider:
     def kap_mandate(self, symbol: str) -> KapFundMandateEvidence:
         code = self._require(symbol)
         kap = _kap_fund(code, self._kap, self._packs)
+        ybf = dict(kap.get("ybf") or {})
+
+        # Some official YBF text captures do not preserve the fund name.
+        # Complete that missing presentation/evidence field only when
+        # TEFAS and KAP identity resolve deterministically by fund code.
+        if not str(ybf.get("official_name") or "").strip():
+            snap = parse_tefas_snapshot(
+                self._snapshot_row(code)
+            )
+
+            identity_status = match_tefas_kap_identity(
+                tefas_code=snap.get("fonKodu") or code,
+                kap_code=kap.get("fund_code"),
+            )
+
+            if identity_status == IDENTITY_RESOLVED:
+                official_name = str(
+                    snap.get("fonUnvan") or ""
+                ).strip()
+
+                if official_name:
+                    ybf["official_name"] = official_name
+
         return parse_kap_mandate(
             fund_code=code,
-            ozet_fields=dict(kap.get("ozet_fields") or {}),
-            ybf_text=str(kap.get("ybf_text") or ""),
-            ybf_payload=dict(kap.get("ybf") or {}),
-            source_url=str(kap.get("ozet_url") or ""),
-            ybf_url=str(kap.get("ybf_url") or ""),
-            as_of=str((kap.get("ybf") or {}).get("as_of") or "") or None,
+            ozet_fields=dict(
+                kap.get("ozet_fields") or {}
+            ),
+            ybf_text=str(
+                kap.get("ybf_text") or ""
+            ),
+            ybf_payload=ybf,
+            source_url=str(
+                kap.get("ozet_url") or ""
+            ),
+            ybf_url=str(
+                kap.get("ybf_url") or ""
+            ),
+            as_of=str(
+                ybf.get("as_of") or ""
+            ) or None,
         )
 
 

@@ -45,6 +45,9 @@ from services.turkiye_fund_kap_rsc import (
     kap_genel_investment_strategy,
     parse_kap_genel_rsc,
 )
+from services.turkiye_fund_universe_discovery import (
+    discovery_category_from_official_title,
+)
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
 from services.official_turkiye_fund_participation import _explicit_governance, _explicit_mandate
 
@@ -344,6 +347,271 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
                 PROFILE_SUKUK_LEASE_CERTIFICATE,
             )
 
+
+    def test_broad_asset_mentions_are_not_fi_profile_authority(self) -> None:
+        broad_precious = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "official_name": "ÖRNEK PORTFÖY KATILIM FONU",
+                "strategy": "Portföye altın yatırımı dahil edilebilir.",
+            },
+        )
+        self.assertIsNone(broad_precious.official_profile)
+
+        broad_real_estate = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "official_name": "ÖRNEK PORTFÖY KATILIM FONU",
+                "strategy": (
+                    "Portföye gayrimenkul sertifikaları "
+                    "yatırım amacıyla dahil edilebilir."
+                ),
+            },
+        )
+        self.assertIsNone(broad_real_estate.official_profile)
+
+        formal_cases = (
+            (
+                "GARANTİ PORTFÖY PARA PİYASASI KATILIM (TL) FONU",
+                "Portföye altın yatırımı dahil edilebilir.",
+                PROFILE_SHORT_TERM_PARTICIPATION,
+            ),
+            (
+                "AHLATCI PORTFÖY KATILIM HİSSE SENEDİ (TL) FONU "
+                "(HİSSE SENEDİ YOĞUN FON)",
+                "Portföye altın yatırımı dahil edilebilir.",
+                PROFILE_PARTICIPATION_EQUITY,
+            ),
+            (
+                "INVEO PORTFÖY KİRA SERTİFİKALARI KATILIM FONU",
+                "Portföye altın yatırımı dahil edilebilir.",
+                PROFILE_SUKUK_LEASE_CERTIFICATE,
+            ),
+            (
+                "INVEO PORTFÖY ÇOKLU VARLIK KATILIM FONU",
+                "Portföye altın yatırımı dahil edilebilir.",
+                PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+            ),
+            (
+                "GARANTİ PORTFÖY ALTIN KATILIM FONU",
+                "Portföye kira sertifikaları da dahil edilebilir.",
+                PROFILE_PRECIOUS_METALS_PARTICIPATION,
+            ),
+        )
+
+        for official_name, strategy, expected in formal_cases:
+            with self.subTest(official_name=official_name):
+                mandate = parse_kap_mandate(
+                    fund_code="TST",
+                    ozet_fields={},
+                    ybf_payload={
+                        "official_name": official_name,
+                        "strategy": strategy,
+                    },
+                )
+                self.assertEqual(
+                    mandate.official_profile,
+                    expected,
+                )
+
+        altinci = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_payload={
+                "official_name": (
+                    "KUVEYT TÜRK PORTFÖY ALTINCI "
+                    "KATILIM SERBEST (DÖVİZ-AVRO) FON"
+                ),
+                "strategy": (
+                    "Gayrimenkul sertifikalarına "
+                    "yatırım yapılabilir."
+                ),
+            },
+        )
+        self.assertIsNone(altinci.official_profile)
+
+    def test_discovery_title_category_uses_structural_tokens(self) -> None:
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "KUVEYT TÜRK PORTFÖY ALTINCI "
+                "KATILIM SERBEST (DÖVİZ-AVRO) FON"
+            ),
+            "other",
+        )
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "GARANTİ PORTFÖY ALTIN KATILIM FONU"
+            ),
+            "precious_metals",
+        )
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "AHLATCI PORTFÖY KATILIM HİSSE SENEDİ "
+                "(TL) FONU (HİSSE SENEDİ YOĞUN FON)"
+            ),
+            "equity",
+        )
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "INVEO PORTFÖY KİRA SERTİFİKALARI "
+                "KATILIM FONU"
+            ),
+            "sukuk",
+        )
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "DENİZ PORTFÖY ÇOKLU VARLIK KATILIM FONU"
+            ),
+            "multi_asset",
+        )
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "ALBARAKA PORTFÖY KISA VADELİ "
+                "KATILIM SERBEST (TL) FON"
+            ),
+            "cash_like",
+        )
+
+    def test_precious_linked_kira_certificate_is_not_generic_sukuk_minimum(self) -> None:
+        pa2_like = (
+            "Fonun yatırım stratejisi uyarınca Fon toplam "
+            "değerinin en az %80’i devamlı olarak borsada "
+            "işlem gören altın, altına dayalı kira "
+            "sertifikaları, altın endeksini takip eden "
+            "araçlara yatırılır."
+        )
+
+        self.assertFalse(
+            _explicit_min_80_kira_sertifikasi(
+                pa2_like
+            )
+        )
+
+        mandate = parse_kap_mandate(
+            fund_code="TST",
+            ozet_fields={},
+            ybf_text=pa2_like,
+            ybf_payload={
+                "official_name": (
+                    "PUSULA PORTFÖY ALTIN "
+                    "KATILIM FONU"
+                ),
+            },
+        )
+
+        self.assertEqual(
+            mandate.official_profile,
+            PROFILE_PRECIOUS_METALS_PARTICIPATION,
+        )
+
+    def test_provider_completes_missing_ybf_name_from_resolved_official_identity(self) -> None:
+        for code in ("NKM", "ZPJ"):
+            with self.subTest(code=code):
+                self.assertTrue(
+                    self.provider.supports(code)
+                )
+
+                mandate = self.provider.kap_mandate(
+                    code
+                )
+
+                self.assertEqual(
+                    mandate.official_profile,
+                    PROFILE_PARTICIPATION_EQUITY,
+                )
+
+    def test_short_term_sukuk_title_prefers_sukuk_category(self) -> None:
+        for title in (
+            "OYAK PORTFÖY TÜRKİYE FİNANS KISA VADELİ "
+            "KİRA SERTİFİKASI KATILIM (TL) FONU",
+            "ALBARAKA PORTFÖY KISA VADELİ "
+            "KİRA SERTİFİKALARI KATILIM (TL) FONU",
+            "ZİRAAT PORTFÖY İKİNCİ KISA VADELİ "
+            "KİRA SERTİFİKALARI KATILIM (TL) FONU",
+            "V PORTFÖY KISA VADELİ "
+            "KİRA SERTİFİKALARI KATILIM (TL) FONU",
+        ):
+            with self.subTest(title=title):
+                self.assertEqual(
+                    discovery_category_from_official_title(
+                        title
+                    ),
+                    "sukuk",
+                )
+
+        self.assertEqual(
+            discovery_category_from_official_title(
+                "ÖRNEK PORTFÖY KISA VADELİ "
+                "KATILIM SERBEST FON"
+            ),
+            "cash_like",
+        )
+
+    def test_primary_asset_class_beats_short_term_modifier(self) -> None:
+        # A specific sukuk structure must remain sukuk even when
+        # the fund is also explicitly short-term.
+        self.assertEqual(
+            official_profile_from_kap(
+                umbrella_type="Katılım",
+                ybf={
+                    "short_term_participation": True,
+                },
+                official_name=(
+                    "ÖRNEK PORTFÖY KISA VADELİ "
+                    "KİRA SERTİFİKALARI KATILIM FONU"
+                ),
+            ),
+            PROFILE_SUKUK_LEASE_CERTIFICATE,
+        )
+
+        # Generic short-term participation remains liquidity.
+        self.assertEqual(
+            official_profile_from_kap(
+                umbrella_type="Katılım",
+                ybf={
+                    "short_term_participation": True,
+                },
+                official_name=(
+                    "ÖRNEK PORTFÖY KISA VADELİ "
+                    "KATILIM FONU"
+                ),
+            ),
+            PROFILE_SHORT_TERM_PARTICIPATION,
+        )
+
+        # Strong >=80% sukuk evidence also beats the generic
+        # short-term modifier.
+        self.assertEqual(
+            official_profile_from_kap(
+                umbrella_type="Katılım",
+                ybf={
+                    "short_term_participation": True,
+                    "min_80_kira_sertifikasi": True,
+                },
+            ),
+            PROFILE_SUKUK_LEASE_CERTIFICATE,
+        )
+
+        expected_codes = (
+            "HPV",
+            "KTV",
+            "MPF",
+            "VKV",
+            "ZPK",
+        )
+
+        for code in expected_codes:
+            with self.subTest(code=code):
+                mandate = self.provider.kap_mandate(
+                    code
+                )
+
+                self.assertEqual(
+                    mandate.official_profile,
+                    PROFILE_SUKUK_LEASE_CERTIFICATE,
+                )
 
     def test_participation_holdings_profile_is_fund10_methodology_freeze(self) -> None:
         fi = parse_kap_mandate(

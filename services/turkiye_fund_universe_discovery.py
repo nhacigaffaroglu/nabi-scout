@@ -6,6 +6,7 @@ A title containing Katılım is discovery evidence, not Participation=Uygun.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Optional, Sequence
 
 from services.fund_product_contract import PDR_SUBJECT, PDR_SUBJECT_OID, PROVIDER_KAP_FUND, PROVIDER_TEFAS
@@ -75,20 +76,65 @@ def official_tefas_category_is_katilim(category: Any) -> bool:
 
 
 def discovery_category_from_official_title(title: Any) -> str:
-    """Peer-sample hint from official KAP title. Not Participation and not FI profile."""
+    """Strict peer-sample hint from official title.
+
+    Not Participation and not FI profile.
+
+    Specific structural asset classes take precedence over a generic
+    "kısa vadeli" modifier. Therefore "Kısa Vadeli Kira
+    Sertifikaları" is sukuk, while a plain "Kısa Vadeli Katılım"
+    fund remains cash-like.
+
+    Token boundaries prevent ALTINCI -> ALTIN false positives.
+    """
     folded = _fold(title)
-    if "para piyasa" in folded:
+
+    if re.search(
+        r"\bpara\s+piyasa",
+        folded,
+    ):
         return DISCOVERY_CASH_LIKE
-    if "hisse" in folded:
+
+    if re.search(
+        r"\bhisse\s+senedi\b",
+        folded,
+    ):
         return DISCOVERY_EQUITY
-    if "kira sertifika" in folded or "sukuk" in folded:
+
+    if re.search(
+        r"\bkira\s+sertifika|\bsukuk\b",
+        folded,
+    ):
         return DISCOVERY_SUKUK
-    if any(token in folded for token in ("altin", "kiymetli maden", "gumus", "gold")):
+
+    if re.search(
+        r"\b(?:altin|gumus|gold)\b|"
+        r"\bkiymetli\s+maden",
+        folded,
+    ):
         return DISCOVERY_PRECIOUS_METALS
-    if "gayrimenkul" in folded:
+
+    if re.search(
+        r"\bgayrimenkul\b",
+        folded,
+    ):
         return DISCOVERY_REAL_ESTATE
-    if any(token in folded for token in ("fon sepeti fonu", "degisken fon", "karma fon")):
+
+    if re.search(
+        r"\bcoklu\s+varlik\b|"
+        r"\bfon\s+sepeti\s+fonu\b|"
+        r"\bdegisken\s+fon\b|"
+        r"\bkarma\s+fon\b",
+        folded,
+    ):
         return DISCOVERY_MULTI_ASSET
+
+    if re.search(
+        r"\bkisa\s+vadeli\b",
+        folded,
+    ):
+        return DISCOVERY_CASH_LIKE
+
     return DISCOVERY_OTHER
 
 
