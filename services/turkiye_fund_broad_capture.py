@@ -224,6 +224,7 @@ def capture_one_fund(
     fetch_prices: bool = True,
     allow_ocr: bool = False,
     kap_directory: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    force_source_refresh: bool = False,
 ) -> dict[str, Any]:
     """Capture official evidence for one fund. Failures stay on this fund."""
     day = _as_of(as_of)
@@ -300,6 +301,7 @@ def capture_one_fund(
             kind="kap_ozet_rsc",
             key=slug,
             fetcher=lambda: {"text": session.kap_rsc(pack["ozet_url"])},
+            force=force_source_refresh,
             stats=session.stats,
         )
         ozet = parse_kap_ozet_rsc(str(ozet_text.get("text") or ""))
@@ -345,6 +347,7 @@ def capture_one_fund(
             kind="kap_genel_rsc",
             key=slug,
             fetcher=lambda: {"text": session.kap_rsc(pack["genel_url"])},
+            force=force_source_refresh,
             stats=session.stats,
         )
         genel = parse_kap_genel_rsc(str(genel_text.get("text") or ""))
@@ -712,6 +715,9 @@ def capture_universe(
                 fetch_prices=fetch_prices,
                 allow_ocr=allow_ocr,
                 kap_directory=directory,
+                force_source_refresh=(
+                    identity.fund_code in participation_evidence_required
+                ),
             )
             packs[identity.fund_code] = pack
             sess.stats.funds_ok += 1

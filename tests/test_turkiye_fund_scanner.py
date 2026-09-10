@@ -1128,6 +1128,62 @@ class TurkiyeFund7KapCompletionTests(unittest.TestCase):
         self.assertEqual(set(packs), {"BBB", "CCC"})
         self.assertEqual(stats.funds_attempted, 2)
 
+    def test_protected_participation_recapture_forces_source_refresh(self) -> None:
+        from unittest.mock import patch
+        from services.turkiye_fund_broad_capture import capture_universe
+        from services.turkiye_fund_source_capture import OfficialCaptureSession
+        from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
+
+        identity = TurkiyeFundUniverseIdentity(
+            fund_code="KCL",
+            fund_name="KARE PORTFÖY ÇOKLU VARLIK KATILIM FONU",
+            isin=None,
+            founder="KARE PORTFÖY YÖNETİMİ A.Ş.",
+            tefas_status=TEFAS_STATUS_ACTIVE,
+        )
+        weak_pack = {
+            "fund_code": "KCL",
+            "identity_status": "RESOLVED",
+            "documents": {"BILGI_FORMU": {"file_oid": "oid"}},
+            "production_persist": False,
+            "evidence_recovery_version": 9,
+            "mandate_excerpts": ["Genel yatırım stratejisi."],
+            "governance_excerpts": ["İç kontrol mekanizmaları uygulanır."],
+            "review_reasons": [],
+        }
+        calls = []
+
+        def fake_capture(_identity, **kwargs):
+            calls.append(kwargs)
+            return {
+                "fund_code": "KCL",
+                "identity_status": "RESOLVED",
+                "review_reasons": [],
+                "errors": [],
+                "evidence_recovery_version": 9,
+            }
+
+        session = OfficialCaptureSession(live=False, sleep=lambda _s: None, min_gap_sec=0)
+        with patch(
+            "services.turkiye_fund_broad_capture.read_evidence_pack",
+            return_value=weak_pack,
+        ), patch(
+            "services.turkiye_fund_broad_capture.capture_one_fund",
+            side_effect=fake_capture,
+        ):
+            capture_universe(
+                (identity,),
+                catalog_rows=(),
+                session=session,
+                resume=True,
+                fetch_prices=False,
+                allow_ocr=False,
+                require_participation_evidence_codes=("KCL",),
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]["force_source_refresh"])
+
     def test_checkpoint_resume_skips_accepted_identities(self) -> None:
         from services.turkiye_fund_broad_capture import _pack_is_reusable
         from services.turkiye_fund_universe_contract import TEFAS_STATUS_ACTIVE, TurkiyeFundUniverseIdentity
