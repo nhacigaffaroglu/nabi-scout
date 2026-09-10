@@ -84,7 +84,7 @@ class Fund14AResearchSnapshotTests(unittest.TestCase):
                 },
             },
             "mandate_excerpts": [
-                'Fon "Katılım Fonu" statüsündedir.',
+                "Fon katılım fonu statüsündedir.",
             ],
             "governance_excerpts": [
                 "Danışma Komitesi tarafından icazet verilmiştir.",
@@ -123,6 +123,25 @@ class Fund14AResearchSnapshotTests(unittest.TestCase):
         self.assertFalse(
             _pack_is_reusable(
                 degraded,
+                identity,
+                require_participation_evidence=True,
+            )
+        )
+
+        weak = {
+            **complete,
+            "mandate_excerpts": [
+                "Fonun yatırım stratejisi çeşitli sermaye piyasası araçlarını kapsar.",
+            ],
+            "governance_excerpts": [
+                "Fon yönetiminde iç kontrol ve gözetim mekanizmaları uygulanır.",
+            ],
+        }
+        # Non-empty excerpts are insufficient for protected activation reuse
+        # unless they still contain accepted Participation methodology tokens.
+        self.assertFalse(
+            _pack_is_reusable(
+                weak,
                 identity,
                 require_participation_evidence=True,
             )

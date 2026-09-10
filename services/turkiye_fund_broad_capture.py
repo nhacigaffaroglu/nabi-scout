@@ -29,6 +29,8 @@ from services.turkiye_fund_evidence_extract import (
     extract_governance_excerpts,
     extract_mandate_excerpts,
     extract_purification_excerpts,
+    governance_uygun_tokens_present,
+    mandate_uygun_tokens_present,
 )
 from services.turkiye_fund_kap_rsc import (
     kap_file_url,
@@ -747,11 +749,14 @@ def _pack_is_reusable(
         return False
     if pack.get("pilot_frozen") and identity.fund_code in PILOT_TEFAS_FUND_CODES:
         return True
-    if require_participation_evidence and (
-        not pack.get("mandate_excerpts")
-        or not pack.get("governance_excerpts")
-    ):
-        return False
+    if require_participation_evidence:
+        mandate_excerpts = tuple(pack.get("mandate_excerpts") or ())
+        governance_excerpts = tuple(pack.get("governance_excerpts") or ())
+        if (
+            not mandate_uygun_tokens_present(mandate_excerpts)
+            or not governance_uygun_tokens_present(governance_excerpts)
+        ):
+            return False
     if "SOURCE_ERROR" in tuple(pack.get("review_reasons") or ()):
         return False
     if pack.get("identity_status") != IDENTITY_RESOLVED:

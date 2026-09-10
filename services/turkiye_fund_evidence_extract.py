@@ -77,6 +77,11 @@ def extract_purification_excerpts(*texts: str) -> tuple[str, ...]:
     return excerpts_for_tokens("\n".join(texts), PURIFICATION_TOKENS)
 
 
+def mandate_uygun_tokens_present(excerpts: Sequence[str]) -> bool:
+    blob = _fold(" ".join(excerpts))
+    return any(_fold(token) in blob for token in MANDATE_TOKENS)
+
+
 def governance_uygun_tokens_present(excerpts: Sequence[str]) -> bool:
     blob = _fold(" ".join(excerpts))
-    return any(token in blob for token in GOVERNANCE_UYGUN_TOKENS)
+    return any(_fold(token) in blob for token in GOVERNANCE_UYGUN_TOKENS)
