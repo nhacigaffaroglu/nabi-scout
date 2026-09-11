@@ -1,0 +1,110 @@
+name: FUND17B Portfolio Context Bridge
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_portfolio_context_bridge.py"
+      - "scripts/run_turkiye_fund_portfolio_context_bridge.py"
+      - "tests/test_turkiye_fund_portfolio_context_bridge.py"
+      - "tests/test_turkiye_fund_portfolio_fit.py"
+      - "tests/test_fund17b_portfolio_context_bridge_workflow.py"
+      - ".github/workflows/fund17b_portfolio_context_bridge.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_portfolio_context_bridge.py"
+      - "scripts/run_turkiye_fund_portfolio_context_bridge.py"
+      - "tests/test_turkiye_fund_portfolio_context_bridge.py"
+      - "tests/test_turkiye_fund_portfolio_fit.py"
+      - "tests/test_fund17b_portfolio_context_bridge_workflow.py"
+      - ".github/workflows/fund17b_portfolio_context_bridge.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund17b-portfolio-context-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portfolio-context-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND17B focused contract tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_portfolio_context_bridge.py \
+            tests/test_turkiye_fund_portfolio_fit.py \
+            tests/test_fund17b_portfolio_context_bridge_workflow.py
+
+      - name: Compile FUND17B bridge
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_portfolio_context_bridge.py \
+            scripts/run_turkiye_fund_portfolio_context_bridge.py
+
+      - name: Validate research-only firewall
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from services.turkiye_fund_portfolio_context_bridge import (
+              build_fund17_portfolio_context,
+          )
+
+          source = {
+              "schema_version": "fund17b_portfolio_context_source_1",
+              "human_approved": True,
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "source_system": "CI_FIXTURE",
+              "as_of": "2026-09-11T18:00:00Z",
+              "desired_roles": ["diversification"],
+              "existing_exposures": ["equity"],
+              "constraints": ["research only"],
+              "notes": "CI fixture only; not real portfolio data.",
+          }
+
+          result = build_fund17_portfolio_context(source)
+
+          assert result["schema_version"] == "fund17_portfolio_context_1"
+          assert result["human_supplied"] is True
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+
+          forbidden = {
+              "recommendation",
+              "portfolio_fit_score",
+              "portfolio_fit_rank",
+              "orders",
+              "trade_actions",
+          }
+          assert forbidden.isdisjoint(result)
+
+          print("PASS: explicit human-approved context required")
+          print("PASS: research-only firewall preserved")
+          print("PASS: no scoring/ranking/recommendation/execution fields")
+          PY
