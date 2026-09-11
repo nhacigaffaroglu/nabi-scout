@@ -1194,3 +1194,211 @@ def test_unit_comparison_does_not_rewrite_evidence_provenance():
             "unit": "basis_points",
         },
     ]
+
+
+def _metric_assessment_policy():
+    return {
+        "schema_version": "fund18_metric_assessment_policy_1",
+        "human_approved": True,
+        "locked": True,
+        "policy_id": "FUND18-METRIC-POLICY-TEST-1",
+        "rules": [
+            {
+                "rule_id": "R1",
+                "dimension": "concentration_risk",
+                "claim_field": "portfolio_weight",
+                "unit": "percent",
+                "operator": "gte",
+                "threshold": 25,
+                "assessment": "HIGH",
+            }
+        ],
+    }
+
+
+def test_metric_assessment_policy_accepts_explicit_human_locked_rule():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        normalize_metric_assessment_policy,
+    )
+
+    result = normalize_metric_assessment_policy(
+        _metric_assessment_policy()
+    )
+
+    assert result == _metric_assessment_policy()
+
+
+def test_metric_assessment_policy_requires_human_approval():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["human_approved"] = False
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_not_human_approved",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_requires_locked_policy():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["locked"] = False
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_not_locked",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_requires_explicit_rule():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"] = []
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_requires_rule",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_unknown_dimension():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["dimension"] = "category_score"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_dimension",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_non_metric_claim_field():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["claim_field"] = "economic_exposure"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_metric_field",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_unknown_unit():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["unit"] = "ratio"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_unit",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_unknown_operator():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["operator"] = "between"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_operator",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_boolean_threshold():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["threshold"] = True
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_threshold",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_invalid_dimension_assessment():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["assessment"] = "STRONG"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_assessment",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_rejects_duplicate_rule_id():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"].append(dict(policy["rules"][0]))
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_duplicate_rule_id:R1",
+    ):
+        normalize_metric_assessment_policy(policy)
+
+
+def test_metric_assessment_policy_cannot_use_unknown_as_threshold_result():
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        PortfolioFitEvidenceContractError,
+        normalize_metric_assessment_policy,
+    )
+
+    policy = _metric_assessment_policy()
+    policy["rules"][0]["assessment"] = "UNKNOWN"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_invalid_assessment:R1",
+    ):
+        normalize_metric_assessment_policy(policy)

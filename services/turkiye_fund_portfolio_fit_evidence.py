@@ -25,6 +25,52 @@ FRESHNESS_POLICY_SCHEMA = (
     "fund18_portfolio_fit_freshness_policy_1"
 )
 
+METRIC_ASSESSMENT_POLICY_SCHEMA = (
+    "fund18_metric_assessment_policy_1"
+)
+
+METRIC_ASSESSMENT_DIMENSIONS = {
+    "role_fit",
+    "economic_overlap",
+    "diversification_contribution",
+    "concentration_risk",
+}
+
+METRIC_CLAIM_FIELDS = {
+    "portfolio_weight",
+}
+
+METRIC_RULE_OPERATORS = {
+    "lt",
+    "lte",
+    "gt",
+    "gte",
+    "eq",
+}
+
+METRIC_ASSESSMENT_VALUES = {
+    "role_fit": {
+        "STRONG",
+        "PARTIAL",
+        "WEAK",
+    },
+    "economic_overlap": {
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    },
+    "diversification_contribution": {
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+    },
+    "concentration_risk": {
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+    },
+}
+
 DIMENSIONS = {
     "role_fit",
     "economic_overlap",
@@ -66,6 +112,186 @@ ALLOWED_SOURCE_TYPES = {
 
 class PortfolioFitEvidenceContractError(ValueError):
     """Fail-closed FUND18 evidence contract violation."""
+
+
+def normalize_metric_assessment_policy(
+    raw: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate a locked human-approved metric assessment policy.
+
+    Validation only. This function does not apply thresholds, derive
+    assessments, infer from categories, or supply default financial rules.
+    """
+    policy = _as_dict(
+        raw,
+        field="metric_assessment_policy",
+    )
+
+    allowed_policy_keys = {
+        "schema_version",
+        "human_approved",
+        "locked",
+        "policy_id",
+        "rules",
+    }
+    unknown_policy_keys = sorted(
+        set(policy) - allowed_policy_keys
+    )
+    if unknown_policy_keys:
+        raise PortfolioFitEvidenceContractError(
+            "metric_assessment_policy_unknown_key:"
+            f"{unknown_policy_keys[0]}"
+        )
+
+    if (
+        policy.get("schema_version")
+        != METRIC_ASSESSMENT_POLICY_SCHEMA
+    ):
+        raise PortfolioFitEvidenceContractError(
+            "unsupported_metric_assessment_policy_schema"
+        )
+
+    if policy.get("human_approved") is not True:
+        raise PortfolioFitEvidenceContractError(
+            "metric_assessment_policy_not_human_approved"
+        )
+
+    if policy.get("locked") is not True:
+        raise PortfolioFitEvidenceContractError(
+            "metric_assessment_policy_not_locked"
+        )
+
+    policy_id = _nonempty_string(
+        policy.get("policy_id"),
+        field="metric_assessment_policy_id",
+    )
+
+    raw_rules = policy.get("rules")
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise PortfolioFitEvidenceContractError(
+            "metric_assessment_policy_requires_rule"
+        )
+
+    allowed_rule_keys = {
+        "rule_id",
+        "dimension",
+        "claim_field",
+        "unit",
+        "operator",
+        "threshold",
+        "assessment",
+    }
+
+    normalized_rules: list[dict[str, Any]] = []
+    seen_rule_ids: set[str] = set()
+
+    for index, raw_rule in enumerate(raw_rules):
+        rule = _as_dict(
+            raw_rule,
+            field=f"metric_assessment_policy_rule:{index}",
+        )
+
+        unknown_rule_keys = sorted(
+            set(rule) - allowed_rule_keys
+        )
+        if unknown_rule_keys:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_rule_unknown_key:"
+                f"{unknown_rule_keys[0]}"
+            )
+
+        missing_rule_keys = sorted(
+            allowed_rule_keys - set(rule)
+        )
+        if missing_rule_keys:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_rule_missing_key:"
+                f"{missing_rule_keys[0]}"
+            )
+
+        rule_id = _nonempty_string(
+            rule.get("rule_id"),
+            field="metric_assessment_policy_rule_id",
+        )
+        if rule_id in seen_rule_ids:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_duplicate_rule_id:"
+                f"{rule_id}"
+            )
+        seen_rule_ids.add(rule_id)
+
+        dimension = rule.get("dimension")
+        if dimension not in METRIC_ASSESSMENT_DIMENSIONS:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_dimension:"
+                f"{dimension}"
+            )
+
+        claim_field = rule.get("claim_field")
+        if claim_field not in METRIC_CLAIM_FIELDS:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_metric_field:"
+                f"{claim_field}"
+            )
+
+        unit = rule.get("unit")
+        if unit not in CLAIM_UNITS:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_unit:"
+                f"{unit}"
+            )
+
+        operator = rule.get("operator")
+        if operator not in METRIC_RULE_OPERATORS:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_operator:"
+                f"{operator}"
+            )
+
+        threshold = rule.get("threshold")
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or (
+                isinstance(threshold, float)
+                and not math.isfinite(threshold)
+            )
+        ):
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_threshold:"
+                f"{rule_id}"
+            )
+
+        assessment = rule.get("assessment")
+        if assessment not in METRIC_ASSESSMENT_VALUES[dimension]:
+            raise PortfolioFitEvidenceContractError(
+                "metric_assessment_policy_invalid_assessment:"
+                f"{rule_id}"
+            )
+
+        normalized_rules.append(
+            {
+                "rule_id": rule_id,
+                "dimension": dimension,
+                "claim_field": claim_field,
+                "unit": unit,
+                "operator": operator,
+                "threshold": threshold,
+                "assessment": assessment,
+            }
+        )
+
+    normalized_rules.sort(
+        key=lambda row: row["rule_id"]
+    )
+
+    return {
+        "schema_version": METRIC_ASSESSMENT_POLICY_SCHEMA,
+        "human_approved": True,
+        "locked": True,
+        "policy_id": policy_id,
+        "rules": normalized_rules,
+    }
 
 
 def normalize_freshness_policy(
