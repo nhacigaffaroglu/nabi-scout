@@ -2,6 +2,10 @@ import copy
 
 import pytest
 
+from services.turkiye_fund_portfolio_fit_evidence import (
+    PortfolioFitEvidenceContractError,
+)
+
 from services.turkiye_fund_portfolio_fit_research import (
     PortfolioFitResearchContractError,
     build_evidence_backed_portfolio_fit_research_artifact,
@@ -238,3 +242,120 @@ def test_evidence_backed_builder_rejects_future_evidence():
             evidence=evidence_data,
             generated_at="2026-09-11T18:00:00Z",
         )
+
+
+def freshness_policy(max_age_days=1):
+    return {
+        "schema_version":
+            "fund18_portfolio_fit_freshness_policy_1",
+        "human_approved": True,
+        "policy_id": "FUND18-FRESHNESS-INTEGRATION-1",
+        "source_max_age_days": {
+            "FUND17_PORTFOLIO_CONTEXT": max_age_days,
+        },
+    }
+
+
+def test_freshness_policy_rejects_stale_evidence():
+    data = evidence()
+
+    for item in data["IAT"]["dimensions"].values():
+        item["sources"][0]["as_of"] = (
+            "2026-09-09T18:00:00Z"
+        )
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match=(
+            "evidence_stale:IAT:"
+            "concentration_risk:"
+            "FUND17_PORTFOLIO_CONTEXT"
+        ),
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T18:00:00Z",
+            freshness_policy=freshness_policy(1),
+        )
+
+
+def test_freshness_policy_accepts_evidence_at_exact_boundary():
+    data = evidence()
+
+    for item in data["IAT"]["dimensions"].values():
+        item["sources"][0]["as_of"] = (
+            "2026-09-10T18:00:00Z"
+        )
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T18:00:00Z",
+        freshness_policy=freshness_policy(1),
+    )
+
+    assert (
+        result["evidence_policy"]["freshness_policy_applied"]
+        is True
+    )
+    assert (
+        result["freshness_policy"]["policy_id"]
+        == "FUND18-FRESHNESS-INTEGRATION-1"
+    )
+
+
+def test_no_freshness_policy_preserves_previous_behavior():
+    data = evidence()
+
+    for item in data["IAT"]["dimensions"].values():
+        item["sources"][0]["as_of"] = (
+            "2020-01-01T00:00:00Z"
+        )
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T18:00:00Z",
+    )
+
+    assert (
+        result["evidence_policy"]["freshness_policy_applied"]
+        is False
+    )
+    assert "freshness_policy" not in result
+
+
+def test_unlisted_source_type_has_no_age_limit():
+    data = evidence()
+
+    for item in data["IAT"]["dimensions"].values():
+        item["sources"][0]["as_of"] = (
+            "2020-01-01T00:00:00Z"
+        )
+
+    policy = {
+        "schema_version":
+            "fund18_portfolio_fit_freshness_policy_1",
+        "human_approved": True,
+        "policy_id": "FUND18-FRESHNESS-KAP-ONLY",
+        "source_max_age_days": {
+            "KAP_OFFICIAL": 1,
+        },
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T18:00:00Z",
+        freshness_policy=policy,
+    )
+
+    assert (
+        result["candidates"][0]["role_fit"]
+        == "STRONG"
+    )

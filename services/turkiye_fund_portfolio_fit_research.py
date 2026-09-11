@@ -291,6 +291,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     assessments: Mapping[str, Mapping[str, Any]],
     evidence: Mapping[str, Mapping[str, Any]],
     generated_at: str | None = None,
+    freshness_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build FUND18 research with explicit per-dimension evidence.
 
@@ -366,6 +367,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             evidence[code],
             expected_code=code,
             not_after=effective_generated_at,
+            freshness_policy=freshness_policy,
         )
         normalized_evidence[code] = normalized
 
@@ -416,7 +418,17 @@ def build_evidence_backed_portfolio_fit_research_artifact(
         "supported_required_for_non_unknown": True,
         "insufficient_maps_to_unknown": True,
         "contradictory_maps_to_unknown": True,
+        "freshness_policy_applied": freshness_policy is not None,
     }
+
+    if freshness_policy is not None:
+        from services.turkiye_fund_portfolio_fit_evidence import (
+            normalize_freshness_policy,
+        )
+
+        result["freshness_policy"] = normalize_freshness_policy(
+            freshness_policy
+        )
 
     result["limitations"].append(
         "Any FUND18 dimension without SUPPORTED evidence is forced to UNKNOWN."

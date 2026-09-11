@@ -4,8 +4,10 @@ import pytest
 
 from services.turkiye_fund_portfolio_fit_evidence import (
     EVIDENCE_SCHEMA,
+    FRESHNESS_POLICY_SCHEMA,
     PortfolioFitEvidenceContractError,
     normalize_candidate_evidence,
+    normalize_freshness_policy,
 )
 
 
@@ -352,3 +354,107 @@ def test_compares_as_of_across_timezones():
             expected_code="IAT",
             not_after="2026-09-11T18:00:00Z",
         )
+
+
+def _freshness_policy():
+    return {
+        "schema_version": FRESHNESS_POLICY_SCHEMA,
+        "human_approved": True,
+        "policy_id": "FUND18-FRESHNESS-TEST-1",
+        "source_max_age_days": {
+            "KAP_OFFICIAL": 30,
+            "FUND17_PORTFOLIO_CONTEXT": 7,
+        },
+    }
+
+
+def test_normalizes_human_approved_freshness_policy():
+    result = normalize_freshness_policy(
+        _freshness_policy(),
+    )
+
+    assert result == {
+        "schema_version": FRESHNESS_POLICY_SCHEMA,
+        "human_approved": True,
+        "policy_id": "FUND18-FRESHNESS-TEST-1",
+        "source_max_age_days": {
+            "FUND17_PORTFOLIO_CONTEXT": 7,
+            "KAP_OFFICIAL": 30,
+        },
+    }
+
+
+def test_freshness_policy_requires_human_approval():
+    policy = _freshness_policy()
+    policy["human_approved"] = False
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="freshness_policy_not_human_approved",
+    ):
+        normalize_freshness_policy(policy)
+
+
+def test_freshness_policy_requires_policy_id():
+    policy = _freshness_policy()
+    policy["policy_id"] = ""
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="freshness_policy_id_must_be_nonempty_string",
+    ):
+        normalize_freshness_policy(policy)
+
+
+def test_freshness_policy_requires_at_least_one_source_limit():
+    policy = _freshness_policy()
+    policy["source_max_age_days"] = {}
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="freshness_policy_requires_source_limit",
+    ):
+        normalize_freshness_policy(policy)
+
+
+def test_freshness_policy_rejects_unknown_source_type():
+    policy = _freshness_policy()
+    policy["source_max_age_days"]["INTERNET_RUMOR"] = 10
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match=(
+            "freshness_policy_invalid_source_type:"
+            "INTERNET_RUMOR"
+        ),
+    ):
+        normalize_freshness_policy(policy)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [0, -1, 1.5, True, "30", None],
+)
+def test_freshness_policy_rejects_invalid_max_age_days(value):
+    policy = _freshness_policy()
+    policy["source_max_age_days"]["KAP_OFFICIAL"] = value
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match=(
+            "freshness_policy_invalid_max_age_days:"
+            "KAP_OFFICIAL"
+        ),
+    ):
+        normalize_freshness_policy(policy)
+
+
+def test_freshness_policy_rejects_wrong_schema():
+    policy = _freshness_policy()
+    policy["schema_version"] = "wrong"
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="unsupported_freshness_policy_schema",
+    ):
+        normalize_freshness_policy(policy)

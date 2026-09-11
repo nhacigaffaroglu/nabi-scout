@@ -51,6 +51,14 @@ def main() -> None:
         help="Path to FUND18 evidence/provenance JSON.",
     )
     parser.add_argument(
+        "--freshness-policy-input",
+        required=False,
+        help=(
+            "Optional path to an explicit human-approved "
+            "FUND18 evidence freshness policy JSON."
+        ),
+    )
+    parser.add_argument(
         "--output",
         default=".cache/turkiye_fund_portfolio_fit_research/last_result.json",
         help="Output JSON path.",
@@ -60,16 +68,27 @@ def main() -> None:
     fund17_path = Path(args.fund17_input)
     assessments_path = Path(args.assessments_input)
     evidence_path = Path(args.evidence_input)
+    freshness_policy_path = (
+        Path(args.freshness_policy_input)
+        if args.freshness_policy_input
+        else None
+    )
     output_path = Path(args.output)
 
     fund17_artifact = _read_json(fund17_path)
     assessments = _read_json(assessments_path)
     evidence = _read_json(evidence_path)
+    freshness_policy = (
+        _read_json(freshness_policy_path)
+        if freshness_policy_path is not None
+        else None
+    )
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17_artifact,
         assessments=assessments,
         evidence=evidence,
+        freshness_policy=freshness_policy,
     )
 
     _write_json_atomic(output_path, result)

@@ -19,6 +19,9 @@ from typing import Any, Mapping
 
 
 EVIDENCE_SCHEMA = "fund18_portfolio_fit_evidence_1"
+FRESHNESS_POLICY_SCHEMA = (
+    "fund18_portfolio_fit_freshness_policy_1"
+)
 
 DIMENSIONS = {
     "role_fit",
@@ -45,6 +48,71 @@ ALLOWED_SOURCE_TYPES = {
 
 class PortfolioFitEvidenceContractError(ValueError):
     """Fail-closed FUND18 evidence contract violation."""
+
+
+def normalize_freshness_policy(
+    raw: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate an explicit human-approved evidence freshness policy.
+
+    No default freshness threshold is supplied by code. A source type is
+    age-limited only when it is explicitly present in the approved policy.
+    """
+    policy = _as_dict(
+        raw,
+        field="freshness_policy",
+    )
+
+    if policy.get("schema_version") != FRESHNESS_POLICY_SCHEMA:
+        raise PortfolioFitEvidenceContractError(
+            "unsupported_freshness_policy_schema"
+        )
+
+    if policy.get("human_approved") is not True:
+        raise PortfolioFitEvidenceContractError(
+            "freshness_policy_not_human_approved"
+        )
+
+    policy_id = _nonempty_string(
+        policy.get("policy_id"),
+        field="freshness_policy_id",
+    )
+
+    raw_limits = _as_dict(
+        policy.get("source_max_age_days"),
+        field="freshness_policy_source_max_age_days",
+    )
+
+    if not raw_limits:
+        raise PortfolioFitEvidenceContractError(
+            "freshness_policy_requires_source_limit"
+        )
+
+    normalized_limits: dict[str, int] = {}
+
+    for source_type, max_age_days in sorted(raw_limits.items()):
+        if source_type not in ALLOWED_SOURCE_TYPES:
+            raise PortfolioFitEvidenceContractError(
+                f"freshness_policy_invalid_source_type:{source_type}"
+            )
+
+        if (
+            isinstance(max_age_days, bool)
+            or not isinstance(max_age_days, int)
+            or max_age_days <= 0
+        ):
+            raise PortfolioFitEvidenceContractError(
+                f"freshness_policy_invalid_max_age_days:{source_type}"
+            )
+
+        normalized_limits[source_type] = max_age_days
+
+    return {
+        "schema_version": FRESHNESS_POLICY_SCHEMA,
+        "human_approved": True,
+        "policy_id": policy_id,
+        "source_max_age_days": normalized_limits,
+    }
 
 
 def _as_dict(value: Any, *, field: str) -> dict[str, Any]:
@@ -88,6 +156,7 @@ def normalize_candidate_evidence(
     *,
     expected_code: str,
     not_after: str | None = None,
+    freshness_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     row = _as_dict(
         raw,
@@ -127,6 +196,12 @@ def normalize_candidate_evidence(
     if set(dimensions) != DIMENSIONS:
         raise PortfolioFitEvidenceContractError(
             f"evidence_dimension_set_mismatch:{expected_code}"
+        )
+
+    normalized_freshness_policy = None
+    if freshness_policy is not None:
+        normalized_freshness_policy = normalize_freshness_policy(
+            freshness_policy
         )
 
     not_after_dt = None
@@ -212,6 +287,23 @@ def normalize_candidate_evidence(
                         f"evidence_as_of_in_future:"
                         f"{expected_code}:{dimension}"
                     )
+
+                if normalized_freshness_policy is not None:
+                    max_age_days = (
+                        normalized_freshness_policy[
+                            "source_max_age_days"
+                        ].get(source_type)
+                    )
+
+                    if max_age_days is not None:
+                        age = not_after_dt - as_of_dt
+
+                        if age.total_seconds() > max_age_days * 86400:
+                            raise PortfolioFitEvidenceContractError(
+                                f"evidence_stale:"
+                                f"{expected_code}:{dimension}:"
+                                f"{source_type}"
+                            )
 
             normalized_sources.append(
                 {
