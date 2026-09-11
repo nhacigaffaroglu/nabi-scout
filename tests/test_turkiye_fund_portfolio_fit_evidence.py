@@ -687,12 +687,12 @@ def test_bool_and_int_claim_values_do_not_collapse():
     data["dimensions"]["role_fit"]["sources"] = [
         _claim_source(
             source_id="SRC-1",
-            field="flag",
+            field="portfolio_weight",
             value=True,
         ),
         _claim_source(
             source_id="SRC-2",
-            field="flag",
+            field="portfolio_weight",
             value=1,
         ),
     ]
@@ -1003,3 +1003,102 @@ def test_structured_claim_rejects_non_finite_float(
             data,
             expected_code="IAT",
         )
+
+
+
+def test_structured_claim_rejects_unknown_vocabulary_field():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "weight_pct",
+        "value": 35,
+        "unit": "percent",
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_unsupported_claim_field:weight_pct",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+@pytest.mark.parametrize(
+    "unit",
+    ["pct", "%", "Percent", "bps"],
+)
+def test_structured_claim_rejects_noncanonical_unit(unit):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35,
+        "unit": unit,
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_unsupported_claim_unit:",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "role_fit",
+        "economic_overlap",
+        "diversification_contribution",
+        "concentration_risk",
+        "portfolio_weight",
+        "economic_exposure",
+        "portfolio_role",
+        "liquidity_profile",
+    ],
+)
+def test_structured_claim_accepts_canonical_field_vocabulary(field):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": field,
+        "value": "UNKNOWN",
+    }
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["claim"]["field"]
+        == field
+    )
+
+
+@pytest.mark.parametrize(
+    "unit",
+    ["percent", "basis_points"],
+)
+def test_structured_claim_accepts_canonical_unit_vocabulary(unit):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35,
+        "unit": unit,
+    }
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["claim"]["unit"]
+        == unit
+    )

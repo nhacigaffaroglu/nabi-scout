@@ -38,6 +38,22 @@ EVIDENCE_STATES = {
     "CONTRADICTORY",
 }
 
+CLAIM_FIELDS = {
+    "role_fit",
+    "economic_overlap",
+    "diversification_contribution",
+    "concentration_risk",
+    "portfolio_weight",
+    "economic_exposure",
+    "portfolio_role",
+    "liquidity_profile",
+}
+
+CLAIM_UNITS = {
+    "percent",
+    "basis_points",
+}
+
 ALLOWED_SOURCE_TYPES = {
     "FUND17_PORTFOLIO_CONTEXT",
     "FUND16_CANDIDATE_RESEARCH",
@@ -164,6 +180,11 @@ def _normalize_structured_claim(
         field=f"{field}_field",
     )
 
+    if claim_field not in CLAIM_FIELDS:
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_unsupported_claim_field:{claim_field}"
+        )
+
     claim_value = claim.get("value")
 
     if (
@@ -204,10 +225,20 @@ def _normalize_structured_claim(
         "evidence_id",
     ):
         if optional_field in claim:
-            normalized[optional_field] = _nonempty_string(
+            optional_value = _nonempty_string(
                 claim.get(optional_field),
                 field=f"{field}_{optional_field}",
             )
+
+            if (
+                optional_field == "unit"
+                and optional_value not in CLAIM_UNITS
+            ):
+                raise PortfolioFitEvidenceContractError(
+                    f"{field}_unsupported_claim_unit:{optional_value}"
+                )
+
+            normalized[optional_field] = optional_value
 
     return normalized
 
