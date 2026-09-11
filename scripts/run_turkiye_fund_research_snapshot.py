@@ -412,6 +412,76 @@ def update_pack_with_tefas_refresh(
     return out
 
 
+
+def build_fund_capture_diagnostic(
+    pack: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Small artifact-safe capture trace; never embeds full official documents."""
+    raw = dict(pack or {})
+    documents = dict(raw.get("documents") or {})
+
+    def document_summary(name: str) -> dict[str, Any]:
+        doc = dict(documents.get(name) or {})
+        return {
+            "file_oid": doc.get("file_oid"),
+            "disclosure_index": doc.get("disclosure_index"),
+            "published_at": doc.get("published_at"),
+        }
+
+    def recovery_summary(name: str) -> dict[str, Any]:
+        recovery = dict(raw.get(name) or {})
+        keys = (
+            "text_available",
+            "text_origin",
+            "source_layer",
+            "file_oid",
+            "disclosure_index",
+            "pdf_error",
+            "ocr_attempted",
+            "ocr_success",
+            "ocr_error",
+        )
+        return {
+            key: recovery.get(key)
+            for key in keys
+            if key in recovery
+        }
+
+    mandate = [
+        " ".join(str(item).split())[:500]
+        for item in list(raw.get("mandate_excerpts") or ())
+    ]
+    governance = [
+        " ".join(str(item).split())[:500]
+        for item in list(raw.get("governance_excerpts") or ())
+    ]
+
+    return {
+        "fund_code": raw.get("fund_code"),
+        "identity_status": raw.get("identity_status"),
+        "identity_source": raw.get("identity_source"),
+        "kap_slug": raw.get("kap_slug"),
+        "ozet_url": raw.get("ozet_url"),
+        "genel_url": raw.get("genel_url"),
+        "ozet_cache_hit": raw.get("ozet_cache_hit"),
+        "documents": {
+            "BILGI_FORMU": document_summary("BILGI_FORMU"),
+            "IZAHNAME": document_summary("IZAHNAME"),
+        },
+        "ybf_url": raw.get("ybf_url"),
+        "izahname_url": raw.get("izahname_url"),
+        "ybf_recovery": recovery_summary("ybf_recovery"),
+        "izahname_recovery": recovery_summary("izahname_recovery"),
+        "mandate_excerpt_count": len(mandate),
+        "mandate_excerpts_preview": mandate[:5],
+        "governance_excerpt_count": len(governance),
+        "governance_excerpts_preview": governance[:5],
+        "review_reasons": list(raw.get("review_reasons") or ()),
+        "errors": list(raw.get("errors") or ()),
+        "capture_checkpoint": dict(raw.get("capture_checkpoint") or {}),
+    }
+
+
 def _status_counts(result: Any) -> dict[str, int]:
     return {
         "discovered": int(result.discovered_count),
@@ -768,6 +838,13 @@ def main() -> None:
             "ready_refresh_error_codes": ready_refresh_error_codes,
             "stale_packs_quarantined": list(quarantined),
             "capture_stats": capture_stats.to_dict(),
+        },
+        "capture_diagnostics": {
+            "KCL": {
+                "broad_capture_selected": "KCL" in broad_shard,
+                "capture_returned": "KCL" in captured,
+                **build_fund_capture_diagnostic(current_packs.get("KCL")),
+            },
         },
         "scanner_counts": _status_counts(result),
         "participation_uygun_set": uygun,

@@ -26,6 +26,57 @@ class DummyIdentity:
 
 
 class Fund14AResearchSnapshotTests(unittest.TestCase):
+    def test_capture_diagnostic_is_small_and_exposes_evidence_path(self):
+        pack = {
+            "fund_code": "KCL",
+            "identity_status": "RESOLVED",
+            "identity_source": "KAP_FUND_DIRECTORY",
+            "kap_slug": "kcl-example",
+            "ozet_cache_hit": False,
+            "documents": {
+                "BILGI_FORMU": {
+                    "file_oid": "ybf-oid",
+                    "disclosure_index": 101,
+                },
+                "IZAHNAME": {
+                    "file_oid": "izah-oid",
+                    "disclosure_index": 202,
+                },
+            },
+            "ybf_url": "https://kap.example/ybf",
+            "izahname_url": "https://kap.example/izah",
+            "ybf_recovery": {
+                "text_available": True,
+                "text_origin": "OFFICIAL_DOCUMENT",
+                "text": "MUST_NOT_LEAK_FULL_TEXT",
+            },
+            "izahname_recovery": {
+                "text_available": True,
+                "source_layer": "PDF_TEXT",
+            },
+            "mandate_excerpts": [
+                "Fon katılım fonu statüsündedir.",
+            ],
+            "governance_excerpts": [
+                "Danışma Komitesi tarafından icazet verilir.",
+            ],
+            "review_reasons": [],
+            "errors": [],
+        }
+
+        diagnostic = mod.build_fund_capture_diagnostic(pack)
+
+        self.assertEqual(diagnostic["fund_code"], "KCL")
+        self.assertFalse(diagnostic["ozet_cache_hit"])
+        self.assertEqual(
+            diagnostic["documents"]["BILGI_FORMU"]["file_oid"],
+            "ybf-oid",
+        )
+        self.assertEqual(diagnostic["mandate_excerpt_count"], 1)
+        self.assertEqual(diagnostic["governance_excerpt_count"], 1)
+        self.assertNotIn("text", diagnostic["ybf_recovery"])
+        self.assertNotIn("MUST_NOT_LEAK_FULL_TEXT", repr(diagnostic))
+
     def test_business_day_shard_does_not_skip_weekend(self):
         friday = date(2026, 9, 4)
         monday = date(2026, 9, 7)
