@@ -17,6 +17,7 @@ from services.turkiye_fund_pdf_text import PDF_MAGIC, unwrap_kap_file_bytes
 
 TEXT_ORIGIN_OCR = "OCR_FROM_OFFICIAL_DOCUMENT"
 OCR_UNAVAILABLE = "OCR_ENGINE_UNAVAILABLE"
+OCR_NO_TEXT = "OCR_NO_TEXT"
 
 
 def extract_pdf_images(payload: bytes, *, max_images: int = 40) -> list[bytes]:
@@ -36,20 +37,73 @@ def extract_pdf_images(payload: bytes, *, max_images: int = 40) -> list[bytes]:
     return images
 
 
+def rasterize_pdf_pages(
+    payload: bytes,
+    *,
+    max_pages: int = 24,
+    dpi: int = 200,
+) -> list[bytes]:
+    """Render official PDF pages to PNG before OCR."""
+    exe = shutil.which("pdftoppm")
+    if not exe:
+        return []
+
+    try:
+        data = unwrap_kap_file_bytes(payload)
+    except ValueError:
+        return []
+    if not data.startswith(PDF_MAGIC):
+        return []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "source.pdf"
+        prefix = root / "page"
+        source.write_bytes(data)
+
+        try:
+            proc = subprocess.run(
+                [
+                    exe,
+                    "-f", "1",
+                    "-l", str(max_pages),
+                    "-r", str(dpi),
+                    "-png",
+                    str(source),
+                    str(prefix),
+                ],
+                capture_output=True,
+                timeout=180,
+                check=False,
+            )
+        except Exception:
+            return []
+
+        if proc.returncode != 0:
+            return []
+
+        pages = sorted(
+            root.glob("page-*.png"),
+            key=lambda path: int(path.stem.rsplit("-", 1)[-1]),
+        )
+        return [path.read_bytes() for path in pages[:max_pages]]
+
+
 def _tesseract_ocr(image: bytes) -> str:
     exe = shutil.which("tesseract")
     if not exe:
         return ""
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "page.bin"
-        path.write_bytes(image)
-        proc = subprocess.run(
-            [exe, str(path), "stdout", "-l", "tur+eng"],
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-        return (proc.stdout or b"").decode("utf-8", "replace").strip()
+
+    proc = subprocess.run(
+        [exe, "stdin", "stdout", "-l", "tur+eng"],
+        input=image,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or b"").decode("utf-8", "replace").strip()
 
 
 def _vision_ocr(image: bytes) -> str:
@@ -94,28 +148,45 @@ def ocr_official_pdf(
     max_images: int = 24,
 ) -> tuple[Optional[str], Optional[str]]:
     """Return (text, origin) or (None, reason). Never invents fields."""
-    try:
-        images = extract_pdf_images(payload, max_images=max_images)
-    except Exception:  # noqa: BLE001 — last-resort OCR must fail closed
-        return None, "pdf_unreadable"
+    images = rasterize_pdf_pages(payload, max_pages=max_images)
     if not images:
-        return None, "no_embedded_images"
+        try:
+            images = extract_pdf_images(payload, max_images=max_images)
+        except Exception:
+            return None, "pdf_unreadable"
+
+    if not images:
+        return None, "no_ocr_images"
+
     engine = ocr_fn or _tesseract_ocr
     parts: list[str] = []
+
     for image in images:
         text = ""
         try:
             text = engine(image)
-        except Exception:  # noqa: BLE001 — OCR must fail closed
+        except Exception:
             text = ""
+
         if not text and ocr_fn is None:
             try:
                 text = _vision_ocr(image)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 text = ""
+
         if text:
             parts.append(text)
+
     joined = "\n".join(parts).strip()
+
     if not joined:
-        return None, OCR_UNAVAILABLE
+        if ocr_fn is None:
+            tesseract_available = bool(shutil.which("tesseract"))
+            vision_available = bool(
+                shutil.which("swift") and os.uname().sysname == "Darwin"
+            )
+            if not tesseract_available and not vision_available:
+                return None, OCR_UNAVAILABLE
+        return None, OCR_NO_TEXT
+
     return joined, TEXT_ORIGIN_OCR
