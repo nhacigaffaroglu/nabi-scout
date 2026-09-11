@@ -1,0 +1,257 @@
+name: FUND17 Portfolio Fit Research Gate
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_portfolio_fit.py"
+      - "scripts/run_turkiye_fund_portfolio_fit.py"
+      - "tests/test_turkiye_fund_portfolio_fit.py"
+      - "tests/test_fund17_portfolio_fit_workflow.py"
+      - ".github/workflows/fund16_category_comparison.yml"
+      - ".github/workflows/fund17_portfolio_fit.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_portfolio_fit.py"
+      - "scripts/run_turkiye_fund_portfolio_fit.py"
+      - "tests/test_turkiye_fund_portfolio_fit.py"
+      - "tests/test_fund17_portfolio_fit_workflow.py"
+      - ".github/workflows/fund16_category_comparison.yml"
+      - ".github/workflows/fund17_portfolio_fit.yml"
+  workflow_run:
+    workflows:
+      - "FUND16 Category Comparison Artifact"
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fund17-portfolio-fit-${{ github.event.workflow_run.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND17 focused tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_category_comparison.py \
+            tests/test_turkiye_fund_portfolio_fit.py \
+            tests/test_fund17_portfolio_fit_workflow.py
+
+  build-portfolio-fit-research-artifact:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact FUND16 source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download exact FUND16 category comparison artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: fund16-category-comparison-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/fund16
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate upstream FUND16 provenance and firewall
+        env:
+          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ["RUNNER_TEMP"]) / "fund16" / "category_comparison_artifact.json"
+          if not p.is_file():
+              raise SystemExit("FUND16 category comparison artifact missing")
+
+          d = json.loads(p.read_text(encoding="utf-8"))
+          expected_head = os.environ["FUND16_HEAD_SHA"]
+
+          assert d.get("schema_version") == "fund16_category_comparison_artifact_1"
+          assert d.get("research_only") is True
+          assert d.get("execution_authority") is False
+          assert d.get("production_persist") is False
+          assert d.get("cross_category_winner") is None
+          assert d.get("cross_category_composite_score") is None
+          assert d.get("recommendation") is None
+
+          source = d.get("source") or {}
+          assert source.get("fund15_schema_version") == "fund15_category_research_artifact_1"
+          fund15_source = source.get("source") or {}
+          assert fund15_source.get("fund14b_schema_version") == "fund14b_candidate_artifact_4"
+          upstream = fund15_source.get("source") or {}
+          assert upstream.get("source_head") == expected_head
+
+          threshold = fund15_source.get("threshold_policy") or {}
+          assert threshold.get("locked") is True
+          assert threshold.get("fi_min") == 60.0
+          assert threshold.get("source") == "human_decision"
+          assert threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"
+
+          categories = d.get("categories") or []
+          flat = [
+              candidate
+              for group in categories
+              for candidate in (group.get("candidates") or [])
+          ]
+          counts = d.get("counts") or {}
+          assert len(categories) == counts.get("categories")
+          assert len(flat) == counts.get("promotion_eligible")
+          assert len({row.get("fund_code") for row in flat}) == len(flat)
+
+          for group in categories:
+              assert group.get("winner") is None
+              assert group.get("composite_score") is None
+
+          expected_zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+          assert (d.get("write_proof") or {}) == expected_zero
+
+          print("PASS: exact FUND16 provenance + research firewall")
+          print("source_head:", upstream.get("source_head"))
+          print("candidates:", len(flat))
+          PY
+
+      - name: Build FUND17 portfolio fit research gate artifact
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/fund17
+          python scripts/run_turkiye_fund_portfolio_fit.py \
+            --input "${RUNNER_TEMP}/fund16/category_comparison_artifact.json" \
+            --output .artifacts/fund17/portfolio_fit_artifact.json \
+            2>&1 | tee .artifacts/fund17/run.log
+
+      - name: Validate FUND17 no-context research contract
+        env:
+          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(".artifacts/fund17/portfolio_fit_artifact.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+
+          assert d.get("schema_version") == "fund17_portfolio_fit_artifact_1"
+          assert d.get("research_only") is True
+          assert d.get("execution_authority") is False
+          assert d.get("production_persist") is False
+
+          assert d.get("portfolio_context_available") is False
+          assert d.get("portfolio_context") is None
+          assert d.get("portfolio_fit_status") == "PORTFOLIO_CONTEXT_REQUIRED"
+          assert d.get("portfolio_fit_winner") is None
+          assert d.get("portfolio_fit_composite_score") is None
+          assert d.get("recommendation") is None
+
+          source = d.get("source") or {}
+          assert source.get("fund16_schema_version") == "fund16_category_comparison_artifact_1"
+          fund16_source = source.get("source") or {}
+          assert fund16_source.get("fund15_schema_version") == "fund15_category_research_artifact_1"
+          fund15_source = fund16_source.get("source") or {}
+          assert fund15_source.get("fund14b_schema_version") == "fund14b_candidate_artifact_4"
+          upstream = fund15_source.get("source") or {}
+          assert upstream.get("source_head") == os.environ["FUND16_HEAD_SHA"]
+
+          threshold = fund15_source.get("threshold_policy") or {}
+          assert threshold.get("locked") is True
+          assert threshold.get("fi_min") == 60.0
+          assert threshold.get("source") == "human_decision"
+          assert threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"
+
+          candidates = d.get("candidates") or []
+          counts = d.get("counts") or {}
+          assert counts.get("candidates") == len(candidates)
+          assert counts.get("context_ready") == 0
+          assert counts.get("context_required") == len(candidates)
+          assert len(candidates) == 6
+
+          for row in candidates:
+              assert row.get("portfolio_fit_status") == "PORTFOLIO_CONTEXT_REQUIRED"
+              assert row.get("role_fit") is None
+              assert row.get("economic_overlap") is None
+              assert row.get("diversification_contribution") is None
+              assert row.get("concentration_risk") is None
+              assert row.get("portfolio_fit_composite_score") is None
+              assert row.get("portfolio_fit_rank") is None
+              assert row.get("recommendation") is None
+
+          expected_zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+          assert (d.get("write_proof") or {}) == expected_zero
+
+          print("PASS: FUND17 no-context research gate")
+          print("PASS: no fit values invented")
+          print("PASS: no composite/rank/winner/recommendation")
+          print("PASS: execution/write authority remains zero")
+          print("portfolio_fit_status:", d.get("portfolio_fit_status"))
+          PY
+
+      - name: Upload FUND17 portfolio fit research evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund17-portfolio-fit-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .artifacts/fund17/portfolio_fit_artifact.json
+            .artifacts/fund17/run.log
