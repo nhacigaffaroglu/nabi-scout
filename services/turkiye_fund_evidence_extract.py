@@ -78,8 +78,21 @@ def extract_purification_excerpts(*texts: str) -> tuple[str, ...]:
 
 
 def mandate_uygun_tokens_present(excerpts: Sequence[str]) -> bool:
+    """Match the accepted Participation mandate semantics for pack reuse.
+
+    Explicit faizsiz-finans wording is sufficient on its own.
+    Other mandate signals, including kira sertifikaları, require
+    an explicit katılım context in the same evidence blob.
+    """
     blob = _fold(" ".join(excerpts))
-    return any(_fold(token) in blob for token in MANDATE_TOKENS)
+
+    if _fold("faizsiz finans ilkelerine uygun") in blob:
+        return True
+
+    return (
+        any(_fold(token) in blob for token in MANDATE_TOKENS)
+        and _fold("katılım") in blob
+    )
 
 
 def governance_uygun_tokens_present(excerpts: Sequence[str]) -> bool:

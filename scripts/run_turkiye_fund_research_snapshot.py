@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping, Sequence
 COMPATIBLE_DEPENDENCY_BLOBS = {
     "services/turkiye_fund_source_capture.py": "6d02e7e874a52fcbcf906287541b3b810647742c",
     "services/turkiye_fund_broad_capture.py": "1fb32d36ff24a6015dccccc38e069a8f44839a4f",
+    "services/turkiye_fund_evidence_extract.py": "c683d646177467108f83e3b50acdf391c3d4d7b1",
     "services/turkiye_fund_ocr.py": "fda4f61ad3119d4c9a4f1540855b7f1a0eff9c91",
     "services/turkiye_fund_scanner.py": "9767ae44527d4ae34263f5efe1863709f2707bc4",
     "services/turkiye_fund_universe_discovery.py": "5c1f884d326433df2cc0140caa4f01b4a00c173e",

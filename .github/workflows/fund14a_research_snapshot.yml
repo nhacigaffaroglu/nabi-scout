@@ -7,8 +7,10 @@ on:
       - "tests/test_turkiye_fund_research_snapshot.py"
       - "tests/test_fund14a_research_workflow.py"
       - "tests/test_turkiye_fund_ocr.py"
+      - "tests/test_turkiye_fund_evidence_extract.py"
       - "services/turkiye_fund_source_capture.py"
       - "services/turkiye_fund_broad_capture.py"
+      - "services/turkiye_fund_evidence_extract.py"
       - "services/turkiye_fund_ocr.py"
       - "services/turkiye_fund_scanner.py"
       - "services/turkiye_fund_universe_discovery.py"
@@ -23,8 +25,10 @@ on:
       - "tests/test_turkiye_fund_research_snapshot.py"
       - "tests/test_fund14a_research_workflow.py"
       - "tests/test_turkiye_fund_ocr.py"
+      - "tests/test_turkiye_fund_evidence_extract.py"
       - "services/turkiye_fund_source_capture.py"
       - "services/turkiye_fund_broad_capture.py"
+      - "services/turkiye_fund_evidence_extract.py"
       - "services/turkiye_fund_ocr.py"
       - "services/turkiye_fund_scanner.py"
       - "services/turkiye_fund_universe_discovery.py"
@@ -72,6 +76,7 @@ jobs:
           python -m pytest -q \
             tests/test_turkiye_fund_research_snapshot.py \
             tests/test_turkiye_fund_ocr.py \
+            tests/test_turkiye_fund_evidence_extract.py \
             tests/test_fund14a_research_workflow.py
 
   live-research-snapshot:
