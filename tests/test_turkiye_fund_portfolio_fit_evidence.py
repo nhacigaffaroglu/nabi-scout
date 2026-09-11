@@ -239,3 +239,116 @@ def test_does_not_mutate_input():
     )
 
     assert evidence == before
+
+
+@pytest.mark.parametrize(
+    "as_of",
+    [
+        "not-a-date",
+        "2026-13-11T18:00:00Z",
+        "2026-09-11 25:00:00+00:00",
+    ],
+)
+def test_rejects_invalid_as_of_iso8601(as_of):
+    evidence = _evidence()
+    evidence["dimensions"]["role_fit"]["sources"][0]["as_of"] = as_of
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="as_of_must_be_iso8601",
+    ):
+        normalize_candidate_evidence(
+            evidence,
+            expected_code="IAT",
+        )
+
+
+@pytest.mark.parametrize(
+    "as_of",
+    [
+        "2026-09-11T18:00:00",
+        "2026-09-11",
+    ],
+)
+def test_rejects_as_of_without_timezone(as_of):
+    evidence = _evidence()
+    evidence["dimensions"]["role_fit"]["sources"][0]["as_of"] = as_of
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="as_of_must_include_timezone",
+    ):
+        normalize_candidate_evidence(
+            evidence,
+            expected_code="IAT",
+        )
+
+
+@pytest.mark.parametrize(
+    "as_of",
+    [
+        "2026-09-11T18:00:00Z",
+        "2026-09-11T21:00:00+03:00",
+        "2026-09-11T18:00:00+00:00",
+    ],
+)
+def test_accepts_timezone_aware_iso8601_as_of(as_of):
+    evidence = _evidence()
+    evidence["dimensions"]["role_fit"]["sources"][0]["as_of"] = as_of
+
+    result = normalize_candidate_evidence(
+        evidence,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["as_of"]
+        == as_of
+    )
+
+
+def test_rejects_evidence_after_not_after_timestamp():
+    evidence = _evidence()
+    evidence["dimensions"]["role_fit"]["sources"][0]["as_of"] = (
+        "2026-09-11T18:00:01Z"
+    )
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="evidence_as_of_in_future:IAT:role_fit",
+    ):
+        normalize_candidate_evidence(
+            evidence,
+            expected_code="IAT",
+            not_after="2026-09-11T18:00:00Z",
+        )
+
+
+def test_accepts_evidence_equal_to_not_after_timestamp():
+    result = normalize_candidate_evidence(
+        _evidence(),
+        expected_code="IAT",
+        not_after="2026-09-11T18:00:00Z",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["as_of"]
+        == "2026-09-11T18:00:00Z"
+    )
+
+
+def test_compares_as_of_across_timezones():
+    evidence = _evidence()
+    evidence["dimensions"]["role_fit"]["sources"][0]["as_of"] = (
+        "2026-09-11T21:00:01+03:00"
+    )
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="evidence_as_of_in_future:IAT:role_fit",
+    ):
+        normalize_candidate_evidence(
+            evidence,
+            expected_code="IAT",
+            not_after="2026-09-11T18:00:00Z",
+        )

@@ -343,6 +343,14 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             "assessment_candidate_set_mismatch"
         )
 
+    effective_generated_at = generated_at
+    if effective_generated_at is None:
+        effective_generated_at = (
+            datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
     normalized_evidence: dict[str, dict[str, Any]] = {}
     safe_assessments: dict[str, dict[str, Any]] = {}
 
@@ -357,6 +365,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
         normalized = normalize_candidate_evidence(
             evidence[code],
             expected_code=code,
+            not_after=effective_generated_at,
         )
         normalized_evidence[code] = normalized
 
@@ -391,7 +400,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     result = build_portfolio_fit_research_artifact(
         artifact,
         assessments=safe_assessments,
-        generated_at=generated_at,
+        generated_at=effective_generated_at,
     )
 
     for row in result["candidates"]:

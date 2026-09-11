@@ -14,6 +14,7 @@ It does not:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Mapping
 
 
@@ -62,10 +63,31 @@ def _nonempty_string(value: Any, *, field: str) -> str:
     return value.strip()
 
 
+def _iso_timestamp(value: Any, *, field: str) -> str:
+    raw = _nonempty_string(value, field=field)
+
+    candidate = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_must_be_iso8601"
+        ) from exc
+
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_must_include_timezone"
+        )
+
+    return raw
+
+
 def normalize_candidate_evidence(
     raw: Mapping[str, Any],
     *,
     expected_code: str,
+    not_after: str | None = None,
 ) -> dict[str, Any]:
     row = _as_dict(
         raw,
@@ -106,6 +128,19 @@ def normalize_candidate_evidence(
         raise PortfolioFitEvidenceContractError(
             f"evidence_dimension_set_mismatch:{expected_code}"
         )
+
+    not_after_dt = None
+    if not_after is not None:
+        normalized_not_after = _iso_timestamp(
+            not_after,
+            field=f"evidence_not_after:{expected_code}",
+        )
+        candidate = (
+            normalized_not_after[:-1] + "+00:00"
+            if normalized_not_after.endswith("Z")
+            else normalized_not_after
+        )
+        not_after_dt = datetime.fromisoformat(candidate)
 
     normalized_dimensions: dict[str, Any] = {}
 
@@ -157,12 +192,26 @@ def normalize_candidate_evidence(
                 ),
             )
 
-            as_of = _nonempty_string(
+            as_of = _iso_timestamp(
                 source.get("as_of"),
                 field=(
                     f"{expected_code}:{dimension}:as_of"
                 ),
             )
+
+            if not_after_dt is not None:
+                candidate = (
+                    as_of[:-1] + "+00:00"
+                    if as_of.endswith("Z")
+                    else as_of
+                )
+                as_of_dt = datetime.fromisoformat(candidate)
+
+                if as_of_dt > not_after_dt:
+                    raise PortfolioFitEvidenceContractError(
+                        f"evidence_as_of_in_future:"
+                        f"{expected_code}:{dimension}"
+                    )
 
             normalized_sources.append(
                 {

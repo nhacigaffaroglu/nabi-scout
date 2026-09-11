@@ -220,3 +220,21 @@ def test_does_not_mutate_inputs():
     assert upstream == upstream_before
     assert assessment_data == assessments_before
     assert evidence_data == evidence_before
+
+
+def test_evidence_backed_builder_rejects_future_evidence():
+    fund17_data = fund17()
+    assessment_data = assessments()
+    evidence_data = evidence()
+
+    evidence_data["IAT"]["dimensions"]["role_fit"]["sources"][0]["as_of"] = (
+        "2026-09-11T18:00:01Z"
+    )
+
+    with pytest.raises(Exception, match="evidence_as_of_in_future"):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17_data,
+            assessments=assessment_data,
+            evidence=evidence_data,
+            generated_at="2026-09-11T18:00:00Z",
+        )
