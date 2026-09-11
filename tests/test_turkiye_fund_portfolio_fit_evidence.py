@@ -893,7 +893,7 @@ def test_same_field_same_unit_different_values_is_contradiction():
     )
 
 
-def test_same_field_different_units_not_compared_as_raw_values():
+def test_equivalent_percent_and_basis_points_are_not_contradictory():
     data = _evidence()
     data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
     data["dimensions"]["role_fit"]["sources"] = [
@@ -1102,3 +1102,95 @@ def test_structured_claim_accepts_canonical_unit_vocabulary(unit):
         result["dimensions"]["role_fit"]["sources"][0]["claim"]["unit"]
         == unit
     )
+
+
+
+def test_percent_and_basis_points_difference_is_contradiction():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Weight is 3600 basis points.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 3600,
+                "unit": "basis_points",
+            },
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_unit_comparison_does_not_rewrite_evidence_provenance():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Weight is 3500 basis points.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 3500,
+                "unit": "basis_points",
+            },
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    claims = [
+        source["claim"]
+        for source in result["dimensions"]["role_fit"]["sources"]
+    ]
+
+    assert claims == [
+        {
+            "field": "portfolio_weight",
+            "value": 35,
+            "unit": "percent",
+        },
+        {
+            "field": "portfolio_weight",
+            "value": 3500,
+            "unit": "basis_points",
+        },
+    ]

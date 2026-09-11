@@ -243,6 +243,41 @@ def _normalize_structured_claim(
     return normalized
 
 
+def _structured_claim_comparison_identity(
+    claim: dict[str, Any],
+) -> tuple[tuple[str, str | None], Any]:
+    """Return a deterministic identity/value for contradiction checks.
+
+    Evidence provenance remains unchanged. Only portfolio_weight claims
+    expressed in the controlled percent/basis_points units are compared
+    on a common basis-points scale.
+    """
+    claim_field = claim["field"]
+    claim_unit = claim.get("unit")
+    claim_value = claim["value"]
+
+    if (
+        claim_field == "portfolio_weight"
+        and claim_unit in {"percent", "basis_points"}
+        and isinstance(claim_value, (int, float))
+        and not isinstance(claim_value, bool)
+    ):
+        basis_points_value = (
+            claim_value * 100
+            if claim_unit == "percent"
+            else claim_value
+        )
+        return (
+            (claim_field, "basis_points"),
+            basis_points_value,
+        )
+
+    return (
+        (claim_field, claim_unit),
+        claim_value,
+    )
+
+
 def _has_structured_claim_contradiction(
     sources: list[dict[str, Any]],
 ) -> bool:
@@ -256,11 +291,9 @@ def _has_structured_claim_contradiction(
         if claim is None:
             continue
 
-        claim_key = (
-            claim["field"],
-            claim.get("unit"),
+        claim_key, claim_value = (
+            _structured_claim_comparison_identity(claim)
         )
-        claim_value = claim["value"]
 
         observed_values = values_by_claim.setdefault(
             claim_key,
