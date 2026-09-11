@@ -235,7 +235,10 @@ def test_evidence_backed_builder_rejects_future_evidence():
         "2026-09-11T18:00:01Z"
     )
 
-    with pytest.raises(Exception, match="evidence_as_of_in_future"):
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="evidence_as_of_in_future",
+    ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17_data,
             assessments=assessment_data,
@@ -358,4 +361,91 @@ def test_unlisted_source_type_has_no_age_limit():
     assert (
         result["candidates"][0]["role_fit"]
         == "STRONG"
+    )
+
+
+
+def test_automatic_structured_claim_contradiction_forces_unknown():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-ROLE-1",
+            "observed_fact": "Role classified as defensive.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_role",
+                "value": "defensive",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-ROLE-2",
+            "observed_fact": "Role classified as growth.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_role",
+                "value": "growth",
+            },
+        },
+    ]
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["role_fit"] == "UNKNOWN"
+    assert (
+        row["evidence"]["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_non_conflicting_structured_claims_preserve_assessment():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-ROLE-1",
+            "observed_fact": "Role classified as defensive.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_role",
+                "value": "defensive",
+            },
+        },
+        {
+            "source_type": "FUND17_PORTFOLIO_CONTEXT",
+            "source_id": "SRC-ROLE-2",
+            "observed_fact": "Role classified as defensive.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_role",
+                "value": "defensive",
+            },
+        },
+    ]
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["role_fit"] == "STRONG"
+    assert (
+        row["evidence"]["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
     )

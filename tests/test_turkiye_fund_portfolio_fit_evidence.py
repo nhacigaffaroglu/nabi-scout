@@ -458,3 +458,280 @@ def test_freshness_policy_rejects_wrong_schema():
         match="unsupported_freshness_policy_schema",
     ):
         normalize_freshness_policy(policy)
+
+
+
+def test_normalizes_optional_structured_claim():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "economic_exposure",
+        "value": "sukuk",
+    }
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["claim"]
+        == {
+            "field": "economic_exposure",
+            "value": "sukuk",
+        }
+    )
+
+
+def test_source_without_structured_claim_remains_valid():
+    result = normalize_candidate_evidence(
+        _evidence(),
+        expected_code="IAT",
+    )
+
+    assert (
+        "claim"
+        not in result["dimensions"]["role_fit"]["sources"][0]
+    )
+
+
+def test_structured_claim_requires_exact_field_set():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "economic_exposure",
+        "value": "sukuk",
+        "confidence": 0.9,
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_field_set_mismatch",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, {}, [], ""],
+)
+def test_structured_claim_rejects_invalid_value(value):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "economic_exposure",
+        "value": value,
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_value_",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+def test_structured_claim_requires_nonempty_field():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": " ",
+        "value": "sukuk",
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_field_must_be_nonempty_string",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+
+def _claim_source(
+    *,
+    source_id,
+    field,
+    value,
+):
+    return {
+        "source_type": "HUMAN_APPROVED_RESEARCH",
+        "source_id": source_id,
+        "observed_fact": f"{field}={value}",
+        "as_of": "2026-09-11T18:00:00Z",
+        "claim": {
+            "field": field,
+            "value": value,
+        },
+    }
+
+
+def test_structured_claim_conflict_becomes_contradictory():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        _claim_source(
+            source_id="SRC-1",
+            field="economic_exposure",
+            value="sukuk",
+        ),
+        _claim_source(
+            source_id="SRC-2",
+            field="economic_exposure",
+            value="equity",
+        ),
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_same_structured_claim_value_is_not_contradictory():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        _claim_source(
+            source_id="SRC-1",
+            field="economic_exposure",
+            value="sukuk",
+        ),
+        _claim_source(
+            source_id="SRC-2",
+            field="economic_exposure",
+            value="sukuk",
+        ),
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )
+
+
+def test_different_claim_fields_are_not_contradictory():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        _claim_source(
+            source_id="SRC-1",
+            field="economic_exposure",
+            value="sukuk",
+        ),
+        _claim_source(
+            source_id="SRC-2",
+            field="liquidity_profile",
+            value="daily",
+        ),
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )
+
+
+def test_conflict_overrides_insufficient_to_contradictory():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "INSUFFICIENT"
+    data["dimensions"]["role_fit"]["sources"] = [
+        _claim_source(
+            source_id="SRC-1",
+            field="economic_exposure",
+            value="sukuk",
+        ),
+        _claim_source(
+            source_id="SRC-2",
+            field="economic_exposure",
+            value="equity",
+        ),
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_bool_and_int_claim_values_do_not_collapse():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        _claim_source(
+            source_id="SRC-1",
+            field="flag",
+            value=True,
+        ),
+        _claim_source(
+            source_id="SRC-2",
+            field="flag",
+            value=1,
+        ),
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_free_text_difference_alone_is_not_contradiction():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Exposure looks sukuk-heavy.",
+            "as_of": "2026-09-11T18:00:00Z",
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Exposure looks equity-heavy.",
+            "as_of": "2026-09-11T18:00:00Z",
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )

@@ -131,6 +131,81 @@ def _nonempty_string(value: Any, *, field: str) -> str:
     return value.strip()
 
 
+def _normalize_structured_claim(
+    value: Any,
+    *,
+    field: str,
+) -> dict[str, Any]:
+    claim = _as_dict(value, field=field)
+
+    if set(claim) != {"field", "value"}:
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_field_set_mismatch"
+        )
+
+    claim_field = _nonempty_string(
+        claim.get("field"),
+        field=f"{field}_field",
+    )
+
+    claim_value = claim.get("value")
+
+    if (
+        claim_value is None
+        or isinstance(claim_value, (dict, list))
+        or not isinstance(
+            claim_value,
+            (str, int, float, bool),
+        )
+    ):
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_value_must_be_scalar"
+        )
+
+    if isinstance(claim_value, str):
+        claim_value = claim_value.strip()
+        if not claim_value:
+            raise PortfolioFitEvidenceContractError(
+                f"{field}_value_must_be_nonempty"
+            )
+
+    return {
+        "field": claim_field,
+        "value": claim_value,
+    }
+
+
+def _has_structured_claim_contradiction(
+    sources: list[dict[str, Any]],
+) -> bool:
+    values_by_field: dict[str, list[Any]] = {}
+
+    for source in sources:
+        claim = source.get("claim")
+        if claim is None:
+            continue
+
+        claim_field = claim["field"]
+        claim_value = claim["value"]
+
+        observed_values = values_by_field.setdefault(
+            claim_field,
+            [],
+        )
+
+        if not any(
+            existing == claim_value
+            and type(existing) is type(claim_value)
+            for existing in observed_values
+        ):
+            observed_values.append(claim_value)
+
+    return any(
+        len(values) > 1
+        for values in values_by_field.values()
+    )
+
+
 def _iso_timestamp(value: Any, *, field: str) -> str:
     raw = _nonempty_string(value, field=field)
 
@@ -305,20 +380,36 @@ def normalize_candidate_evidence(
                                 f"{source_type}"
                             )
 
-            normalized_sources.append(
-                {
-                    "source_type": source_type,
-                    "source_id": source_id,
-                    "observed_fact": observed_fact,
-                    "as_of": as_of,
-                }
-            )
+            normalized_source = {
+                "source_type": source_type,
+                "source_id": source_id,
+                "observed_fact": observed_fact,
+                "as_of": as_of,
+            }
+
+            if "claim" in source:
+                normalized_source["claim"] = (
+                    _normalize_structured_claim(
+                        source["claim"],
+                        field=(
+                            f"{expected_code}:{dimension}:"
+                            f"source:{index}:claim"
+                        ),
+                    )
+                )
+
+            normalized_sources.append(normalized_source)
 
         if state == "SUPPORTED" and not normalized_sources:
             raise PortfolioFitEvidenceContractError(
                 f"supported_dimension_requires_source:"
                 f"{expected_code}:{dimension}"
             )
+
+        if _has_structured_claim_contradiction(
+            normalized_sources
+        ):
+            state = "CONTRADICTORY"
 
         rationale = item.get("rationale")
         if not isinstance(rationale, list) or not rationale:
