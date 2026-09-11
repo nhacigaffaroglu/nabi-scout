@@ -62,19 +62,40 @@ def test_upstream_firewall_is_revalidated_before_candidate_build():
         assert item in data, item
 
 
-def test_threshold_is_deliberately_unlocked_and_promotion_closed():
+def test_human_approved_fi60_threshold_is_locked_for_research_promotion():
     data = text()
     required = (
-        'threshold.get("locked") is False',
-        'threshold.get("fi_min") is None',
-        'gate.get("open") is False',
-        'gate.get("reasons") == ["THRESHOLD_UNLOCKED"]',
+        "--threshold-policy config/fund14b/threshold_policy.json",
+        'threshold.get("locked") is True',
+        'threshold.get("fi_min") == 60.0',
+        'threshold.get("source") == "human_decision"',
+        'threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"',
+        'gate.get("open") is True',
+        'gate.get("reasons") == []',
         'gate.get("execution_authority") is False',
-        'd.get("promotion_eligible") == []',
+        'if float(row["fi_score"]) >= 60.0',
     )
     for item in required:
         assert item in data, item
-    assert "--threshold-policy" not in data
+
+
+def test_threshold_policy_file_is_in_workflow_change_paths():
+    data = text()
+    assert data.count('"config/fund14b/threshold_policy.json"') >= 2
+
+
+def test_threshold_policy_is_exact_human_approved_fi60_decision():
+    import json
+
+    policy = json.loads(
+        Path("config/fund14b/threshold_policy.json").read_text(encoding="utf-8")
+    )
+    assert policy == {
+        "locked": True,
+        "fi_min": 60.0,
+        "source": "human_decision",
+        "decision_id": "FUND14B-FI60-2026-09-11",
+    }
 
 
 def test_no_production_credentials_or_persistence_flags():

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "services/turkiye_fund_candidate_artifact.py"
+      - "config/fund14b/threshold_policy.json"
       - "scripts/run_turkiye_fund_candidate_artifact.py"
       - "tests/test_turkiye_fund_candidate_artifact.py"
       - "tests/test_fund14b_candidate_workflow.py"
@@ -14,6 +15,7 @@ on:
       - main
     paths:
       - "services/turkiye_fund_candidate_artifact.py"
+      - "config/fund14b/threshold_policy.json"
       - "scripts/run_turkiye_fund_candidate_artifact.py"
       - "tests/test_turkiye_fund_candidate_artifact.py"
       - "tests/test_fund14b_candidate_workflow.py"
@@ -137,9 +139,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .artifacts/fund14b
-          python scripts/run_turkiye_fund_candidate_artifact.py             --input "${RUNNER_TEMP}/fund14a/research_snapshot.json"             --output .artifacts/fund14b/candidate_artifact.json             --expected-source-head "${FUND14A_HEAD_SHA}"             2>&1 | tee .artifacts/fund14b/run.log
+          python scripts/run_turkiye_fund_candidate_artifact.py             --input "${RUNNER_TEMP}/fund14a/research_snapshot.json"             --output .artifacts/fund14b/candidate_artifact.json             --threshold-policy config/fund14b/threshold_policy.json             --expected-source-head "${FUND14A_HEAD_SHA}"             2>&1 | tee .artifacts/fund14b/run.log
 
-      - name: Validate FUND14B closed-promotion contract
+      - name: Validate FUND14B locked research-promotion contract
         env:
           FUND14A_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -162,16 +164,28 @@ jobs:
           assert d.get("production_persist") is False
 
           threshold = d.get("threshold_policy") or {}
-          assert threshold.get("locked") is False
-          assert threshold.get("fi_min") is None
+          assert threshold.get("locked") is True
+          assert threshold.get("fi_min") == 60.0
+          assert threshold.get("source") == "human_decision"
+          assert threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"
 
           gate = d.get("promotion_gate") or {}
-          assert gate.get("open") is False
-          assert gate.get("reasons") == ["THRESHOLD_UNLOCKED"]
+          assert gate.get("open") is True
+          assert gate.get("reasons") == []
           assert gate.get("meaning") == "research_candidate_promotion_only"
           assert gate.get("execution_authority") is False
 
-          assert d.get("promotion_eligible") == []
+          candidates = d.get("candidates") or []
+          expected_promotions = [
+              {
+                  "fund_code": row["fund_code"],
+                  "candidate_rank": row["candidate_rank"],
+                  "fi_score": row["fi_score"],
+              }
+              for row in candidates
+              if float(row["fi_score"]) >= 60.0
+          ]
+          assert d.get("promotion_eligible") == expected_promotions
 
           proof = d.get("write_proof") or {}
           expected_zero = {
@@ -184,8 +198,8 @@ jobs:
           }
           assert proof == expected_zero
 
-          print("PASS: FUND14B threshold remains unlocked")
-          print("PASS: promotion gate remains closed")
+          print("PASS: FUND14B human-approved FI>=60 threshold is locked")
+          print("PASS: research promotion gate is open")
           print("PASS: execution/write authority remains zero")
           print("candidate_count:", (d.get("counts") or {}).get("eligible_candidates"))
           PY
