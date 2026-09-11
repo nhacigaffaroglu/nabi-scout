@@ -22,20 +22,32 @@ class Fund17WorkflowTests(unittest.TestCase):
         self.assertIn("github.event.workflow_run.event == 'workflow_run'", self.text)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", self.text)
 
+    def test_manual_dispatch_requires_exact_fund16_identity(self):
+        self.assertIn("workflow_dispatch:", self.text)
+        self.assertIn("fund16_run_id:", self.text)
+        self.assertIn("fund16_head_sha:", self.text)
+        self.assertIn("github.event_name == 'workflow_dispatch'", self.text)
+
     def test_read_only_permissions_and_actions_read(self):
         self.assertIn("contents: read", self.text)
         self.assertIn("actions: read", self.text)
         self.assertNotIn("contents: write", self.text)
 
     def test_exact_fund16_head_checkout(self):
-        self.assertIn("ref: ${{ github.event.workflow_run.head_sha }}", self.text)
+        self.assertIn(
+            "ref: ${{ github.event.workflow_run.head_sha || inputs.fund16_head_sha }}",
+            self.text,
+        )
 
     def test_exact_cross_run_fund16_artifact_download(self):
         self.assertIn(
-            "name: fund16-category-comparison-${{ github.event.workflow_run.id }}",
+            "name: fund16-category-comparison-${{ github.event.workflow_run.id || inputs.fund16_run_id }}",
             self.text,
         )
-        self.assertIn("run-id: ${{ github.event.workflow_run.id }}", self.text)
+        self.assertIn(
+            "run-id: ${{ github.event.workflow_run.id || inputs.fund16_run_id }}",
+            self.text,
+        )
         self.assertIn("github-token: ${{ secrets.GITHUB_TOKEN }}", self.text)
 
     def test_no_portfolio_context_is_invented_or_downloaded(self):

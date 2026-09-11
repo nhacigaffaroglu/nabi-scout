@@ -24,6 +24,16 @@ on:
       - "FUND16 Category Comparison Artifact"
     types:
       - completed
+  workflow_dispatch:
+    inputs:
+      fund16_run_id:
+        description: "Exact successful FUND16 workflow run ID"
+        required: true
+        type: string
+      fund16_head_sha:
+        description: "Exact FUND16 source HEAD SHA"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -64,9 +74,12 @@ jobs:
 
   build-portfolio-fit-research-artifact:
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.event == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success'
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success'
+      ) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -74,7 +87,7 @@ jobs:
       - name: Checkout exact FUND16 source revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha || inputs.fund16_head_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -87,14 +100,14 @@ jobs:
       - name: Download exact FUND16 category comparison artifact
         uses: actions/download-artifact@v5
         with:
-          name: fund16-category-comparison-${{ github.event.workflow_run.id }}
+          name: fund16-category-comparison-${{ github.event.workflow_run.id || inputs.fund16_run_id }}
           path: ${{ runner.temp }}/fund16
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.fund16_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate upstream FUND16 provenance and firewall
         env:
-          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.fund16_head_sha }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -173,7 +186,7 @@ jobs:
 
       - name: Validate FUND17 no-context research contract
         env:
-          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          FUND16_HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.fund16_head_sha }}
         run: |
           set -euo pipefail
           python - <<'PY'
