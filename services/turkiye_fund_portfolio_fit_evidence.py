@@ -14,6 +14,8 @@ It does not:
 
 from __future__ import annotations
 
+import math
+
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -138,7 +140,21 @@ def _normalize_structured_claim(
 ) -> dict[str, Any]:
     claim = _as_dict(value, field=field)
 
-    if set(claim) != {"field", "value"}:
+    required_fields = {"field", "value"}
+    optional_fields = {
+        "unit",
+        "method",
+        "evidence_id",
+    }
+    allowed_fields = required_fields | optional_fields
+
+    if not required_fields.issubset(claim):
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_required_field_missing"
+        )
+
+    unknown_fields = set(claim) - allowed_fields
+    if unknown_fields:
         raise PortfolioFitEvidenceContractError(
             f"{field}_field_set_mismatch"
         )
@@ -169,27 +185,54 @@ def _normalize_structured_claim(
                 f"{field}_value_must_be_nonempty"
             )
 
-    return {
+    if (
+        isinstance(claim_value, float)
+        and not math.isfinite(claim_value)
+    ):
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_value_must_be_finite"
+        )
+
+    normalized = {
         "field": claim_field,
         "value": claim_value,
     }
+
+    for optional_field in (
+        "unit",
+        "method",
+        "evidence_id",
+    ):
+        if optional_field in claim:
+            normalized[optional_field] = _nonempty_string(
+                claim.get(optional_field),
+                field=f"{field}_{optional_field}",
+            )
+
+    return normalized
 
 
 def _has_structured_claim_contradiction(
     sources: list[dict[str, Any]],
 ) -> bool:
-    values_by_field: dict[str, list[Any]] = {}
+    values_by_claim: dict[
+        tuple[str, str | None],
+        list[Any],
+    ] = {}
 
     for source in sources:
         claim = source.get("claim")
         if claim is None:
             continue
 
-        claim_field = claim["field"]
+        claim_key = (
+            claim["field"],
+            claim.get("unit"),
+        )
         claim_value = claim["value"]
 
-        observed_values = values_by_field.setdefault(
-            claim_field,
+        observed_values = values_by_claim.setdefault(
+            claim_key,
             [],
         )
 
@@ -202,7 +245,7 @@ def _has_structured_claim_contradiction(
 
     return any(
         len(values) > 1
-        for values in values_by_field.values()
+        for values in values_by_claim.values()
     )
 
 

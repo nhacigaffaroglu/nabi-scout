@@ -735,3 +735,271 @@ def test_free_text_difference_alone_is_not_contradiction():
         result["dimensions"]["role_fit"]["state"]
         == "SUPPORTED"
     )
+
+
+
+def test_structured_claim_enrichment_is_normalized():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35.5,
+        "unit": "percent",
+        "method": "official_portfolio_breakdown",
+        "evidence_id": "KAP-IAT-20260911-001",
+    }
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["claim"]
+        == {
+            "field": "portfolio_weight",
+            "value": 35.5,
+            "unit": "percent",
+            "method": "official_portfolio_breakdown",
+            "evidence_id": "KAP-IAT-20260911-001",
+        }
+    )
+
+
+def test_legacy_field_value_claim_remains_valid():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "economic_exposure",
+        "value": "sukuk",
+    }
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["sources"][0]["claim"]
+        == {
+            "field": "economic_exposure",
+            "value": "sukuk",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "optional_field",
+    ["unit", "method", "evidence_id"],
+)
+def test_enriched_claim_rejects_empty_optional_string(
+    optional_field,
+):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35.5,
+        optional_field: " ",
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match=f"claim_{optional_field}_must_be_nonempty_string",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+def test_enriched_claim_rejects_unknown_field():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35.5,
+        "confidence": 0.95,
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_field_set_mismatch",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+def test_enriched_claim_requires_field_and_value():
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "unit": "percent",
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_required_field_missing",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )
+
+
+def test_same_field_same_unit_different_values_is_contradiction():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+                "method": "source_a",
+                "evidence_id": "E-1",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Weight is 40 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 40,
+                "unit": "percent",
+                "method": "source_b",
+                "evidence_id": "E-2",
+            },
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_same_field_different_units_not_compared_as_raw_values():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Weight is 3500 basis points.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 3500,
+                "unit": "basis_points",
+            },
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )
+
+
+def test_method_and_evidence_id_do_not_change_claim_identity():
+    data = _evidence()
+    data["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-1",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+                "method": "method_a",
+                "evidence_id": "E-1",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+                "method": "method_b",
+                "evidence_id": "E-2",
+            },
+        },
+    ]
+
+    result = normalize_candidate_evidence(
+        data,
+        expected_code="IAT",
+    )
+
+    assert (
+        result["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )
+
+
+
+@pytest.mark.parametrize(
+    "claim_value",
+    [
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+    ],
+)
+def test_structured_claim_rejects_non_finite_float(
+    claim_value,
+):
+    data = _evidence()
+    source = data["dimensions"]["role_fit"]["sources"][0]
+    source["claim"] = {
+        "field": "portfolio_weight",
+        "value": claim_value,
+        "unit": "percent",
+    }
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="claim_value_must_be_finite",
+    ):
+        normalize_candidate_evidence(
+            data,
+            expected_code="IAT",
+        )

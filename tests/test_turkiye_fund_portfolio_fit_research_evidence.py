@@ -449,3 +449,139 @@ def test_non_conflicting_structured_claims_preserve_assessment():
         row["evidence"]["dimensions"]["role_fit"]["state"]
         == "SUPPORTED"
     )
+
+
+
+def test_enriched_claim_is_preserved_in_builder_output():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "KAP_OFFICIAL",
+            "source_id": "KAP-IAT-ROLE-1",
+            "observed_fact": "Portfolio weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+                "method": "official_portfolio_breakdown",
+                "evidence_id": "KAP-IAT-20260911-001",
+            },
+        },
+    ]
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    claim = (
+        result["candidates"][0]["evidence"]
+        ["dimensions"]["role_fit"]["sources"][0]["claim"]
+    )
+
+    assert claim == {
+        "field": "portfolio_weight",
+        "value": 35,
+        "unit": "percent",
+        "method": "official_portfolio_breakdown",
+        "evidence_id": "KAP-IAT-20260911-001",
+    }
+
+
+def test_enriched_same_unit_conflict_forces_unknown():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "KAP_OFFICIAL",
+            "source_id": "SRC-1",
+            "observed_fact": "Portfolio weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+                "method": "official_breakdown_a",
+                "evidence_id": "E-1",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Portfolio weight is 40 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 40,
+                "unit": "percent",
+                "method": "approved_research_b",
+                "evidence_id": "E-2",
+            },
+        },
+    ]
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["role_fit"] == "UNKNOWN"
+    assert (
+        row["evidence"]["dimensions"]["role_fit"]["state"]
+        == "CONTRADICTORY"
+    )
+
+
+def test_enriched_different_units_do_not_create_false_conflict():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"] = [
+        {
+            "source_type": "KAP_OFFICIAL",
+            "source_id": "SRC-1",
+            "observed_fact": "Portfolio weight is 35 percent.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 35,
+                "unit": "percent",
+            },
+        },
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "SRC-2",
+            "observed_fact": "Portfolio weight is 3500 basis points.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "portfolio_weight",
+                "value": 3500,
+                "unit": "basis_points",
+            },
+        },
+    ]
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["role_fit"] == "STRONG"
+    assert (
+        row["evidence"]["dimensions"]["role_fit"]["state"]
+        == "SUPPORTED"
+    )
