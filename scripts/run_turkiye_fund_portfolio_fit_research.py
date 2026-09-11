@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from services.turkiye_fund_portfolio_fit_research import (
-    build_portfolio_fit_research_artifact,
+    build_evidence_backed_portfolio_fit_research_artifact,
 )
 
 
@@ -46,6 +46,11 @@ def main() -> None:
         help="Path to explicit descriptive assessments JSON.",
     )
     parser.add_argument(
+        "--evidence-input",
+        required=True,
+        help="Path to FUND18 evidence/provenance JSON.",
+    )
+    parser.add_argument(
         "--output",
         default=".cache/turkiye_fund_portfolio_fit_research/last_result.json",
         help="Output JSON path.",
@@ -54,14 +59,17 @@ def main() -> None:
 
     fund17_path = Path(args.fund17_input)
     assessments_path = Path(args.assessments_input)
+    evidence_path = Path(args.evidence_input)
     output_path = Path(args.output)
 
     fund17_artifact = _read_json(fund17_path)
     assessments = _read_json(assessments_path)
+    evidence = _read_json(evidence_path)
 
-    result = build_portfolio_fit_research_artifact(
+    result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17_artifact,
         assessments=assessments,
+        evidence=evidence,
     )
 
     _write_json_atomic(output_path, result)

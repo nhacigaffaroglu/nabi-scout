@@ -283,3 +283,134 @@ def build_portfolio_fit_research_artifact(
             "Participation, FI, FI60, and FUND16 peer ranks remain unchanged.",
         ],
     }
+
+
+def build_evidence_backed_portfolio_fit_research_artifact(
+    fund17_artifact: Mapping[str, Any],
+    *,
+    assessments: Mapping[str, Mapping[str, Any]],
+    evidence: Mapping[str, Mapping[str, Any]],
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Build FUND18 research with explicit per-dimension evidence.
+
+    Fail-closed rule:
+    a descriptive dimension may keep its assessment only when the
+    corresponding evidence state is SUPPORTED.
+
+    INSUFFICIENT or CONTRADICTORY evidence forces that dimension to UNKNOWN.
+    """
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        normalize_candidate_evidence,
+    )
+
+    artifact = _as_dict(
+        fund17_artifact,
+        field="fund17_artifact",
+    )
+    _assert_fund17_firewall(artifact)
+
+    if not isinstance(evidence, Mapping):
+        raise PortfolioFitResearchContractError(
+            "evidence_must_be_object"
+        )
+
+    candidates = _as_list(
+        artifact.get("candidates"),
+        field="candidates",
+    )
+
+    candidate_codes: list[str] = []
+
+    for raw in candidates:
+        row = _as_dict(raw, field="candidate")
+        code = row.get("fund_code")
+
+        if not isinstance(code, str) or not code:
+            raise PortfolioFitResearchContractError(
+                "candidate_fund_code_invalid"
+            )
+
+        candidate_codes.append(code)
+
+    if set(evidence.keys()) != set(candidate_codes):
+        raise PortfolioFitResearchContractError(
+            "evidence_candidate_set_mismatch"
+        )
+
+    if set(assessments.keys()) != set(candidate_codes):
+        raise PortfolioFitResearchContractError(
+            "assessment_candidate_set_mismatch"
+        )
+
+    normalized_evidence: dict[str, dict[str, Any]] = {}
+    safe_assessments: dict[str, dict[str, Any]] = {}
+
+    dimensions = (
+        "role_fit",
+        "economic_overlap",
+        "diversification_contribution",
+        "concentration_risk",
+    )
+
+    for code in candidate_codes:
+        normalized = normalize_candidate_evidence(
+            evidence[code],
+            expected_code=code,
+        )
+        normalized_evidence[code] = normalized
+
+        assessment = _normalize_assessment(
+            assessments[code],
+            expected_code=code,
+        )
+
+        safe = dict(assessment)
+
+        evidence_rationale: list[str] = []
+
+        for dimension in dimensions:
+            dimension_evidence = normalized["dimensions"][dimension]
+
+            if dimension_evidence["state"] != "SUPPORTED":
+                safe[dimension] = "UNKNOWN"
+
+            evidence_rationale.extend(
+                dimension_evidence["rationale"]
+            )
+
+        safe["rationale"] = list(
+            dict.fromkeys(
+                list(assessment["rationale"])
+                + evidence_rationale
+            )
+        )
+
+        safe_assessments[code] = safe
+
+    result = build_portfolio_fit_research_artifact(
+        artifact,
+        assessments=safe_assessments,
+        generated_at=generated_at,
+    )
+
+    for row in result["candidates"]:
+        code = row["fund_code"]
+        row["evidence"] = normalized_evidence[code]
+
+    result["counts"]["evidence_backed_assessments"] = len(
+        result["candidates"]
+    )
+
+    result["evidence_policy"] = {
+        "schema_version": "fund18_portfolio_fit_evidence_policy_1",
+        "supported_required_for_non_unknown": True,
+        "insufficient_maps_to_unknown": True,
+        "contradictory_maps_to_unknown": True,
+    }
+
+    result["limitations"].append(
+        "Any FUND18 dimension without SUPPORTED evidence is forced to UNKNOWN."
+    )
+
+    return result

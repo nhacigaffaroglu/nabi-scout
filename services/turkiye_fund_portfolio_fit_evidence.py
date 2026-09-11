@@ -1,0 +1,211 @@
+"""FUND18 portfolio-fit evidence/provenance contract.
+
+This module validates descriptive evidence used by FUND18.
+
+It does not:
+- score candidates
+- rank candidates
+- choose a winner
+- create recommendations
+- allocate capital
+- execute trades
+- persist production data
+"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+
+EVIDENCE_SCHEMA = "fund18_portfolio_fit_evidence_1"
+
+DIMENSIONS = {
+    "role_fit",
+    "economic_overlap",
+    "diversification_contribution",
+    "concentration_risk",
+}
+
+EVIDENCE_STATES = {
+    "SUPPORTED",
+    "INSUFFICIENT",
+    "CONTRADICTORY",
+}
+
+ALLOWED_SOURCE_TYPES = {
+    "FUND17_PORTFOLIO_CONTEXT",
+    "FUND16_CANDIDATE_RESEARCH",
+    "KAP_OFFICIAL",
+    "TEFAS_OFFICIAL",
+    "FUND_PROSPECTUS",
+    "HUMAN_APPROVED_RESEARCH",
+}
+
+
+class PortfolioFitEvidenceContractError(ValueError):
+    """Fail-closed FUND18 evidence contract violation."""
+
+
+def _as_dict(value: Any, *, field: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_must_be_object"
+        )
+    return dict(value)
+
+
+def _nonempty_string(value: Any, *, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise PortfolioFitEvidenceContractError(
+            f"{field}_must_be_nonempty_string"
+        )
+    return value.strip()
+
+
+def normalize_candidate_evidence(
+    raw: Mapping[str, Any],
+    *,
+    expected_code: str,
+) -> dict[str, Any]:
+    row = _as_dict(
+        raw,
+        field=f"evidence:{expected_code}",
+    )
+
+    if row.get("schema_version") != EVIDENCE_SCHEMA:
+        raise PortfolioFitEvidenceContractError(
+            f"unsupported_evidence_schema:{expected_code}"
+        )
+
+    if row.get("fund_code") != expected_code:
+        raise PortfolioFitEvidenceContractError(
+            f"evidence_fund_code_mismatch:{expected_code}"
+        )
+
+    if row.get("research_only") is not True:
+        raise PortfolioFitEvidenceContractError(
+            f"evidence_research_only_not_true:{expected_code}"
+        )
+
+    if row.get("execution_authority") is not False:
+        raise PortfolioFitEvidenceContractError(
+            f"evidence_execution_authority_not_false:{expected_code}"
+        )
+
+    if row.get("production_persist") is not False:
+        raise PortfolioFitEvidenceContractError(
+            f"evidence_production_persist_not_false:{expected_code}"
+        )
+
+    dimensions = _as_dict(
+        row.get("dimensions"),
+        field=f"dimensions:{expected_code}",
+    )
+
+    if set(dimensions) != DIMENSIONS:
+        raise PortfolioFitEvidenceContractError(
+            f"evidence_dimension_set_mismatch:{expected_code}"
+        )
+
+    normalized_dimensions: dict[str, Any] = {}
+
+    for dimension in sorted(DIMENSIONS):
+        item = _as_dict(
+            dimensions[dimension],
+            field=f"{expected_code}:{dimension}",
+        )
+
+        state = item.get("state")
+        if state not in EVIDENCE_STATES:
+            raise PortfolioFitEvidenceContractError(
+                f"invalid_evidence_state:{expected_code}:{dimension}"
+            )
+
+        sources = item.get("sources")
+        if not isinstance(sources, list):
+            raise PortfolioFitEvidenceContractError(
+                f"evidence_sources_must_be_list:{expected_code}:{dimension}"
+            )
+
+        normalized_sources = []
+
+        for index, source_raw in enumerate(sources):
+            source = _as_dict(
+                source_raw,
+                field=(
+                    f"{expected_code}:{dimension}:source:{index}"
+                ),
+            )
+
+            source_type = source.get("source_type")
+            if source_type not in ALLOWED_SOURCE_TYPES:
+                raise PortfolioFitEvidenceContractError(
+                    f"invalid_source_type:{expected_code}:{dimension}"
+                )
+
+            source_id = _nonempty_string(
+                source.get("source_id"),
+                field=(
+                    f"{expected_code}:{dimension}:source_id"
+                ),
+            )
+
+            observed_fact = _nonempty_string(
+                source.get("observed_fact"),
+                field=(
+                    f"{expected_code}:{dimension}:observed_fact"
+                ),
+            )
+
+            as_of = _nonempty_string(
+                source.get("as_of"),
+                field=(
+                    f"{expected_code}:{dimension}:as_of"
+                ),
+            )
+
+            normalized_sources.append(
+                {
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "observed_fact": observed_fact,
+                    "as_of": as_of,
+                }
+            )
+
+        if state == "SUPPORTED" and not normalized_sources:
+            raise PortfolioFitEvidenceContractError(
+                f"supported_dimension_requires_source:"
+                f"{expected_code}:{dimension}"
+            )
+
+        rationale = item.get("rationale")
+        if not isinstance(rationale, list) or not rationale:
+            raise PortfolioFitEvidenceContractError(
+                f"evidence_rationale_required:"
+                f"{expected_code}:{dimension}"
+            )
+
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in rationale
+        ):
+            raise PortfolioFitEvidenceContractError(
+                f"evidence_rationale_invalid:"
+                f"{expected_code}:{dimension}"
+            )
+
+        normalized_dimensions[dimension] = {
+            "state": state,
+            "sources": normalized_sources,
+            "rationale": [value.strip() for value in rationale],
+        }
+
+    return {
+        "schema_version": EVIDENCE_SCHEMA,
+        "fund_code": expected_code,
+        "research_only": True,
+        "execution_authority": False,
+        "production_persist": False,
+        "dimensions": normalized_dimensions,
+    }

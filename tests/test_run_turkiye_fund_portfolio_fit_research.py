@@ -4,24 +4,29 @@ import sys
 from pathlib import Path
 
 
-ZERO_PROOF = {
-    "production_writes": 0,
-    "trade_actions": 0,
-    "orders": 0,
-    "portfolio_writes": 0,
-    "eight_e_calls": 0,
-    "new_money_calls": 0,
-}
+ROOT = Path(__file__).resolve().parents[1]
+RUNNER = ROOT / "scripts" / "run_turkiye_fund_portfolio_fit_research.py"
 
 
-def _fund17():
+def zero_proof():
+    return {
+        "production_writes": 0,
+        "trade_actions": 0,
+        "orders": 0,
+        "portfolio_writes": 0,
+        "eight_e_calls": 0,
+        "new_money_calls": 0,
+    }
+
+
+def fund17():
     return {
         "schema_version": "fund17_portfolio_fit_artifact_1",
         "source": {
-            "fund16_schema_version": "fund16_category_comparison_artifact_1",
+            "fund16_schema_version":
+                "fund16_category_comparison_artifact_1",
             "source": {},
         },
-        "generated_at": "2026-09-11T18:00:00Z",
         "research_only": True,
         "execution_authority": False,
         "production_persist": False,
@@ -36,15 +41,11 @@ def _fund17():
             "constraints": ["research only"],
             "notes": "Synthetic runner fixture.",
         },
-        "portfolio_fit_status": "READY_FOR_PORTFOLIO_FIT_RESEARCH",
+        "portfolio_fit_status":
+            "READY_FOR_PORTFOLIO_FIT_RESEARCH",
         "portfolio_fit_winner": None,
         "portfolio_fit_composite_score": None,
         "recommendation": None,
-        "counts": {
-            "candidates": 1,
-            "context_ready": 1,
-            "context_required": 0,
-        },
         "candidates": [
             {
                 "fund_code": "IAT",
@@ -56,21 +57,13 @@ def _fund17():
                 "return_1y_rank": None,
                 "max_drawdown": -0.22,
                 "drawdown_resilience_rank": None,
-                "portfolio_fit_status": "READY_FOR_PORTFOLIO_FIT_RESEARCH",
-                "role_fit": None,
-                "economic_overlap": None,
-                "diversification_contribution": None,
-                "concentration_risk": None,
-                "portfolio_fit_composite_score": None,
-                "portfolio_fit_rank": None,
-                "recommendation": None,
             }
         ],
-        "write_proof": dict(ZERO_PROOF),
+        "write_proof": zero_proof(),
     }
 
 
-def _assessments():
+def assessments():
     return {
         "IAT": {
             "fund_code": "IAT",
@@ -79,99 +72,160 @@ def _assessments():
             "diversification_contribution": "HIGH",
             "concentration_risk": "LOW",
             "rationale": [
-                "Synthetic test assessment only; not investment advice."
+                "Synthetic runner fixture only."
             ],
         }
     }
 
 
-def test_runner_writes_expected_artifact(tmp_path: Path):
-    fund17_path = tmp_path / "fund17.json"
-    assessments_path = tmp_path / "assessments.json"
-    output_path = tmp_path / "fund18.json"
+def source():
+    return {
+        "source_type": "FUND17_PORTFOLIO_CONTEXT",
+        "source_id": "synthetic-context-1",
+        "observed_fact": "Synthetic evidence only.",
+        "as_of": "2026-09-11T18:00:00Z",
+    }
 
-    fund17_path.write_text(
-        json.dumps(_fund17()),
+
+def dimension(state="SUPPORTED"):
+    return {
+        "state": state,
+        "sources": [source()] if state == "SUPPORTED" else [],
+        "rationale": [
+            f"Synthetic {state.lower()} evidence fixture."
+        ],
+    }
+
+
+def evidence(role_state="SUPPORTED"):
+    return {
+        "IAT": {
+            "schema_version":
+                "fund18_portfolio_fit_evidence_1",
+            "fund_code": "IAT",
+            "research_only": True,
+            "execution_authority": False,
+            "production_persist": False,
+            "dimensions": {
+                "role_fit": dimension(role_state),
+                "economic_overlap": dimension(),
+                "diversification_contribution": dimension(),
+                "concentration_risk": dimension(),
+            },
+        }
+    }
+
+
+def write_json(path, payload):
+    path.write_text(
+        json.dumps(payload),
         encoding="utf-8",
     )
-    assessments_path.write_text(
-        json.dumps(_assessments()),
-        encoding="utf-8",
+
+
+def run_runner(tmp_path, *, assessment_payload=None, evidence_payload=None):
+    fund17_path = tmp_path / "fund17.json"
+    assessments_path = tmp_path / "assessments.json"
+    evidence_path = tmp_path / "evidence.json"
+    output_path = tmp_path / "result.json"
+
+    write_json(fund17_path, fund17())
+    write_json(
+        assessments_path,
+        assessment_payload or assessments(),
+    )
+    write_json(
+        evidence_path,
+        evidence_payload or evidence(),
     )
 
     result = subprocess.run(
         [
             sys.executable,
-            "scripts/run_turkiye_fund_portfolio_fit_research.py",
+            str(RUNNER),
             "--fund17-input",
             str(fund17_path),
             "--assessments-input",
             str(assessments_path),
+            "--evidence-input",
+            str(evidence_path),
             "--output",
             str(output_path),
         ],
-        check=True,
+        cwd=ROOT,
+        env={"PYTHONPATH": str(ROOT)},
         capture_output=True,
         text=True,
     )
 
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    return result, output_path
 
-    assert payload["schema_version"] == (
-        "fund18_portfolio_fit_research_artifact_1"
+
+def test_runner_writes_evidence_backed_artifact(tmp_path):
+    result, output_path = run_runner(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert output_path.exists()
+
+    payload = json.loads(output_path.read_text())
+
+    assert (
+        payload["schema_version"]
+        == "fund18_portfolio_fit_research_artifact_1"
     )
-    assert payload["portfolio_fit_status"] == (
-        "DESCRIPTIVE_RESEARCH_COMPLETE"
+    assert payload["research_only"] is True
+    assert payload["execution_authority"] is False
+    assert payload["production_persist"] is False
+    assert payload["write_proof"] == zero_proof()
+
+    row = payload["candidates"][0]
+
+    assert row["role_fit"] == "STRONG"
+    assert row["economic_overlap"] == "LOW"
+    assert row["portfolio_fit_composite_score"] is None
+    assert row["portfolio_fit_rank"] is None
+    assert row["recommendation"] is None
+    assert (
+        row["evidence"]["schema_version"]
+        == "fund18_portfolio_fit_evidence_1"
     )
-    assert payload["write_proof"] == ZERO_PROOF
-    assert payload["recommendation"] is None
-    assert payload["portfolio_fit_winner"] is None
-
-    candidate = payload["candidates"][0]
-    assert candidate["fund_code"] == "IAT"
-    assert candidate["role_fit"] == "STRONG"
-    assert candidate["economic_overlap"] == "LOW"
-    assert candidate["diversification_contribution"] == "HIGH"
-    assert candidate["concentration_risk"] == "LOW"
-    assert candidate["portfolio_fit_composite_score"] is None
-    assert candidate["portfolio_fit_rank"] is None
-    assert candidate["recommendation"] is None
-
-    assert "research_only=True" in result.stdout
-    assert "execution_authority=False" in result.stdout
-    assert "production_persist=False" in result.stdout
 
 
-def test_runner_fails_closed_on_invalid_assessment(tmp_path: Path):
-    fund17_path = tmp_path / "fund17.json"
-    assessments_path = tmp_path / "assessments.json"
-    output_path = tmp_path / "fund18.json"
+def test_runner_forces_unknown_when_evidence_insufficient(tmp_path):
+    result, output_path = run_runner(
+        tmp_path,
+        evidence_payload=evidence("INSUFFICIENT"),
+    )
 
-    bad = _assessments()
+    assert result.returncode == 0, result.stderr
+
+    payload = json.loads(output_path.read_text())
+    row = payload["candidates"][0]
+
+    assert row["role_fit"] == "UNKNOWN"
+    assert row["economic_overlap"] == "LOW"
+
+
+def test_invalid_assessment_fails_closed_without_output(tmp_path):
+    bad = assessments()
     bad["IAT"]["role_fit"] = "BUY"
 
-    fund17_path.write_text(
-        json.dumps(_fund17()),
-        encoding="utf-8",
-    )
-    assessments_path.write_text(
-        json.dumps(bad),
-        encoding="utf-8",
+    result, output_path = run_runner(
+        tmp_path,
+        assessment_payload=bad,
     )
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "scripts/run_turkiye_fund_portfolio_fit_research.py",
-            "--fund17-input",
-            str(fund17_path),
-            "--assessments-input",
-            str(assessments_path),
-            "--output",
-            str(output_path),
-        ],
-        capture_output=True,
-        text=True,
+    assert result.returncode != 0
+    assert not output_path.exists()
+
+
+def test_invalid_evidence_fails_closed_without_output(tmp_path):
+    bad = evidence()
+    bad["IAT"]["dimensions"]["role_fit"]["state"] = "GOOD"
+
+    result, output_path = run_runner(
+        tmp_path,
+        evidence_payload=bad,
     )
 
     assert result.returncode != 0

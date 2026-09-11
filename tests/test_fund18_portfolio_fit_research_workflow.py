@@ -23,12 +23,16 @@ def test_has_push_and_manual_dispatch():
 def test_is_path_scoped_to_fund18():
     value = text()
     assert "turkiye_fund_portfolio_fit_research.py" in value
+    assert "turkiye_fund_portfolio_fit_evidence.py" in value
+    assert "test_turkiye_fund_portfolio_fit_research_evidence.py" in value
     assert "test_fund18_portfolio_fit_research_workflow.py" in value
 
 
 def test_runs_fund18_and_upstream_contract_tests():
     value = text()
     assert "test_turkiye_fund_portfolio_fit_research.py" in value
+    assert "test_turkiye_fund_portfolio_fit_evidence.py" in value
+    assert "test_turkiye_fund_portfolio_fit_research_evidence.py" in value
     assert "test_run_turkiye_fund_portfolio_fit_research.py" in value
     assert "test_turkiye_fund_portfolio_fit.py" in value
     assert "test_turkiye_fund_portfolio_context_bridge.py" in value
@@ -47,6 +51,15 @@ def test_no_secrets_or_external_portfolio_source():
     assert "NABI_WEALTH_OS" not in value
 
 
+def test_uses_evidence_backed_builder():
+    value = text()
+    assert (
+        "build_evidence_backed_portfolio_fit_research_artifact"
+        in value
+    )
+    assert "fund18_portfolio_fit_evidence_1" in value
+
+
 def test_firewall_guards_are_explicit():
     value = text()
     assert 'result["research_only"] is True' in value
@@ -57,7 +70,17 @@ def test_firewall_guards_are_explicit():
     assert 'result["recommendation"] is None' in value
 
 
+def test_fail_closed_unknown_is_explicit():
+    value = text()
+    assert '"INSUFFICIENT"' in value
+    assert (
+        'fail_closed["candidates"][0]["role_fit"] == "UNKNOWN"'
+        in value
+    )
+
+
 def test_fixture_is_explicitly_synthetic():
     value = text()
     assert "CI fixture only; not real portfolio data." in value
     assert "Synthetic CI fixture only; not investment advice." in value
+    assert "Synthetic CI evidence only." in value
