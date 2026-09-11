@@ -1,0 +1,231 @@
+name: FUND15 Category Research Artifact
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_category_research.py"
+      - "scripts/run_turkiye_fund_category_research.py"
+      - "tests/test_turkiye_fund_category_research.py"
+      - "tests/test_fund15_category_workflow.py"
+      - ".github/workflows/fund14b_candidate_artifact.yml"
+      - ".github/workflows/fund15_category_research.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_category_research.py"
+      - "scripts/run_turkiye_fund_category_research.py"
+      - "tests/test_turkiye_fund_category_research.py"
+      - "tests/test_fund15_category_workflow.py"
+      - ".github/workflows/fund14b_candidate_artifact.yml"
+      - ".github/workflows/fund15_category_research.yml"
+  workflow_run:
+    workflows:
+      - "FUND14B Candidate Artifact"
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: fund15-category-research-${{ github.event.workflow_run.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND15 focused tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_category_research.py \
+            tests/test_fund15_category_workflow.py
+
+  build-category-research-artifact:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact FUND14B source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download exact FUND14B candidate artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: fund14b-candidate-artifact-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/fund14b
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate upstream FUND14B provenance and firewall
+        env:
+          FUND14B_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(os.environ["RUNNER_TEMP"]) / "fund14b" / "candidate_artifact.json"
+          if not p.is_file():
+              raise SystemExit("FUND14B candidate artifact missing")
+
+          d = json.loads(p.read_text(encoding="utf-8"))
+          expected_head = os.environ["FUND14B_HEAD_SHA"]
+
+          assert d.get("schema_version") == "fund14b_candidate_artifact_4"
+          source = d.get("source") or {}
+          assert source.get("source_head") == expected_head
+
+          assert d.get("research_only") is True
+          assert d.get("execution_authority") is False
+          assert d.get("production_persist") is False
+
+          threshold = d.get("threshold_policy") or {}
+          assert threshold.get("locked") is True
+          assert threshold.get("fi_min") == 60.0
+          assert threshold.get("source") == "human_decision"
+          assert threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"
+
+          gate = d.get("promotion_gate") or {}
+          assert gate.get("open") is True
+          assert gate.get("reasons") == []
+          assert gate.get("meaning") == "research_candidate_promotion_only"
+          assert gate.get("execution_authority") is False
+
+          proof = d.get("write_proof") or {}
+          expected_zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+          assert proof == expected_zero
+
+          print("PASS: exact FUND14B provenance + research firewall")
+          print("source_head:", source.get("source_head"))
+          print("promotion_eligible:", (d.get("counts") or {}).get("promotion_eligible"))
+          PY
+
+      - name: Build FUND15 category-aware research artifact
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/fund15
+          python scripts/run_turkiye_fund_category_research.py \
+            --input "${RUNNER_TEMP}/fund14b/candidate_artifact.json" \
+            --output .artifacts/fund15/category_research_artifact.json \
+            2>&1 | tee .artifacts/fund15/run.log
+
+      - name: Validate FUND15 category-aware research contract
+        env:
+          FUND14B_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          p = Path(".artifacts/fund15/category_research_artifact.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+
+          assert d.get("schema_version") == "fund15_category_research_artifact_1"
+          assert d.get("research_only") is True
+          assert d.get("execution_authority") is False
+          assert d.get("production_persist") is False
+          assert d.get("cross_category_winner") is None
+          assert d.get("cross_category_composite_score") is None
+
+          source = d.get("source") or {}
+          assert source.get("fund14b_schema_version") == "fund14b_candidate_artifact_4"
+          upstream = source.get("source") or {}
+          assert upstream.get("source_head") == os.environ["FUND14B_HEAD_SHA"]
+
+          threshold = source.get("threshold_policy") or {}
+          assert threshold.get("locked") is True
+          assert threshold.get("fi_min") == 60.0
+          assert threshold.get("source") == "human_decision"
+          assert threshold.get("decision_id") == "FUND14B-FI60-2026-09-11"
+
+          categories = d.get("categories") or []
+          flat = [
+              candidate
+              for group in categories
+              for candidate in (group.get("candidates") or [])
+          ]
+          assert len(flat) == (d.get("counts") or {}).get("promotion_eligible")
+          assert len(categories) == (d.get("counts") or {}).get("categories")
+
+          for group in categories:
+              rows = group.get("candidates") or []
+              assert [row.get("category_rank") for row in rows] == list(
+                  range(1, len(rows) + 1)
+              )
+              assert all(row.get("category") == group.get("category") for row in rows)
+
+          proof = d.get("write_proof") or {}
+          expected_zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+          assert proof == expected_zero
+
+          print("PASS: FUND15 category-aware research contract")
+          print("PASS: no cross-category winner/composite score")
+          print("PASS: execution/write authority remains zero")
+          print("categories:", [g.get("category") for g in categories])
+          PY
+
+      - name: Upload FUND15 category research evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fund15-category-research-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .artifacts/fund15/category_research_artifact.json
+            .artifacts/fund15/run.log
