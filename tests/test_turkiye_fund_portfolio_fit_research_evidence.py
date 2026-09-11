@@ -585,3 +585,141 @@ def test_enriched_different_units_do_not_create_false_conflict():
         row["evidence"]["dimensions"]["role_fit"]["state"]
         == "SUPPORTED"
     )
+
+
+
+def test_explicit_structured_assessment_overrides_external_value():
+    data = evidence()
+    assessment_data = assessments()
+    assessment_data["IAT"]["role_fit"] = "WEAK"
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"][0]["claim"] = {
+        "field": "role_fit",
+        "value": "STRONG",
+        "method": "human_approved_explicit_assessment",
+        "evidence_id": "ROLE-IAT-001",
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessment_data,
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    assert result["candidates"][0]["role_fit"] == "STRONG"
+
+
+def test_non_assessment_claim_does_not_derive_assessment():
+    data = evidence()
+    assessment_data = assessments()
+    assessment_data["IAT"]["role_fit"] = "PARTIAL"
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"][0]["claim"] = {
+        "field": "portfolio_weight",
+        "value": 35,
+        "unit": "percent",
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessment_data,
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    assert result["candidates"][0]["role_fit"] == "PARTIAL"
+
+
+def test_explicit_assessment_claim_requires_valid_dimension_enum():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"][0]["claim"] = {
+        "field": "role_fit",
+        "value": "BUY",
+    }
+
+    with pytest.raises(
+        PortfolioFitResearchContractError,
+        match="invalid_derived_assessment:IAT:role_fit",
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T20:00:00Z",
+        )
+
+
+def test_assessment_claim_cannot_target_another_dimension():
+    data = evidence()
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["role_fit"]["sources"][0]["claim"] = {
+        "field": "economic_overlap",
+        "value": "LOW",
+    }
+
+    with pytest.raises(
+        PortfolioFitResearchContractError,
+        match=(
+            "assessment_claim_dimension_mismatch:"
+            "IAT:role_fit:economic_overlap"
+        ),
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T20:00:00Z",
+        )
+
+
+def test_insufficient_evidence_cannot_activate_explicit_assessment():
+    data = evidence()
+    assessment_data = assessments()
+    assessment_data["IAT"]["role_fit"] = "WEAK"
+
+    data["IAT"]["dimensions"]["role_fit"]["state"] = "INSUFFICIENT"
+    data["IAT"]["dimensions"]["role_fit"]["sources"][0]["claim"] = {
+        "field": "role_fit",
+        "value": "STRONG",
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessment_data,
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    assert result["candidates"][0]["role_fit"] == "UNKNOWN"
+
+
+def test_explicit_assessment_claim_is_dimension_specific():
+    data = evidence()
+    assessment_data = assessments()
+    assessment_data["IAT"]["economic_overlap"] = "HIGH"
+
+    data["IAT"]["dimensions"]["economic_overlap"]["state"] = "SUPPORTED"
+    data["IAT"]["dimensions"]["economic_overlap"]["sources"][0]["claim"] = {
+        "field": "economic_overlap",
+        "value": "LOW",
+        "method": "human_approved_explicit_assessment",
+        "evidence_id": "OVERLAP-IAT-001",
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessment_data,
+        evidence=data,
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["economic_overlap"] == "LOW"
+    assert row["role_fit"] == "STRONG"

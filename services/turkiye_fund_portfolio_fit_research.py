@@ -285,6 +285,66 @@ def build_portfolio_fit_research_artifact(
     }
 
 
+
+def _derive_explicit_structured_assessment(
+    dimension: str,
+    dimension_evidence: Mapping[str, Any],
+    *,
+    expected_code: str,
+) -> str | None:
+    """Derive only an explicitly asserted assessment claim.
+
+    No thresholds, category shortcuts, or free-text inference are used.
+    """
+    allowed_values_by_dimension = {
+        "role_fit": ROLE_FIT_VALUES,
+        "economic_overlap": OVERLAP_VALUES,
+        "diversification_contribution": DIVERSIFICATION_VALUES,
+        "concentration_risk": CONCENTRATION_VALUES,
+    }
+
+    allowed_values = allowed_values_by_dimension[dimension]
+    derived_values: list[str] = []
+
+    for source in dimension_evidence["sources"]:
+        claim = source.get("claim")
+        if claim is None:
+            continue
+
+        claim_field = claim["field"]
+
+        if claim_field in allowed_values_by_dimension:
+            if claim_field != dimension:
+                raise PortfolioFitResearchContractError(
+                    "assessment_claim_dimension_mismatch:"
+                    f"{expected_code}:{dimension}:{claim_field}"
+                )
+
+            claim_value = claim["value"]
+
+            if (
+                not isinstance(claim_value, str)
+                or claim_value not in allowed_values
+            ):
+                raise PortfolioFitResearchContractError(
+                    "invalid_derived_assessment:"
+                    f"{expected_code}:{dimension}"
+                )
+
+            if claim_value not in derived_values:
+                derived_values.append(claim_value)
+
+    if len(derived_values) > 1:
+        raise PortfolioFitResearchContractError(
+            "contradictory_derived_assessment:"
+            f"{expected_code}:{dimension}"
+        )
+
+    if not derived_values:
+        return None
+
+    return derived_values[0]
+
 def build_evidence_backed_portfolio_fit_research_artifact(
     fund17_artifact: Mapping[str, Any],
     *,
@@ -385,6 +445,16 @@ def build_evidence_backed_portfolio_fit_research_artifact(
 
             if dimension_evidence["state"] != "SUPPORTED":
                 safe[dimension] = "UNKNOWN"
+            else:
+                derived_assessment = (
+                    _derive_explicit_structured_assessment(
+                        dimension,
+                        dimension_evidence,
+                        expected_code=code,
+                    )
+                )
+                if derived_assessment is not None:
+                    safe[dimension] = derived_assessment
 
             evidence_rationale.extend(
                 dimension_evidence["rationale"]
