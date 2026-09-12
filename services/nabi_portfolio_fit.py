@@ -217,8 +217,20 @@ def assess_portfolio_fit(
             codes.append(FIT_REASON_WHOLE_SHARE_UNAFFORDABLE)
             affordability = UNAFFORDABLE
         else:
-            codes.append(FIT_REASON_INSUFFICIENT_BUDGET)
-            affordability = UNAFFORDABLE
+            limitations.append(str(skip.reason_code or "UNKNOWN_ALLOCATION_SKIP"))
+            return PortfolioFitAssessment(
+                fit=FIT_UNKNOWN,
+                reason=(
+                    f"{symbol} için allocation sonucu portföy uyumu olarak "
+                    "yorumlanamayan bir blok içeriyor."
+                ),
+                reason_codes=(FIT_REASON_INSUFFICIENT_EVIDENCE,),
+                current_holding=held,
+                current_weight_pct=weight,
+                post_allocation_weight_pct=post_weight,
+                affordability=AFFORDABILITY_UNKNOWN,
+                limitations=tuple(dict.fromkeys(limitations)),
+            )
 
     if weight is not None and weight >= CONCENTRATION_SINGLE_POSITION_THRESHOLD_PCT:
         codes.append(FIT_REASON_CONCENTRATION_LIMIT)

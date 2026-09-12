@@ -480,5 +480,48 @@ class FinalProductUATTests(unittest.TestCase):
         )
 
 
+def test_portfolio_fit_unknown_for_non_budget_allocation_skip():
+    from decimal import Decimal
+
+    from services.nabi_portfolio_fit import (
+        AFFORDABILITY_UNKNOWN,
+        FIT_REASON_INSUFFICIENT_EVIDENCE,
+        FIT_UNKNOWN,
+        assess_portfolio_fit,
+    )
+    from services.wealth_new_money_allocation import (
+        AllocationPlan,
+        AllocationSkip,
+        REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
+    )
+
+    candidate = {"symbol": "AIS"}
+
+    plan = AllocationPlan(
+        input_amount=Decimal("60000"),
+        currency="TRY",
+        recommendations=(),
+        skipped=(
+            AllocationSkip(
+                "AIS",
+                REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
+                "8E exposure increase gate blocked.",
+            ),
+        ),
+        total_allocated=Decimal("0"),
+        residual_cash=Decimal("60000"),
+    )
+
+    result = assess_portfolio_fit(
+        candidate,
+        portfolio_view=None,
+        allocation=plan,
+    )
+
+    assert result.fit == FIT_UNKNOWN
+    assert result.reason_codes == (FIT_REASON_INSUFFICIENT_EVIDENCE,)
+    assert result.affordability == AFFORDABILITY_UNKNOWN
+    assert REASON_EXPOSURE_INCREASE_NOT_ALLOWED in result.limitations
+
 if __name__ == "__main__":
     unittest.main()
