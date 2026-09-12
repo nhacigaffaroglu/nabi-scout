@@ -368,6 +368,18 @@ def _freshness_policy():
     }
 
 
+def test_candidate_freshness_policy_requires_not_after():
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="freshness_policy_requires_not_after:IAT",
+    ):
+        normalize_candidate_evidence(
+            _evidence(),
+            expected_code="IAT",
+            freshness_policy=_freshness_policy(),
+        )
+
+
 def test_normalizes_human_approved_freshness_policy():
     result = normalize_freshness_policy(
         _freshness_policy(),

@@ -657,6 +657,10 @@ def normalize_candidate_evidence(
         normalized_freshness_policy = normalize_freshness_policy(
             freshness_policy
         )
+        if not_after is None:
+            raise PortfolioFitEvidenceContractError(
+                f"freshness_policy_requires_not_after:{expected_code}"
+            )
 
     not_after_dt = None
     if not_after is not None:
