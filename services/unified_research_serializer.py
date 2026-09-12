@@ -73,6 +73,11 @@ def serialize_company_intelligence_for_adviser(
         "valuation_metrics": valuation_metrics,
         "valuation_observations": _compact_observations(view.valuation, limit=3),
         "peer_observations": _compact_observations(view.peers, limit=4),
+        "peer_comparisons": (
+            [item.to_dict() for item in view.peers.comparisons]
+            if view.peers
+            else []
+        ),
         "peer_limitations": list(view.peers.limitations) if view.peers else [],
         "material_news": material_news,
         "factual_risks": [

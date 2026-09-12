@@ -35,6 +35,31 @@ def _compact_metrics(unified: UnifiedResearchContext) -> Tuple[dict[str, Any], .
     return tuple(metrics)
 
 
+_PEER_VALUATION_METRICS = frozenset({
+    "pe_ratio",
+    "price_to_sales",
+})
+
+
+def _usable_peer_valuation_comparison_available(
+    unified: UnifiedResearchContext,
+) -> bool:
+    ci = unified.company_intelligence or {}
+    for comparison in ci.get("peer_comparisons") or ():
+        if not isinstance(comparison, Mapping):
+            continue
+        if comparison.get("metric") not in _PEER_VALUATION_METRICS:
+            continue
+        if comparison.get("company_value") is None:
+            continue
+        if comparison.get("peer_median") is None:
+            continue
+        if int(comparison.get("peer_count") or 0) <= 0:
+            continue
+        return True
+    return False
+
+
 def _format_metric_values_phrase(metrics: Tuple[dict[str, Any], ...]) -> str:
     parts: list[str] = []
     for metric in metrics[:5]:
@@ -161,8 +186,10 @@ def derive_valuation_semantics(unified: UnifiedResearchContext) -> ValuationSema
     available_metrics = _compact_metrics(unified)
     current_metrics_available = bool(dq.get("valuation_available")) or bool(available_metrics)
     historical_median_available = bool(dq.get("historical_valuation_available"))
-    peer_comparison_available = bool(dq.get("peer_data_available"))
-    relative_valuation_context_limited = not historical_median_available
+    peer_comparison_available = _usable_peer_valuation_comparison_available(unified)
+    relative_valuation_context_limited = (
+        not historical_median_available or not peer_comparison_available
+    )
     thesis = unified.investment_thesis or {}
     thesis_code = str(thesis.get("valuation_context") or "").strip() or None
     return ValuationSemantics(

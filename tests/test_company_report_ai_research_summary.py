@@ -1377,6 +1377,95 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
         self.assertIn("hibrit yıllık değerleme oranları", enforced.lower())
         self.assertIn("3.87", enforced)
 
+    def test_peer_symbols_without_valuation_comparison_do_not_count_as_peer_valuation_context(self) -> None:
+        from services.ai_research_summary_valuation_semantics import derive_valuation_semantics
+
+        unified = UnifiedResearchContext(
+            symbol="CRM",
+            company_name="CRM Inc.",
+            schema_version="unified-research-v1",
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            company_intelligence={
+                "symbol": "CRM",
+                "valuation_metrics": [
+                    {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                ],
+                "peer_observations": [],
+                "data_quality": {
+                    "valuation_available": True,
+                    "historical_valuation_available": True,
+                    "peer_data_available": True,
+                },
+            },
+            investment_thesis={"symbol": "CRM", "valuation_context": "SUPPORTED"},
+            nabi_context=None,
+            participation_context=None,
+            wealth_exposure_context=None,
+            data_quality={
+                "valuation_available": True,
+                "historical_valuation_available": True,
+                "peer_data_available": True,
+            },
+            provenance=(),
+            focus_symbol="CRM",
+        )
+
+        semantics = derive_valuation_semantics(unified)
+
+        self.assertTrue(semantics.current_metrics_available)
+        self.assertTrue(semantics.historical_median_available)
+        self.assertFalse(semantics.peer_comparison_available)
+        self.assertTrue(semantics.relative_valuation_context_limited)
+
+    def test_roe_only_peer_comparison_does_not_count_as_peer_valuation_context(self) -> None:
+        from services.ai_research_summary_valuation_semantics import derive_valuation_semantics
+
+        unified = UnifiedResearchContext(
+            symbol="CRM",
+            company_name="CRM Inc.",
+            schema_version="unified-research-v1",
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            company_intelligence={
+                "symbol": "CRM",
+                "valuation_metrics": [
+                    {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                ],
+                "peer_comparisons": [
+                    {
+                        "metric": "roe",
+                        "company_value": 0.21,
+                        "peer_median": 0.18,
+                        "difference": 0.03,
+                        "percentile": 70.0,
+                        "rank": 2,
+                        "peer_count": 5,
+                        "limitations": [],
+                    },
+                ],
+                "data_quality": {
+                    "valuation_available": True,
+                    "historical_valuation_available": True,
+                    "peer_data_available": True,
+                },
+            },
+            investment_thesis={"symbol": "CRM", "valuation_context": "SUPPORTED"},
+            nabi_context=None,
+            participation_context=None,
+            wealth_exposure_context=None,
+            data_quality={
+                "valuation_available": True,
+                "historical_valuation_available": True,
+                "peer_data_available": True,
+            },
+            provenance=(),
+            focus_symbol="CRM",
+        )
+
+        semantics = derive_valuation_semantics(unified)
+
+        self.assertFalse(semantics.peer_comparison_available)
+        self.assertTrue(semantics.relative_valuation_context_limited)
+
     def test_full_relative_context_preserves_llm_valuation(self) -> None:
         from services.ai_research_summary_display import enforce_valuation_summary_invariant
         from services.ai_research_summary_valuation_semantics import derive_valuation_semantics
@@ -1390,6 +1479,18 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
                 "symbol": "CRM",
                 "valuation_metrics": [
                     {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                ],
+                "peer_comparisons": [
+                    {
+                        "metric": "price_to_sales",
+                        "company_value": 3.87,
+                        "peer_median": 4.25,
+                        "difference": -0.38,
+                        "percentile": 40.0,
+                        "rank": 3,
+                        "peer_count": 5,
+                        "limitations": [],
+                    },
                 ],
                 "data_quality": {
                     "valuation_available": True,
