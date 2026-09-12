@@ -41,11 +41,6 @@ def main() -> None:
         help="Path to FUND17 portfolio-fit artifact JSON.",
     )
     parser.add_argument(
-        "--assessments-input",
-        required=True,
-        help="Path to explicit descriptive assessments JSON.",
-    )
-    parser.add_argument(
         "--evidence-input",
         required=True,
         help="Path to FUND18 evidence/provenance JSON.",
@@ -66,7 +61,6 @@ def main() -> None:
     args = parser.parse_args()
 
     fund17_path = Path(args.fund17_input)
-    assessments_path = Path(args.assessments_input)
     evidence_path = Path(args.evidence_input)
     freshness_policy_path = (
         Path(args.freshness_policy_input)
@@ -76,7 +70,6 @@ def main() -> None:
     output_path = Path(args.output)
 
     fund17_artifact = _read_json(fund17_path)
-    assessments = _read_json(assessments_path)
     evidence = _read_json(evidence_path)
     freshness_policy = (
         _read_json(freshness_policy_path)
@@ -86,7 +79,7 @@ def main() -> None:
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17_artifact,
-        assessments=assessments,
+        assessments={},
         evidence=evidence,
         freshness_policy=freshness_policy,
     )

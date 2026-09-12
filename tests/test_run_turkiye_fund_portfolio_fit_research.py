@@ -138,23 +138,15 @@ def write_json(path, payload):
 def run_runner(
     tmp_path,
     *,
-    assessment_payload=None,
     evidence_payload=None,
     freshness_policy_payload=None,
 ):
     fund17_path = tmp_path / "fund17.json"
-    assessments_path = tmp_path / "assessments.json"
     evidence_path = tmp_path / "evidence.json"
     freshness_policy_path = tmp_path / "freshness_policy.json"
     output_path = tmp_path / "result.json"
 
     write_json(fund17_path, fund17())
-    write_json(
-        assessments_path,
-        assessments()
-        if assessment_payload is None
-        else assessment_payload,
-    )
     write_json(
         evidence_path,
         evidence()
@@ -167,8 +159,6 @@ def run_runner(
         str(RUNNER),
         "--fund17-input",
         str(fund17_path),
-        "--assessments-input",
-        str(assessments_path),
         "--evidence-input",
         str(evidence_path),
     ]
@@ -250,23 +240,6 @@ def test_runner_forces_unknown_when_evidence_insufficient(tmp_path):
     assert row["role_fit"] == "UNKNOWN"
     assert row["economic_overlap"] == "UNKNOWN"
 
-
-def test_invalid_external_assessment_is_non_authoritative(tmp_path):
-    bad = assessments()
-    bad["IAT"]["role_fit"] = "BUY"
-
-    result, output_path = run_runner(
-        tmp_path,
-        assessment_payload=bad,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert output_path.exists()
-
-    payload = json.loads(output_path.read_text())
-    row = payload["candidates"][0]
-
-    assert row["role_fit"] == "UNKNOWN"
 
 def test_invalid_evidence_fails_closed_without_output(tmp_path):
     bad = evidence()
