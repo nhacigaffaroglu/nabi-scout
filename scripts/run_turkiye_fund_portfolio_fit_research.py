@@ -79,7 +79,6 @@ def main() -> None:
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17_artifact,
-        assessments={},
         evidence=evidence,
         freshness_policy=freshness_policy,
     )

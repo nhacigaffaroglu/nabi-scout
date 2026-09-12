@@ -121,7 +121,6 @@ def evidence():
 def test_supported_evidence_without_derivation_maps_to_unknown():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
     )
 
@@ -143,7 +142,6 @@ def test_non_supported_evidence_forces_unknown(state):
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
     )
 
@@ -156,7 +154,6 @@ def test_non_supported_evidence_forces_unknown(state):
 def test_output_carries_normalized_evidence_and_policy():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
     )
 
@@ -185,7 +182,6 @@ def test_evidence_candidate_set_must_match_exactly():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence={},
         )
 
@@ -193,7 +189,6 @@ def test_evidence_candidate_set_must_match_exactly():
 def test_firewall_remains_zero():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
     )
 
@@ -217,7 +212,6 @@ def test_does_not_mutate_inputs():
 
     build_evidence_backed_portfolio_fit_research_artifact(
         upstream,
-        assessments=assessment_data,
         evidence=evidence_data,
     )
 
@@ -241,7 +235,6 @@ def test_evidence_backed_builder_rejects_future_evidence():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17_data,
-            assessments=assessment_data,
             evidence=evidence_data,
             generated_at="2026-09-11T18:00:00Z",
         )
@@ -277,7 +270,6 @@ def test_freshness_policy_rejects_stale_evidence():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T18:00:00Z",
             freshness_policy=freshness_policy(1),
@@ -294,7 +286,6 @@ def test_freshness_policy_accepts_evidence_at_exact_boundary():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T18:00:00Z",
         freshness_policy=freshness_policy(1),
@@ -320,7 +311,6 @@ def test_no_freshness_policy_preserves_previous_behavior():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T18:00:00Z",
     )
@@ -352,7 +342,6 @@ def test_unlisted_source_type_has_no_age_limit():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T18:00:00Z",
         freshness_policy=policy,
@@ -394,7 +383,6 @@ def test_automatic_structured_claim_contradiction_forces_unknown():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -437,7 +425,6 @@ def test_non_conflicting_non_assessment_claims_do_not_derive_assessment():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -474,7 +461,6 @@ def test_enriched_claim_is_preserved_in_builder_output():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -528,7 +514,6 @@ def test_enriched_same_unit_conflict_forces_unknown():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -573,7 +558,6 @@ def test_enriched_different_units_remain_supported_but_do_not_derive():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -603,7 +587,6 @@ def test_explicit_structured_assessment_overrides_external_value():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessment_data,
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -625,7 +608,6 @@ def test_non_assessment_claim_does_not_derive_assessment():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessment_data,
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -648,7 +630,6 @@ def test_explicit_assessment_claim_requires_valid_dimension_enum():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T20:00:00Z",
         )
@@ -672,7 +653,6 @@ def test_assessment_claim_cannot_target_another_dimension():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T20:00:00Z",
         )
@@ -691,7 +671,6 @@ def test_insufficient_evidence_cannot_activate_explicit_assessment():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessment_data,
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -714,7 +693,6 @@ def test_explicit_assessment_claim_is_dimension_specific():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessment_data,
         evidence=data,
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -748,7 +726,6 @@ def _metric_policy_for_builder_test():
 def test_evidence_builder_carries_validated_metric_assessment_policy():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -766,7 +743,6 @@ def test_evidence_builder_carries_validated_metric_assessment_policy():
 def test_metric_policy_without_matching_metric_claims_does_not_derive():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -790,7 +766,6 @@ def test_evidence_builder_rejects_invalid_metric_assessment_policy():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=evidence(),
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=policy,
@@ -800,7 +775,6 @@ def test_evidence_builder_rejects_invalid_metric_assessment_policy():
 def test_evidence_builder_marks_metric_policy_not_applied_when_absent():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -830,7 +804,6 @@ def _evidence_with_portfolio_weight(
 def test_metric_policy_derives_assessment_from_explicit_numeric_claim():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=_evidence_with_portfolio_weight(30),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -844,7 +817,6 @@ def test_metric_policy_derives_assessment_from_explicit_numeric_claim():
 def test_metric_policy_compares_percent_and_basis_points_canonically():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=_evidence_with_portfolio_weight(
             3000,
             unit="basis_points",
@@ -861,7 +833,6 @@ def test_metric_policy_compares_percent_and_basis_points_canonically():
 def test_metric_policy_no_match_does_not_use_external_assessment():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessments(),
         evidence=_evidence_with_portfolio_weight(10),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -884,7 +855,6 @@ def test_metric_policy_requires_metric_claim_unit():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -900,7 +870,6 @@ def test_metric_policy_rejects_non_numeric_metric_claim():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -930,7 +899,6 @@ def test_metric_policy_multiple_matching_assessments_fail_closed():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=_evidence_with_portfolio_weight(30),
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=policy,
@@ -959,7 +927,6 @@ def test_explicit_and_metric_assessment_disagreement_fails_closed():
     ):
         build_evidence_backed_portfolio_fit_research_artifact(
             fund17(),
-            assessments=assessments(),
             evidence=data,
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -972,7 +939,6 @@ def test_external_assessment_is_not_used_as_fallback():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=supplied,
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
     )
@@ -994,7 +960,6 @@ def test_metric_policy_no_match_maps_to_unknown_without_external_fallback():
 
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=supplied,
         evidence=_evidence_with_portfolio_weight(10),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
@@ -1008,7 +973,6 @@ def test_metric_policy_no_match_maps_to_unknown_without_external_fallback():
 def test_external_assessment_candidate_set_is_no_longer_authoritative():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments={},
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
     )

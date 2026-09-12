@@ -458,7 +458,6 @@ def _derive_metric_policy_assessment(
 def build_evidence_backed_portfolio_fit_research_artifact(
     fund17_artifact: Mapping[str, Any],
     *,
-    assessments: Mapping[str, Mapping[str, Any]],
     evidence: Mapping[str, Mapping[str, Any]],
     generated_at: str | None = None,
     freshness_policy: Mapping[str, Any] | None = None,
@@ -517,11 +516,6 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     if set(evidence.keys()) != set(candidate_codes):
         raise PortfolioFitResearchContractError(
             "evidence_candidate_set_mismatch"
-        )
-
-    if not isinstance(assessments, Mapping):
-        raise PortfolioFitResearchContractError(
-            "assessments_must_be_object"
         )
 
     effective_generated_at = generated_at

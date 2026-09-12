@@ -195,7 +195,6 @@ jobs:
           result = (
               build_evidence_backed_portfolio_fit_research_artifact(
                   fund17,
-                  assessments=assessments,
                   evidence=evidence,
               )
           )
@@ -233,7 +232,6 @@ jobs:
           fail_closed = (
               build_evidence_backed_portfolio_fit_research_artifact(
                   fund17,
-                  assessments=assessments,
                   evidence=insufficient,
               )
           )
