@@ -203,6 +203,7 @@ def run_runner(
     return result, output_path
 
 
+
 def test_runner_writes_evidence_backed_artifact(tmp_path):
     result, output_path = run_runner(tmp_path)
 
@@ -222,8 +223,10 @@ def test_runner_writes_evidence_backed_artifact(tmp_path):
 
     row = payload["candidates"][0]
 
-    assert row["role_fit"] == "STRONG"
-    assert row["economic_overlap"] == "LOW"
+    assert row["role_fit"] == "UNKNOWN"
+    assert row["economic_overlap"] == "UNKNOWN"
+    assert row["diversification_contribution"] == "UNKNOWN"
+    assert row["concentration_risk"] == "UNKNOWN"
     assert row["portfolio_fit_composite_score"] is None
     assert row["portfolio_fit_rank"] is None
     assert row["recommendation"] is None
@@ -245,10 +248,10 @@ def test_runner_forces_unknown_when_evidence_insufficient(tmp_path):
     row = payload["candidates"][0]
 
     assert row["role_fit"] == "UNKNOWN"
-    assert row["economic_overlap"] == "LOW"
+    assert row["economic_overlap"] == "UNKNOWN"
 
 
-def test_invalid_assessment_fails_closed_without_output(tmp_path):
+def test_invalid_external_assessment_is_non_authoritative(tmp_path):
     bad = assessments()
     bad["IAT"]["role_fit"] = "BUY"
 
@@ -257,9 +260,13 @@ def test_invalid_assessment_fails_closed_without_output(tmp_path):
         assessment_payload=bad,
     )
 
-    assert result.returncode != 0
-    assert not output_path.exists()
+    assert result.returncode == 0, result.stderr
+    assert output_path.exists()
 
+    payload = json.loads(output_path.read_text())
+    row = payload["candidates"][0]
+
+    assert row["role_fit"] == "UNKNOWN"
 
 def test_invalid_evidence_fails_closed_without_output(tmp_path):
     bad = evidence()

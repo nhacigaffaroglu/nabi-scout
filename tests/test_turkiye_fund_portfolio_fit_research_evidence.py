@@ -118,7 +118,7 @@ def evidence():
     }
 
 
-def test_supported_evidence_preserves_descriptive_values():
+def test_supported_evidence_without_derivation_maps_to_unknown():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
         assessments=assessments(),
@@ -127,10 +127,10 @@ def test_supported_evidence_preserves_descriptive_values():
 
     row = result["candidates"][0]
 
-    assert row["role_fit"] == "STRONG"
-    assert row["economic_overlap"] == "LOW"
-    assert row["diversification_contribution"] == "HIGH"
-    assert row["concentration_risk"] == "LOW"
+    assert row["role_fit"] == "UNKNOWN"
+    assert row["economic_overlap"] == "UNKNOWN"
+    assert row["diversification_contribution"] == "UNKNOWN"
+    assert row["concentration_risk"] == "UNKNOWN"
 
 
 @pytest.mark.parametrize(
@@ -150,7 +150,7 @@ def test_non_supported_evidence_forces_unknown(state):
     row = result["candidates"][0]
 
     assert row["role_fit"] == "UNKNOWN"
-    assert row["economic_overlap"] == "LOW"
+    assert row["economic_overlap"] == "UNKNOWN"
 
 
 def test_output_carries_normalized_evidence_and_policy():
@@ -360,7 +360,7 @@ def test_unlisted_source_type_has_no_age_limit():
 
     assert (
         result["candidates"][0]["role_fit"]
-        == "STRONG"
+        == "UNKNOWN"
     )
 
 
@@ -408,7 +408,7 @@ def test_automatic_structured_claim_contradiction_forces_unknown():
     )
 
 
-def test_non_conflicting_structured_claims_preserve_assessment():
+def test_non_conflicting_non_assessment_claims_do_not_derive_assessment():
     data = evidence()
 
     data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
@@ -444,7 +444,7 @@ def test_non_conflicting_structured_claims_preserve_assessment():
 
     row = result["candidates"][0]
 
-    assert row["role_fit"] == "STRONG"
+    assert row["role_fit"] == "UNKNOWN"
     assert (
         row["evidence"]["dimensions"]["role_fit"]["state"]
         == "SUPPORTED"
@@ -542,7 +542,7 @@ def test_enriched_same_unit_conflict_forces_unknown():
     )
 
 
-def test_enriched_different_units_do_not_create_false_conflict():
+def test_enriched_different_units_remain_supported_but_do_not_derive():
     data = evidence()
 
     data["IAT"]["dimensions"]["role_fit"]["state"] = "SUPPORTED"
@@ -580,7 +580,7 @@ def test_enriched_different_units_do_not_create_false_conflict():
 
     row = result["candidates"][0]
 
-    assert row["role_fit"] == "STRONG"
+    assert row["role_fit"] == "UNKNOWN"
     assert (
         row["evidence"]["dimensions"]["role_fit"]["state"]
         == "SUPPORTED"
@@ -630,7 +630,7 @@ def test_non_assessment_claim_does_not_derive_assessment():
         generated_at="2026-09-11T20:00:00Z",
     )
 
-    assert result["candidates"][0]["role_fit"] == "PARTIAL"
+    assert result["candidates"][0]["role_fit"] == "UNKNOWN"
 
 
 def test_explicit_assessment_claim_requires_valid_dimension_enum():
@@ -722,7 +722,7 @@ def test_explicit_assessment_claim_is_dimension_specific():
     row = result["candidates"][0]
 
     assert row["economic_overlap"] == "LOW"
-    assert row["role_fit"] == "STRONG"
+    assert row["role_fit"] == "UNKNOWN"
 
 
 def _metric_policy_for_builder_test():
@@ -763,40 +763,21 @@ def test_evidence_builder_carries_validated_metric_assessment_policy():
     )
 
 
-def test_metric_policy_does_not_apply_thresholds_during_builder_integration():
-    assessment_input = assessments()
-    expected = {
-        code: dict(value)
-        for code, value in assessment_input.items()
-    }
-
+def test_metric_policy_without_matching_metric_claims_does_not_derive():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
-        assessments=assessment_input,
+        assessments=assessments(),
         evidence=evidence(),
         generated_at="2026-09-11T20:00:00Z",
         metric_assessment_policy=_metric_policy_for_builder_test(),
     )
 
-    by_code = {
-        row["fund_code"]: row
-        for row in result["candidates"]
-    }
+    row = result["candidates"][0]
 
-    for code, assessment in expected.items():
-        assert by_code[code]["role_fit"] == assessment["role_fit"]
-        assert (
-            by_code[code]["economic_overlap"]
-            == assessment["economic_overlap"]
-        )
-        assert (
-            by_code[code]["diversification_contribution"]
-            == assessment["diversification_contribution"]
-        )
-        assert (
-            by_code[code]["concentration_risk"]
-            == assessment["concentration_risk"]
-        )
+    assert row["role_fit"] == "UNKNOWN"
+    assert row["economic_overlap"] == "UNKNOWN"
+    assert row["diversification_contribution"] == "UNKNOWN"
+    assert row["concentration_risk"] == "UNKNOWN"
 
 
 def test_evidence_builder_rejects_invalid_metric_assessment_policy():
@@ -877,7 +858,7 @@ def test_metric_policy_compares_percent_and_basis_points_canonically():
     assert row["concentration_risk"] == "HIGH"
 
 
-def test_metric_policy_no_match_keeps_transitional_external_assessment():
+def test_metric_policy_no_match_does_not_use_external_assessment():
     result = build_evidence_backed_portfolio_fit_research_artifact(
         fund17(),
         assessments=assessments(),
@@ -888,7 +869,7 @@ def test_metric_policy_no_match_keeps_transitional_external_assessment():
 
     row = result["candidates"][0]
 
-    assert row["concentration_risk"] == "LOW"
+    assert row["concentration_risk"] == "UNKNOWN"
 
 
 def test_metric_policy_requires_metric_claim_unit():
@@ -983,3 +964,58 @@ def test_explicit_and_metric_assessment_disagreement_fails_closed():
             generated_at="2026-09-11T20:00:00Z",
             metric_assessment_policy=_metric_policy_for_builder_test(),
         )
+
+
+def test_external_assessment_is_not_used_as_fallback():
+    supplied = assessments()
+    supplied["IAT"]["concentration_risk"] = "HIGH"
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=supplied,
+        evidence=evidence(),
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["concentration_risk"] == "UNKNOWN"
+    assert (
+        result["evidence_policy"][
+            "external_assessment_fallback_used"
+        ]
+        is False
+    )
+
+
+def test_metric_policy_no_match_maps_to_unknown_without_external_fallback():
+    supplied = assessments()
+    supplied["IAT"]["concentration_risk"] = "HIGH"
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=supplied,
+        evidence=_evidence_with_portfolio_weight(10),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    row = result["candidates"][0]
+
+    assert row["concentration_risk"] == "UNKNOWN"
+
+
+def test_external_assessment_candidate_set_is_no_longer_authoritative():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments={},
+        evidence=evidence(),
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    row = result["candidates"][0]
+
+    assert row["role_fit"] == "UNKNOWN"
+    assert row["economic_overlap"] == "UNKNOWN"
+    assert row["diversification_contribution"] == "UNKNOWN"
+    assert row["concentration_risk"] == "UNKNOWN"

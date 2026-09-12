@@ -519,9 +519,9 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             "evidence_candidate_set_mismatch"
         )
 
-    if set(assessments.keys()) != set(candidate_codes):
+    if not isinstance(assessments, Mapping):
         raise PortfolioFitResearchContractError(
-            "assessment_candidate_set_mismatch"
+            "assessments_must_be_object"
         )
 
     effective_generated_at = generated_at
@@ -551,21 +551,21 @@ def build_evidence_backed_portfolio_fit_research_artifact(
         )
         normalized_evidence[code] = normalized
 
-        assessment = _normalize_assessment(
-            assessments[code],
-            expected_code=code,
-        )
-
-        safe = dict(assessment)
+        safe = {
+            "fund_code": code,
+            "role_fit": "UNKNOWN",
+            "economic_overlap": "UNKNOWN",
+            "diversification_contribution": "UNKNOWN",
+            "concentration_risk": "UNKNOWN",
+            "rationale": [],
+        }
 
         evidence_rationale: list[str] = []
 
         for dimension in dimensions:
             dimension_evidence = normalized["dimensions"][dimension]
 
-            if dimension_evidence["state"] != "SUPPORTED":
-                safe[dimension] = "UNKNOWN"
-            else:
+            if dimension_evidence["state"] == "SUPPORTED":
                 explicit_assessment = (
                     _derive_explicit_structured_assessment(
                         dimension,
@@ -608,10 +608,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             )
 
         safe["rationale"] = list(
-            dict.fromkeys(
-                list(assessment["rationale"])
-                + evidence_rationale
-            )
+            dict.fromkeys(evidence_rationale)
         )
 
         safe_assessments[code] = safe
@@ -639,6 +636,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
         "metric_assessment_policy_applied": (
             metric_assessment_policy is not None
         ),
+        "external_assessment_fallback_used": False,
     }
 
     if freshness_policy is not None:
@@ -657,6 +655,11 @@ def build_evidence_backed_portfolio_fit_research_artifact(
 
     result["limitations"].append(
         "Any FUND18 dimension without SUPPORTED evidence is forced to UNKNOWN."
+    )
+    result["limitations"].append(
+        "External assessment values are not used as a fallback; "
+        "dimensions without deterministic evidence-backed derivation "
+        "remain UNKNOWN."
     )
 
     return result
