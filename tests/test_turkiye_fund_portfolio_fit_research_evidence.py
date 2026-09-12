@@ -723,3 +723,109 @@ def test_explicit_assessment_claim_is_dimension_specific():
 
     assert row["economic_overlap"] == "LOW"
     assert row["role_fit"] == "STRONG"
+
+
+def _metric_policy_for_builder_test():
+    return {
+        "schema_version": "fund18_metric_assessment_policy_1",
+        "human_approved": True,
+        "locked": True,
+        "policy_id": "FUND18-METRIC-BUILDER-TEST-1",
+        "rules": [
+            {
+                "rule_id": "R1",
+                "dimension": "concentration_risk",
+                "claim_field": "portfolio_weight",
+                "unit": "percent",
+                "operator": "gte",
+                "threshold": 25,
+                "assessment": "HIGH",
+            }
+        ],
+    }
+
+
+def test_evidence_builder_carries_validated_metric_assessment_policy():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=evidence(),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    assert result["metric_assessment_policy"] == (
+        _metric_policy_for_builder_test()
+    )
+    assert (
+        result["evidence_policy"]["metric_assessment_policy_applied"]
+        is True
+    )
+
+
+def test_metric_policy_does_not_apply_thresholds_during_builder_integration():
+    assessment_input = assessments()
+    expected = {
+        code: dict(value)
+        for code, value in assessment_input.items()
+    }
+
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessment_input,
+        evidence=evidence(),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    by_code = {
+        row["fund_code"]: row
+        for row in result["candidates"]
+    }
+
+    for code, assessment in expected.items():
+        assert by_code[code]["role_fit"] == assessment["role_fit"]
+        assert (
+            by_code[code]["economic_overlap"]
+            == assessment["economic_overlap"]
+        )
+        assert (
+            by_code[code]["diversification_contribution"]
+            == assessment["diversification_contribution"]
+        )
+        assert (
+            by_code[code]["concentration_risk"]
+            == assessment["concentration_risk"]
+        )
+
+
+def test_evidence_builder_rejects_invalid_metric_assessment_policy():
+    policy = _metric_policy_for_builder_test()
+    policy["human_approved"] = False
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="metric_assessment_policy_not_human_approved",
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=evidence(),
+            generated_at="2026-09-11T20:00:00Z",
+            metric_assessment_policy=policy,
+        )
+
+
+def test_evidence_builder_marks_metric_policy_not_applied_when_absent():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=evidence(),
+        generated_at="2026-09-11T20:00:00Z",
+    )
+
+    assert "metric_assessment_policy" not in result
+    assert (
+        result["evidence_policy"]["metric_assessment_policy_applied"]
+        is False
+    )

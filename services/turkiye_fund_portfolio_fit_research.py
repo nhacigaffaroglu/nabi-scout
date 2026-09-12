@@ -352,6 +352,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     evidence: Mapping[str, Mapping[str, Any]],
     generated_at: str | None = None,
     freshness_policy: Mapping[str, Any] | None = None,
+    metric_assessment_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build FUND18 research with explicit per-dimension evidence.
 
@@ -363,6 +364,7 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     """
     from services.turkiye_fund_portfolio_fit_evidence import (
         normalize_candidate_evidence,
+        normalize_metric_assessment_policy,
     )
 
     artifact = _as_dict(
@@ -489,6 +491,9 @@ def build_evidence_backed_portfolio_fit_research_artifact(
         "insufficient_maps_to_unknown": True,
         "contradictory_maps_to_unknown": True,
         "freshness_policy_applied": freshness_policy is not None,
+        "metric_assessment_policy_applied": (
+            metric_assessment_policy is not None
+        ),
     }
 
     if freshness_policy is not None:
@@ -498,6 +503,13 @@ def build_evidence_backed_portfolio_fit_research_artifact(
 
         result["freshness_policy"] = normalize_freshness_policy(
             freshness_policy
+        )
+
+    if metric_assessment_policy is not None:
+        result["metric_assessment_policy"] = (
+            normalize_metric_assessment_policy(
+                metric_assessment_policy
+            )
         )
 
     result["limitations"].append(
