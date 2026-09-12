@@ -229,6 +229,36 @@ class TurkiyeFundPortfolioIntegrationTests(unittest.TestCase):
             self.assertIn(REASON_EXPOSURE_INCREASE_NOT_ALLOWED, uat.skip_reasons[code])
         self.assertEqual(uat.turkish_allocated, Decimal("0"))
 
+    def test_post_allocation_portfolio_fit_preserves_8e_block(self) -> None:
+        from services.nabi_portfolio_fit import (
+            AFFORDABILITY_UNKNOWN,
+            FIT_REASON_INSUFFICIENT_EVIDENCE,
+            FIT_UNKNOWN,
+        )
+
+        uat = self._uat()
+
+        self.assertEqual(
+            set(uat.portfolio_fit_by_fund),
+            set(PILOT_TEFAS_FUND_CODES),
+        )
+
+        for code in PILOT_TEFAS_FUND_CODES:
+            fit = uat.portfolio_fit_by_fund[code]
+            self.assertEqual(fit.fit, FIT_UNKNOWN)
+            self.assertEqual(
+                fit.reason_codes,
+                (FIT_REASON_INSUFFICIENT_EVIDENCE,),
+            )
+            self.assertEqual(
+                fit.affordability,
+                AFFORDABILITY_UNKNOWN,
+            )
+            self.assertIn(
+                REASON_EXPOSURE_INCREASE_NOT_ALLOWED,
+                fit.limitations,
+            )
+
     def test_held_watch_top_up_zero(self) -> None:
         uat = self._uat(held_symbol="AIS")
         self.assertEqual(uat.by_fund["AIS"], Decimal("0"))

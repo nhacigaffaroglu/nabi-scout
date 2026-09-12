@@ -14,6 +14,10 @@ from typing import Any, Mapping, MutableMapping, Optional, Sequence
 from services.fund_decision_readiness import TURKIYE_FUND_8E_INSTRUMENT, TURKIYE_FUND_8E_MARKET
 from services.fund_product_contract import LAYER_CASH_LIKE, PILOT_TEFAS_FUND_CODES
 from services.hybrid_exposure_allocation_policy import HybridExposureAllocationPolicy
+from services.nabi_portfolio_fit import (
+    PortfolioFitAssessment,
+    assess_portfolio_fit,
+)
 from services.portfolio_economic_exposure import (
     EconomicExposure,
     EconomicExposureBucket,
@@ -99,6 +103,7 @@ class TurkiyeNewMoneyUat:
     by_fund: dict[str, Decimal]
     skip_reasons: dict[str, tuple[str, ...]]
     explanations: tuple[TurkiyeFundExplanation, ...]
+    portfolio_fit_by_fund: dict[str, PortfolioFitAssessment]
 
 
 def portfolio_intelligence_report_symbols(
@@ -580,6 +585,14 @@ def run_turkiye_new_money_uat(
         format_turkiye_fund_explanation(context, allocation_try=by_fund.get(context.fund_code, 0))
         for context in contexts
     )
+    portfolio_fit_by_fund = {
+        normalize_symbol(candidate["symbol"]): assess_portfolio_fit(
+            candidate,
+            portfolio_view=portfolio_view,
+            allocation=plan,
+        )
+        for candidate in turkish_candidates
+    }
     return TurkiyeNewMoneyUat(
         plan=plan,
         turkish_allocated=turkish_total,
@@ -589,4 +602,5 @@ def run_turkiye_new_money_uat(
         by_fund=by_fund,
         skip_reasons=_turkish_skip_reasons(plan, context_codes),
         explanations=explanations,
+        portfolio_fit_by_fund=portfolio_fit_by_fund,
     )
