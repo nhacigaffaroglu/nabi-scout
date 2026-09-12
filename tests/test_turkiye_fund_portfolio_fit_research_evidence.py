@@ -829,3 +829,157 @@ def test_evidence_builder_marks_metric_policy_not_applied_when_absent():
         result["evidence_policy"]["metric_assessment_policy_applied"]
         is False
     )
+
+
+def _evidence_with_portfolio_weight(
+    value,
+    *,
+    unit="percent",
+    dimension_name="concentration_risk",
+):
+    data = evidence()
+    data["IAT"]["dimensions"][dimension_name]["sources"][0]["claim"] = {
+        "field": "portfolio_weight",
+        "value": value,
+        "unit": unit,
+    }
+    return data
+
+
+def test_metric_policy_derives_assessment_from_explicit_numeric_claim():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=_evidence_with_portfolio_weight(30),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    row = result["candidates"][0]
+
+    assert row["concentration_risk"] == "HIGH"
+
+
+def test_metric_policy_compares_percent_and_basis_points_canonically():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=_evidence_with_portfolio_weight(
+            3000,
+            unit="basis_points",
+        ),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    row = result["candidates"][0]
+
+    assert row["concentration_risk"] == "HIGH"
+
+
+def test_metric_policy_no_match_keeps_transitional_external_assessment():
+    result = build_evidence_backed_portfolio_fit_research_artifact(
+        fund17(),
+        assessments=assessments(),
+        evidence=_evidence_with_portfolio_weight(10),
+        generated_at="2026-09-11T20:00:00Z",
+        metric_assessment_policy=_metric_policy_for_builder_test(),
+    )
+
+    row = result["candidates"][0]
+
+    assert row["concentration_risk"] == "LOW"
+
+
+def test_metric_policy_requires_metric_claim_unit():
+    data = _evidence_with_portfolio_weight(30)
+    del data["IAT"]["dimensions"]["concentration_risk"]["sources"][0][
+        "claim"
+    ]["unit"]
+
+    with pytest.raises(
+        PortfolioFitResearchContractError,
+        match="metric_claim_unit_required:IAT:concentration_risk",
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T20:00:00Z",
+            metric_assessment_policy=_metric_policy_for_builder_test(),
+        )
+
+
+def test_metric_policy_rejects_non_numeric_metric_claim():
+    data = _evidence_with_portfolio_weight("30")
+
+    with pytest.raises(
+        PortfolioFitEvidenceContractError,
+        match="invalid_metric_claim_value:portfolio_weight",
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T20:00:00Z",
+            metric_assessment_policy=_metric_policy_for_builder_test(),
+        )
+
+
+def test_metric_policy_multiple_matching_assessments_fail_closed():
+    policy = _metric_policy_for_builder_test()
+    policy["rules"].append(
+        {
+            "rule_id": "R2",
+            "dimension": "concentration_risk",
+            "claim_field": "portfolio_weight",
+            "unit": "percent",
+            "operator": "gte",
+            "threshold": 20,
+            "assessment": "LOW",
+        }
+    )
+
+    with pytest.raises(
+        PortfolioFitResearchContractError,
+        match=(
+            "contradictory_metric_policy_assessment:"
+            "IAT:concentration_risk"
+        ),
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=_evidence_with_portfolio_weight(30),
+            generated_at="2026-09-11T20:00:00Z",
+            metric_assessment_policy=policy,
+        )
+
+
+def test_explicit_and_metric_assessment_disagreement_fails_closed():
+    data = _evidence_with_portfolio_weight(30)
+
+    data["IAT"]["dimensions"]["concentration_risk"]["sources"].append(
+        {
+            "source_type": "HUMAN_APPROVED_RESEARCH",
+            "source_id": "explicit-assessment-1",
+            "observed_fact": "Synthetic explicit assessment.",
+            "as_of": "2026-09-11T18:00:00Z",
+            "claim": {
+                "field": "concentration_risk",
+                "value": "LOW",
+            },
+        }
+    )
+
+    with pytest.raises(
+        PortfolioFitResearchContractError,
+        match="contradictory_derived_assessment:IAT:concentration_risk",
+    ):
+        build_evidence_backed_portfolio_fit_research_artifact(
+            fund17(),
+            assessments=assessments(),
+            evidence=data,
+            generated_at="2026-09-11T20:00:00Z",
+            metric_assessment_policy=_metric_policy_for_builder_test(),
+        )

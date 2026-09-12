@@ -469,6 +469,52 @@ def _normalize_structured_claim(
     return normalized
 
 
+def canonical_metric_value(
+    *,
+    claim_field: str,
+    unit: str,
+    value: Any,
+) -> int | float:
+    """Return a canonical numeric metric value for policy comparison.
+
+    Currently only portfolio_weight is an approved numeric metric.
+    Percent and basis-points inputs are compared on a basis-points scale.
+    No thresholds or financial rules are supplied here.
+    """
+    if claim_field not in METRIC_CLAIM_FIELDS:
+        raise PortfolioFitEvidenceContractError(
+            f"unsupported_metric_claim_field:{claim_field}"
+        )
+
+    if unit not in CLAIM_UNITS:
+        raise PortfolioFitEvidenceContractError(
+            f"unsupported_metric_claim_unit:{unit}"
+        )
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or (
+            isinstance(value, float)
+            and not math.isfinite(value)
+        )
+    ):
+        raise PortfolioFitEvidenceContractError(
+            f"invalid_metric_claim_value:{claim_field}"
+        )
+
+    if claim_field == "portfolio_weight":
+        return (
+            value * 100
+            if unit == "percent"
+            else value
+        )
+
+    raise PortfolioFitEvidenceContractError(
+        f"unsupported_metric_claim_field:{claim_field}"
+    )
+
+
 def _structured_claim_comparison_identity(
     claim: dict[str, Any],
 ) -> tuple[tuple[str, str | None], Any]:
@@ -488,10 +534,10 @@ def _structured_claim_comparison_identity(
         and isinstance(claim_value, (int, float))
         and not isinstance(claim_value, bool)
     ):
-        basis_points_value = (
-            claim_value * 100
-            if claim_unit == "percent"
-            else claim_value
+        basis_points_value = canonical_metric_value(
+            claim_field=claim_field,
+            unit=claim_unit,
+            value=claim_value,
         )
         return (
             (claim_field, "basis_points"),

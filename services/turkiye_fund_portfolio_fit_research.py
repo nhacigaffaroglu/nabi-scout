@@ -345,6 +345,116 @@ def _derive_explicit_structured_assessment(
 
     return derived_values[0]
 
+def _metric_rule_matches(
+    value: int | float,
+    *,
+    operator: str,
+    threshold: int | float,
+) -> bool:
+    if operator == "lt":
+        return value < threshold
+    if operator == "lte":
+        return value <= threshold
+    if operator == "gt":
+        return value > threshold
+    if operator == "gte":
+        return value >= threshold
+    if operator == "eq":
+        return value == threshold
+
+    raise PortfolioFitResearchContractError(
+        f"unsupported_metric_rule_operator:{operator}"
+    )
+
+
+def _derive_metric_policy_assessment(
+    dimension: str,
+    dimension_evidence: Mapping[str, Any],
+    *,
+    metric_assessment_policy: Mapping[str, Any] | None,
+    expected_code: str,
+) -> str | None:
+    """Derive an assessment only from explicit metric claims and policy.
+
+    The policy must already be normalized and human-approved/locked.
+    No category shortcuts, free-text inference, or code-owned thresholds
+    are used.
+    """
+    if metric_assessment_policy is None:
+        return None
+
+    from services.turkiye_fund_portfolio_fit_evidence import (
+        canonical_metric_value,
+    )
+
+    rules = [
+        rule
+        for rule in metric_assessment_policy["rules"]
+        if rule["dimension"] == dimension
+    ]
+
+    if not rules:
+        return None
+
+    derived_values: list[str] = []
+
+    for source in dimension_evidence["sources"]:
+        claim = source.get("claim")
+        if claim is None:
+            continue
+
+        claim_field = claim["field"]
+
+        matching_rules = [
+            rule
+            for rule in rules
+            if rule["claim_field"] == claim_field
+        ]
+
+        if not matching_rules:
+            continue
+
+        claim_unit = claim.get("unit")
+        if claim_unit is None:
+            raise PortfolioFitResearchContractError(
+                "metric_claim_unit_required:"
+                f"{expected_code}:{dimension}:{claim_field}"
+            )
+
+        claim_value = canonical_metric_value(
+            claim_field=claim_field,
+            unit=claim_unit,
+            value=claim["value"],
+        )
+
+        for rule in matching_rules:
+            threshold = canonical_metric_value(
+                claim_field=rule["claim_field"],
+                unit=rule["unit"],
+                value=rule["threshold"],
+            )
+
+            if _metric_rule_matches(
+                claim_value,
+                operator=rule["operator"],
+                threshold=threshold,
+            ):
+                assessment = rule["assessment"]
+                if assessment not in derived_values:
+                    derived_values.append(assessment)
+
+    if len(derived_values) > 1:
+        raise PortfolioFitResearchContractError(
+            "contradictory_metric_policy_assessment:"
+            f"{expected_code}:{dimension}"
+        )
+
+    if not derived_values:
+        return None
+
+    return derived_values[0]
+
+
 def build_evidence_backed_portfolio_fit_research_artifact(
     fund17_artifact: Mapping[str, Any],
     *,
@@ -376,6 +486,14 @@ def build_evidence_backed_portfolio_fit_research_artifact(
     if not isinstance(evidence, Mapping):
         raise PortfolioFitResearchContractError(
             "evidence_must_be_object"
+        )
+
+    normalized_metric_assessment_policy = None
+    if metric_assessment_policy is not None:
+        normalized_metric_assessment_policy = (
+            normalize_metric_assessment_policy(
+                metric_assessment_policy
+            )
         )
 
     candidates = _as_list(
@@ -448,13 +566,40 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             if dimension_evidence["state"] != "SUPPORTED":
                 safe[dimension] = "UNKNOWN"
             else:
-                derived_assessment = (
+                explicit_assessment = (
                     _derive_explicit_structured_assessment(
                         dimension,
                         dimension_evidence,
                         expected_code=code,
                     )
                 )
+                metric_assessment = (
+                    _derive_metric_policy_assessment(
+                        dimension,
+                        dimension_evidence,
+                        metric_assessment_policy=(
+                            normalized_metric_assessment_policy
+                        ),
+                        expected_code=code,
+                    )
+                )
+
+                if (
+                    explicit_assessment is not None
+                    and metric_assessment is not None
+                    and explicit_assessment != metric_assessment
+                ):
+                    raise PortfolioFitResearchContractError(
+                        "contradictory_derived_assessment:"
+                        f"{code}:{dimension}"
+                    )
+
+                derived_assessment = (
+                    explicit_assessment
+                    if explicit_assessment is not None
+                    else metric_assessment
+                )
+
                 if derived_assessment is not None:
                     safe[dimension] = derived_assessment
 
@@ -505,11 +650,9 @@ def build_evidence_backed_portfolio_fit_research_artifact(
             freshness_policy
         )
 
-    if metric_assessment_policy is not None:
+    if normalized_metric_assessment_policy is not None:
         result["metric_assessment_policy"] = (
-            normalize_metric_assessment_policy(
-                metric_assessment_policy
-            )
+            normalized_metric_assessment_policy
         )
 
     result["limitations"].append(
