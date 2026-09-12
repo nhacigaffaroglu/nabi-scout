@@ -210,7 +210,7 @@ jobs:
 
           row = result["candidates"][0]
 
-          assert row["role_fit"] == "STRONG"
+          assert row["role_fit"] == "UNKNOWN"
           assert row["portfolio_fit_composite_score"] is None
           assert row["portfolio_fit_rank"] is None
           assert row["recommendation"] is None
