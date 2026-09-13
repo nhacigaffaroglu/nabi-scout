@@ -1,0 +1,61 @@
+name: FUND27B Controlled Execution
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/turkiye_fund_controlled_execution.py'
+      - 'tests/test_turkiye_fund_controlled_execution.py'
+      - '.github/workflows/fund27b_controlled_execution.yml'
+
+jobs:
+  controlled-execution-contract:
+    name: controlled-execution-contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run FUND27B focused tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_controlled_execution.py
+
+      - name: Compile FUND27B service
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_controlled_execution.py \
+            tests/test_turkiye_fund_controlled_execution.py
+
+      - name: Verify execution firewall
+        run: |
+          ! grep -nEi \
+            'create_order|submit_order|place_order|execute_trade|broker_api' \
+            services/turkiye_fund_controlled_execution.py
+
+          grep -n \
+            'MODE_DRY_RUN = "DRY_RUN"' \
+            services/turkiye_fund_controlled_execution.py
+
+          grep -n \
+            'execution_authority: bool = False' \
+            services/turkiye_fund_controlled_execution.py
+
+          grep -n \
+            'idempotency_key' \
+            services/turkiye_fund_controlled_execution.py
+
+          echo "FUND27B_EXECUTION_FIREWALL_OK"
