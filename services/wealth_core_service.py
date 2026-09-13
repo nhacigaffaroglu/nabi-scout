@@ -315,6 +315,59 @@ class WealthCoreService:
             cost_currency=cost_currency,
         )
 
+    def recover_position_materialization(
+        self,
+        *,
+        account_id: str,
+        asset_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Replay ledger state into the derived position materialization."""
+        account = self.accounts.get_by_id(self.user_id, account_id)
+        if account is None:
+            raise WealthValidationError("Hesap bulunamadı.")
+
+        asset = self.assets.get_by_id(self.user_id, asset_id)
+        if asset is None:
+            raise WealthValidationError("Varlık bulunamadı.")
+
+        cost_currency = str(
+            asset.get("currency")
+            or account.get("currency")
+            or "USD"
+        )
+
+        try:
+            self._rebuild_position(
+                account_id,
+                asset_id,
+                cost_currency,
+            )
+        except Exception as exc:
+            raise WealthMaterializationError(
+                "Pozisyon materialization yeniden oluşturulamadı."
+            ) from exc
+
+        return self.positions.get_for_account_asset(
+            self.user_id,
+            account_id,
+            asset_id,
+        )
+
+    def _recover_existing_transaction_materialization(
+        self,
+        existing: Dict[str, Any],
+    ) -> None:
+        account_id = str(existing.get("account_id") or "").strip()
+        asset_id = str(existing.get("asset_id") or "").strip()
+
+        if not account_id or not asset_id:
+            return
+
+        self.recover_position_materialization(
+            account_id=account_id,
+            asset_id=asset_id,
+        )
+
     @staticmethod
     def _idempotent_transaction_matches(
         existing: Dict[str, Any],
@@ -405,6 +458,7 @@ class WealthCoreService:
                     raise WealthValidationError(
                         "Idempotency key daha önce farklı bir işlem için kullanılmış."
                     )
+                self._recover_existing_transaction_materialization(existing)
                 return existing
 
         if reversal_of_id:
@@ -493,6 +547,7 @@ class WealthCoreService:
                     price=price,
                     reversal_of_id=reversal_of_id,
                 ):
+                    self._recover_existing_transaction_materialization(existing)
                     return existing
 
             raise

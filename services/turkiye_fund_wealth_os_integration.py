@@ -15,6 +15,9 @@ lossless, auditable handoff for the canonical Wealth OS ledger service.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Optional, Sequence
 
@@ -67,6 +70,47 @@ def _optional_positive_decimal(value: Any, *, field: str) -> Optional[Decimal]:
     if value is None:
         return None
     return _positive_decimal(value, field=field)
+
+
+def _build_idempotency_key(
+    *,
+    generated_at: Optional[str],
+    symbol: str,
+    account_id: Optional[str],
+    asset_id: Optional[str],
+    quantity: Decimal,
+    amount: Decimal,
+    currency: str,
+    price: Optional[Decimal],
+    source_rank: int,
+) -> Optional[str]:
+    """Build one stable execution identity for one FUND25 allocation run."""
+    if not generated_at or not account_id or not asset_id:
+        return None
+
+    payload = {
+        "source_schema": INPUT_SCHEMA,
+        "source_status": INPUT_STATUS,
+        "generated_at": generated_at,
+        "symbol": symbol,
+        "account_id": str(account_id).strip(),
+        "asset_id": str(asset_id).strip(),
+        "txn_type": TXN_TYPE_BUY,
+        "quantity": str(quantity),
+        "amount": str(amount),
+        "currency": currency,
+        "price": str(price) if price is not None else None,
+        "source_rank": source_rank,
+    }
+
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return f"fund26:{digest}"
 
 
 def _assert_fund25_firewall(artifact: Mapping[str, Any]) -> None:
@@ -166,6 +210,11 @@ def build_fund_wealth_os_integration_artifact(
     _assert_fund25_firewall(artifact)
 
     rows = _as_list(artifact.get("rows"), field="fund25_rows")
+    source_generated_at = (
+        str(artifact.get("generated_at") or "").strip()
+        or None
+    )
+
     asset_map = {
         str(key).strip().upper(): str(value).strip()
         for key, value in dict(asset_ids_by_symbol or {}).items()
@@ -217,6 +266,18 @@ def build_fund_wealth_os_integration_artifact(
         asset_id = asset_map.get(symbol)
         handoff_ready = bool(account_id and asset_id)
 
+        idempotency_key = _build_idempotency_key(
+            generated_at=source_generated_at,
+            symbol=symbol,
+            account_id=account_id,
+            asset_id=asset_id,
+            quantity=quantity,
+            amount=amount,
+            currency=currency,
+            price=price,
+            source_rank=rank,
+        )
+
         intent = {
             "symbol": symbol,
             "txn_type": TXN_TYPE_BUY,
@@ -227,6 +288,8 @@ def build_fund_wealth_os_integration_artifact(
             "currency": currency,
             "price": float(price) if price is not None else None,
             "executed_at": executed_at,
+            "source_generated_at": source_generated_at,
+            "idempotency_key": idempotency_key,
             "notes": (
                 f"NABI FUND26 Wealth OS handoff; "
                 f"source_schema={INPUT_SCHEMA}; source_rank={rank}"
