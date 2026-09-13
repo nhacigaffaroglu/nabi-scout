@@ -1,0 +1,155 @@
+name: FUND21 Decision Evaluation Readiness
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_decision_evaluation_readiness.py"
+      - "tests/test_turkiye_fund_decision_evaluation_readiness.py"
+      - "tests/test_fund21_decision_evaluation_readiness_workflow.py"
+      - ".github/workflows/fund21_decision_evaluation_readiness.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_decision_evaluation_readiness.py"
+      - "tests/test_turkiye_fund_decision_evaluation_readiness.py"
+      - "tests/test_fund21_decision_evaluation_readiness_workflow.py"
+      - ".github/workflows/fund21_decision_evaluation_readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund21-decision-evaluation-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-evaluation-readiness-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run FUND21 focused tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_decision_evaluation_readiness.py \
+            tests/test_fund21_decision_evaluation_readiness_workflow.py
+
+      - name: Compile FUND21 service
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_decision_evaluation_readiness.py
+
+      - name: Validate FUND21 research firewall
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from services.turkiye_fund_decision_evaluation_readiness import (
+              INPUT_SCHEMA,
+              INPUT_STATUS,
+              OUTPUT_SCHEMA,
+              OUTPUT_STATUS,
+              ZERO_WRITE_PROOF,
+              build_decision_evaluation_readiness_artifact,
+          )
+
+          artifact = {
+              "schema_version": INPUT_SCHEMA,
+              "decision_candidate_ranking_status": INPUT_STATUS,
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "decision_winner": None,
+              "recommendation": None,
+              "allocation": None,
+              "write_proof": dict(ZERO_WRITE_PROOF),
+              "candidates": [
+                  {
+                      "fund_code": "BBB",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "decision_rank": 2,
+                      "decision_ranking_eligible": True,
+                      "role_fit": "PARTIAL",
+                      "concentration_risk": "LOW",
+                      "diversification_contribution": "HIGH",
+                      "economic_overlap": "LOW",
+                      "fi_score": 99.0,
+                      "data_completeness": 99.0,
+                      "confidence": 99.0,
+                  },
+                  {
+                      "fund_code": "AAA",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "decision_rank": 1,
+                      "decision_ranking_eligible": True,
+                      "role_fit": "STRONG",
+                      "concentration_risk": "LOW",
+                      "diversification_contribution": "HIGH",
+                      "economic_overlap": "LOW",
+                      "fi_score": 70.0,
+                      "data_completeness": 90.0,
+                      "confidence": 90.0,
+                  },
+              ],
+          }
+
+          result = build_decision_evaluation_readiness_artifact(artifact)
+
+          assert result["schema_version"] == OUTPUT_SCHEMA
+          assert result["decision_evaluation_readiness_status"] == OUTPUT_STATUS
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+          assert result["production_persist"] is False
+          assert result["decision_winner"] is None
+          assert result["recommendation"] is None
+          assert result["allocation"] is None
+          assert result["write_proof"] == ZERO_WRITE_PROOF
+
+          rows = result["candidates"]
+
+          # FUND21 preserves FUND20 rank and does not rerank by FI score.
+          assert rows[0]["fund_code"] == "BBB"
+          assert rows[0]["decision_evaluation_source_rank"] == 2
+          assert rows[1]["fund_code"] == "AAA"
+          assert rows[1]["decision_evaluation_source_rank"] == 1
+
+          assert all(
+              row["decision_evaluation_eligible"] is True
+              for row in rows
+          )
+
+          forbidden = {
+              "trade",
+              "order",
+              "buy",
+              "sell",
+              "quantity",
+              "target_weight",
+              "position_size",
+              "eight_e_action",
+              "new_money_action",
+          }
+
+          for row in rows:
+              assert forbidden.isdisjoint(row)
+              assert row["decision_action"] is None
+              assert row["recommendation"] is None
+              assert row["allocation"] is None
+          PY
