@@ -1,0 +1,81 @@
+name: FUND26 Wealth OS Integration
+
+on:
+  push:
+    paths:
+      - "services/turkiye_fund_wealth_os_integration.py"
+      - "services/turkiye_fund_allocation_integration.py"
+      - "services/wealth_core_service.py"
+      - "services/wealth_position_engine.py"
+      - "tests/test_turkiye_fund_wealth_os_integration.py"
+      - ".github/workflows/fund26_wealth_os_integration.yml"
+  pull_request:
+    paths:
+      - "services/turkiye_fund_wealth_os_integration.py"
+      - "services/turkiye_fund_allocation_integration.py"
+      - "services/wealth_core_service.py"
+      - "services/wealth_position_engine.py"
+      - "tests/test_turkiye_fund_wealth_os_integration.py"
+      - ".github/workflows/fund26_wealth_os_integration.yml"
+
+jobs:
+  wealth-os-integration-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run FUND26 focused tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_wealth_os_integration.py
+
+      - name: Compile FUND26 service
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_wealth_os_integration.py \
+            tests/test_turkiye_fund_wealth_os_integration.py
+
+      - name: Verify execution and persistence firewall
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("services/turkiye_fund_wealth_os_integration.py")
+          source = path.read_text(encoding="utf-8")
+
+          forbidden = (
+              "WealthCoreService(",
+              ".post_transaction(",
+              '.table("wealth_transactions")',
+              ".table('wealth_transactions')",
+              '.table("wealth_positions")',
+              ".table('wealth_positions')",
+              "WealthTransactionRepository(",
+              "WealthPositionRepository(",
+              "services.wealth_core_service",
+              "repositories.wealth_transaction_repository",
+              "repositories.wealth_position_repository",
+          )
+
+          violations = [token for token in forbidden if token in source]
+          if violations:
+              raise SystemExit(
+                  "FUND26 execution firewall violation: "
+                  + ", ".join(violations)
+              )
+
+          print("FUND26_EXECUTION_FIREWALL_OK")
+          PY
