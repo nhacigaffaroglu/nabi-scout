@@ -1,0 +1,198 @@
+name: FUND22 Canonical Decision Integration
+
+on:
+  push:
+    paths:
+      - "services/turkiye_fund_canonical_decision_integration.py"
+      - "tests/test_turkiye_fund_canonical_decision_integration.py"
+      - "tests/test_fund22_canonical_decision_integration_workflow.py"
+      - ".github/workflows/fund22_canonical_decision_integration.yml"
+  pull_request:
+    paths:
+      - "services/turkiye_fund_canonical_decision_integration.py"
+      - "tests/test_turkiye_fund_canonical_decision_integration.py"
+      - "tests/test_fund22_canonical_decision_integration_workflow.py"
+      - ".github/workflows/fund22_canonical_decision_integration.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund22-canonical-decision-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canonical-decision-integration-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run focused FUND22 tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_canonical_decision_integration.py \
+            tests/test_fund22_canonical_decision_integration_workflow.py
+
+      - name: Compile FUND22 service
+        run: |
+          PYTHONPATH=. python -m py_compile \
+            services/turkiye_fund_canonical_decision_integration.py
+
+      - name: Validate FUND22 research firewall
+        run: |
+          PYTHONPATH=. python - <<'PY'
+          from types import SimpleNamespace
+
+          import services.turkiye_fund_canonical_decision_integration as fund22
+
+
+          class Decision:
+              def to_dict(self):
+                  return {
+                      "symbol": "AAA",
+                      "decision": "CONSIDER_NEW_POSITION",
+                      "confidence": "HIGH",
+                      "exposure_increase_allowed": True,
+                      "participation_status": "Uygun",
+                      "research_allowed": True,
+                      "security_intelligence_state": "ATTRACTIVE",
+                      "security_intelligence_score": 80.0,
+                      "security_intelligence_confidence": 0.9,
+                      "security_intelligence_data_quality": "HIGH",
+                      "security_intelligence_as_of": "2026-09-13T00:00:00+00:00",
+                      "primary_reasons": ["ELIGIBLE_TO_INCREASE"],
+                      "blocking_reasons": [],
+                      "risk_flags": [],
+                      "reason_codes": ["ELIGIBLE_TO_INCREASE"],
+                      "as_of": "2026-09-13T00:00:00+00:00",
+                      "engine_version": "portfolio_security_decision_8e.1",
+                      "research_status": None,
+                  }
+
+
+          def fake_read(**kwargs):
+              code = kwargs["fund_code"]
+              return SimpleNamespace(
+                  fund_code=code,
+                  participation=SimpleNamespace(
+                      row_id=f"p-{code}",
+                      methodology_id="turkiye_fund_participation",
+                      methodology_version="1",
+                      semantic_identity=f"{code}:participation",
+                  ),
+                  fund_intelligence=SimpleNamespace(
+                      row_id=f"fi-{code}",
+                      as_of_key="2026-09-13",
+                      facts_version="fund_facts_1",
+                      engine_version="fund_eval_1",
+                  ),
+                  decision=Decision(),
+              )
+
+
+          fund22.read_turkiye_fund_canonical = fake_read
+
+          artifact = {
+              "schema_version": fund22.INPUT_SCHEMA,
+              "source_schema_version": "fund20_decision_candidate_ranking_artifact_1",
+              "generated_at": "2026-09-13T00:00:00+00:00",
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "decision_evaluation_readiness_status": fund22.INPUT_STATUS,
+              "decision_winner": None,
+              "recommendation": None,
+              "allocation": None,
+              "counts": {
+                  "candidates": 2,
+                  "ready_for_decision_evaluation": 2,
+                  "not_ready_for_decision_evaluation": 0,
+              },
+              "candidates": [
+                  {
+                      "fund_code": "BBB",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "decision_rank": 2,
+                      "decision_ranking_eligible": True,
+                      "decision_evaluation_readiness": "READY_FOR_DECISION_EVALUATION",
+                      "decision_evaluation_eligible": True,
+                      "decision_evaluation_reasons": [],
+                      "decision_evaluation_source_rank": 2,
+                      "decision_action": None,
+                      "decision_winner": None,
+                      "recommendation": None,
+                      "allocation": None,
+                  },
+                  {
+                      "fund_code": "AAA",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "decision_rank": 1,
+                      "decision_ranking_eligible": True,
+                      "decision_evaluation_readiness": "READY_FOR_DECISION_EVALUATION",
+                      "decision_evaluation_eligible": True,
+                      "decision_evaluation_reasons": [],
+                      "decision_evaluation_source_rank": 1,
+                      "decision_action": None,
+                      "decision_winner": None,
+                      "recommendation": None,
+                      "allocation": None,
+                  },
+              ],
+              "write_proof": {
+                  "production_writes": 0,
+                  "trade_actions": 0,
+                  "orders": 0,
+                  "portfolio_writes": 0,
+                  "eight_e_calls": 0,
+                  "new_money_calls": 0,
+              },
+          }
+
+          result = fund22.build_canonical_decision_integration_artifact(
+              artifact,
+              participation_repo=object(),
+              snapshot_repo=object(),
+              portfolio_contexts={
+                  "BBB": {"is_holding": False},
+                  "AAA": {"is_holding": False},
+              },
+          )
+
+          assert result["canonical_decision_integration_status"] == fund22.OUTPUT_STATUS
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+          assert result["production_persist"] is False
+          assert result["decision_winner"] is None
+          assert result["recommendation"] is None
+          assert result["allocation"] is None
+          assert result["write_proof"] == fund22.ZERO_WRITE_PROOF
+
+          rows = result["candidates"]
+
+          assert [row["fund_code"] for row in rows] == ["BBB", "AAA"]
+          assert [row["decision_rank"] for row in rows] == [2, 1]
+          assert [row["decision_evaluation_source_rank"] for row in rows] == [2, 1]
+          assert [row["canonical_decision_source_rank"] for row in rows] == [2, 1]
+
+          for row in rows:
+              assert row["decision_winner"] is None
+              assert row["recommendation"] is None
+              assert row["allocation"] is None
+              assert row["canonical_decision"] == "CONSIDER_NEW_POSITION"
+          PY
