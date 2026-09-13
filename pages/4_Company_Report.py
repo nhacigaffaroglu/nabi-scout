@@ -703,6 +703,7 @@ si_facts, si_participation = build_canonical_security_intelligence_inputs(
     participation_snapshot=si_participation_snapshot,
     queue_row=si_queue_row,
     security_resolution=security_resolution,
+    company_intelligence=company_intel_view,
     client=client,
 )
 si_snapshot_repo = SecurityIntelligenceSnapshotRepository(client)

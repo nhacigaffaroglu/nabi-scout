@@ -15,6 +15,8 @@ from services.security_intelligence_contract import (
     ENGINE_VERSION,
     SecurityFacts,
     SecurityParticipationContext,
+    SecurityValuationContext,
+    SecurityValuationMetricContext,
     SecurityPortfolioContext,
     STATE_ATTRACTIVE,
     STATE_AVOID,
@@ -128,6 +130,96 @@ class ContractTests(unittest.TestCase):
         self.assertIn(view.valuation.status, {STATUS_INSUFFICIENT_DATA, "WEAK", "VERY_WEAK", "NEUTRAL"})
         self.assertIn("VALUATION_EXPENSIVE", view.valuation.reason_codes)
         self.assertNotEqual(view.valuation.score, view.valuation.status)
+
+    def test_typed_relative_valuation_context_influences_dimension_without_absolute_claim(self) -> None:
+        baseline = evaluate_security_intelligence(
+            _rich_facts(
+                pe=None,
+                price_to_sales=8.0,
+                price_to_book=None,
+            )
+        )
+        context = SecurityValuationContext(
+            metrics=(
+                SecurityValuationMetricContext(
+                    code="price_to_sales",
+                    current_value=8.0,
+                    historical_median=10.0,
+                    premium_to_historical_median_pct=-20.0,
+                    historical_position="BELOW_HISTORICAL_MEDIAN",
+                    historical_sample_count=5,
+                    historical_method="fiscal_end_price_x_annual_weighted_average_shares",
+                    peer_company_value=7.5,
+                    peer_median=9.0,
+                    peer_count=3,
+                    peer_relative_position="BELOW_PEER_MEDIAN",
+                    source_provider="sec+fmp",
+                    data_family="sec_annual_market_hybrid",
+                    confidence="HIGH",
+                ),
+            )
+        )
+        enriched = evaluate_security_intelligence(
+            _rich_facts(
+                pe=None,
+                price_to_sales=8.0,
+                price_to_book=None,
+                valuation_context=context,
+            )
+        )
+
+        self.assertIsNotNone(baseline.valuation.score)
+        self.assertIsNotNone(enriched.valuation.score)
+        self.assertGreater(enriched.valuation.score, baseline.valuation.score)
+        self.assertIn(
+            "VALUATION_RELATIVE_CONTEXT_USED",
+            enriched.valuation.reason_codes,
+        )
+        self.assertIn(
+            "VALUATION_BELOW_HISTORICAL_MEDIAN",
+            enriched.valuation.reason_codes,
+        )
+        self.assertIn(
+            "VALUATION_BELOW_PEER_MEDIAN",
+            enriched.valuation.reason_codes,
+        )
+        self.assertNotIn("VALUATION_ATTRACTIVE", enriched.valuation.reason_codes)
+        self.assertNotIn("VALUATION_EXPENSIVE", enriched.valuation.reason_codes)
+        self.assertIn("relative_valuation_context", enriched.valuation.facts_used)
+
+    def test_insufficient_peer_sample_does_not_change_valuation_score(self) -> None:
+        baseline = evaluate_security_intelligence(
+            _rich_facts(pe=None, price_to_sales=8.0, price_to_book=None)
+        )
+        context = SecurityValuationContext(
+            metrics=(
+                SecurityValuationMetricContext(
+                    code="price_to_sales",
+                    peer_company_value=10.0,
+                    peer_median=5.0,
+                    peer_count=2,
+                    peer_relative_position="ABOVE_PEER_MEDIAN",
+                ),
+            )
+        )
+        guarded = evaluate_security_intelligence(
+            _rich_facts(
+                pe=None,
+                price_to_sales=8.0,
+                price_to_book=None,
+                valuation_context=context,
+            )
+        )
+
+        self.assertEqual(guarded.valuation.score, baseline.valuation.score)
+        self.assertNotIn(
+            "VALUATION_RELATIVE_CONTEXT_USED",
+            guarded.valuation.reason_codes,
+        )
+        self.assertNotIn(
+            "VALUATION_ABOVE_PEER_MEDIAN",
+            guarded.valuation.reason_codes,
+        )
 
     def test_participation_firewall(self) -> None:
         rich = _rich_facts()

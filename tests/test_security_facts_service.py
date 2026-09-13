@@ -7,6 +7,7 @@ from pathlib import Path
 from services.security_facts_service import SecurityFactsService, finite_number
 from services.security_intelligence_contract import (
     AUTHORITY_CANDIDATE,
+    AUTHORITY_COMPANY_INTELLIGENCE,
     AUTHORITY_DERIVED,
     AUTHORITY_PARTICIPATION,
     AUTHORITY_SEC,
@@ -120,6 +121,101 @@ class FactPrecedenceTests(unittest.TestCase):
         prov = next(item for item in facts.provenance if item.field == "operating_margin")
         self.assertEqual(prov.normalization, "RATIO_TO_PERCENT")
 
+    def test_company_intelligence_typed_valuation_context_preserves_relative_evidence(self) -> None:
+        class _ValuationProvenance:
+            provider = "sec+fmp"
+            data_family = "sec_annual_market_hybrid"
+
+        class _Metric:
+            code = "price_to_sales"
+            current_value = 6.25
+            historical_median = 5.0
+            premium_to_median_pct = 25.0
+            position = "ABOVE_HISTORICAL_MEDIAN"
+            meaningful = True
+            limitations = ()
+            source_provider = "sec+fmp"
+            data_family = "sec_annual_market_hybrid"
+            fundamental_period_end = "2025-01-31"
+            market_data_as_of = "2026-09-12"
+            alignment_status = "ALIGNED"
+            confidence = "HIGH"
+            components = (
+                ("historical_sample_count", 5),
+                ("historical_method", "fiscal_end_price_x_annual_weighted_average_shares"),
+            )
+
+        class _Valuation:
+            metrics = (_Metric(),)
+            provenance = _ValuationProvenance()
+
+        class _PeerProvenance:
+            provider = "fmp"
+            data_family = "peer_comparison"
+
+        class _PeerRow:
+            metric = "price_to_sales"
+            company_value = 6.1
+            peer_median = 5.5
+            difference = 0.6
+            percentile = 75.0
+            peer_count = 3
+            limitations = ()
+
+        class _Peers:
+            peer_selection_method = "provider_stock_peers"
+            comparisons = (_PeerRow(),)
+            provenance = _PeerProvenance()
+
+        class _View:
+            as_of = "2026-09-12"
+            business_snapshot = None
+            financial_trends = None
+            valuation = _Valuation()
+            peers = _Peers()
+
+        facts = SecurityFactsService().build(
+            "CRM",
+            company_intelligence=_View(),
+            allow_sec_cache_replay=False,
+        )
+
+        self.assertIsNotNone(facts.valuation_context)
+        context = facts.valuation_context
+        assert context is not None
+        self.assertEqual(context.authority, AUTHORITY_COMPANY_INTELLIGENCE)
+        self.assertEqual(context.peer_selection_method, "provider_stock_peers")
+
+        metric = context.metric("price_to_sales")
+        self.assertIsNotNone(metric)
+        assert metric is not None
+        self.assertEqual(metric.current_value, 6.25)
+        self.assertEqual(metric.historical_median, 5.0)
+        self.assertEqual(metric.premium_to_historical_median_pct, 25.0)
+        self.assertEqual(metric.historical_position, "ABOVE_HISTORICAL_MEDIAN")
+        self.assertEqual(metric.historical_sample_count, 5)
+        self.assertEqual(
+            metric.historical_method,
+            "fiscal_end_price_x_annual_weighted_average_shares",
+        )
+        self.assertEqual(metric.peer_company_value, 6.1)
+        self.assertEqual(metric.peer_median, 5.5)
+        self.assertEqual(metric.peer_relative_position, "ABOVE_PEER_MEDIAN")
+        self.assertEqual(metric.source_provider, "sec+fmp")
+        self.assertEqual(metric.peer_source_provider, "fmp")
+
+        provenance = next(
+            item for item in facts.provenance if item.field == "price_to_sales"
+        )
+        self.assertEqual(provenance.period_kind, PERIOD_MIXED)
+        self.assertNotEqual(provenance.period_kind, "TTM")
+
+        serialized = facts.to_dict()["valuation_context"]
+        self.assertEqual(
+            serialized["metrics"][0]["historical_sample_count"],
+            5,
+        )
+
     def test_incompatible_periods_are_marked_not_silently_compared(self) -> None:
         facts = SecurityFactsService().build(
             "X",
@@ -184,6 +280,10 @@ class FactPrecedenceTests(unittest.TestCase):
 
 
 class SecurityIntelligenceUiTests(unittest.TestCase):
+    def test_company_report_bridges_company_intelligence_into_si_facts(self) -> None:
+        source = PAGE.read_text(encoding="utf-8")
+        self.assertIn("company_intelligence=company_intel_view", source)
+
     def test_ui_does_not_relabel_nabi_score(self) -> None:
         source = Path("components/security_intelligence_ui.py").read_text(encoding="utf-8")
         self.assertIn("NABI Skoru v4", source)

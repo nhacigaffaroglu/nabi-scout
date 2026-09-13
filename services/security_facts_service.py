@@ -71,6 +71,8 @@ from services.security_intelligence_contract import (
     PERIOD_UNKNOWN,
     PERIOD_YTD,
     SecurityFacts,
+    SecurityValuationContext,
+    SecurityValuationMetricContext,
 )
 
 
@@ -97,6 +99,7 @@ NUMERIC_FACT_FIELDS = tuple(
         "period_kind",
         "missing_critical_fields",
         "facts_version",
+        "valuation_context",
     }
 )
 
@@ -586,6 +589,147 @@ def _ingest_participation_inputs(
         )
 
 
+_VALUATION_CODE_ALIASES = {
+    "pe_ratio": "pe",
+    "price_to_earnings": "pe",
+    "ps": "price_to_sales",
+    "pb": "price_to_book",
+    "ev_to_ebitda": "ev_ebitda",
+}
+
+
+def _canonical_valuation_code(raw: Any) -> str:
+    code = _text(raw).lower()
+    return _VALUATION_CODE_ALIASES.get(code, code)
+
+
+def _int_or_none(raw: Any) -> Optional[int]:
+    try:
+        return None if raw in (None, "") else int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _peer_relative_position(company_value: Optional[float], peer_median: Optional[float]) -> Optional[str]:
+    if company_value is None or peer_median is None:
+        return None
+    if company_value < peer_median:
+        return "BELOW_PEER_MEDIAN"
+    if company_value > peer_median:
+        return "ABOVE_PEER_MEDIAN"
+    return "AT_PEER_MEDIAN"
+
+
+def _build_security_valuation_context(view: Any) -> Optional[SecurityValuationContext]:
+    if view is None:
+        return None
+    valuation = getattr(view, "valuation", None)
+    raw_metrics = tuple(getattr(valuation, "metrics", ()) or ()) if valuation is not None else ()
+    if not raw_metrics:
+        return None
+
+    valuation_provenance = getattr(valuation, "provenance", None)
+    fallback_provider = _text(getattr(valuation_provenance, "provider", None)) or None
+    fallback_family = _text(getattr(valuation_provenance, "data_family", None)) or None
+
+    peers = getattr(view, "peers", None)
+    peer_rows: dict[str, Any] = {}
+    for row in tuple(getattr(peers, "comparisons", ()) or ()) if peers is not None else ():
+        code = _canonical_valuation_code(getattr(row, "metric", ""))
+        if code:
+            peer_rows[code] = row
+
+    peer_provenance = getattr(peers, "provenance", None)
+    peer_provider = _text(getattr(peer_provenance, "provider", None)) or None
+    peer_family = _text(getattr(peer_provenance, "data_family", None)) or None
+    peer_selection_method = (
+        _text(getattr(peers, "peer_selection_method", None)) or None
+        if peers is not None
+        else None
+    )
+
+    typed: list[SecurityValuationMetricContext] = []
+    for metric in raw_metrics:
+        code = _canonical_valuation_code(getattr(metric, "code", ""))
+        if not code:
+            continue
+        try:
+            components = dict(getattr(metric, "components", ()) or ())
+        except (TypeError, ValueError):
+            components = {}
+
+        peer = peer_rows.get(code)
+        peer_company_value = finite_number(getattr(peer, "company_value", None)) if peer is not None else None
+        peer_median = finite_number(getattr(peer, "peer_median", None)) if peer is not None else None
+        peer_limitations = tuple(getattr(peer, "limitations", ()) or ()) if peer is not None else ()
+        metric_limitations = tuple(getattr(metric, "limitations", ()) or ())
+
+        typed.append(
+            SecurityValuationMetricContext(
+                code=code,
+                current_value=finite_number(getattr(metric, "current_value", None)),
+                fundamental_period_end=_text(getattr(metric, "fundamental_period_end", None)) or None,
+                market_data_as_of=_text(getattr(metric, "market_data_as_of", None)) or None,
+                source_provider=(
+                    _text(getattr(metric, "source_provider", None))
+                    or fallback_provider
+                ),
+                data_family=(
+                    _text(getattr(metric, "data_family", None))
+                    or fallback_family
+                ),
+                authority=AUTHORITY_COMPANY_INTELLIGENCE,
+                confidence=_text(getattr(metric, "confidence", None)) or None,
+                alignment_status=_text(getattr(metric, "alignment_status", None)) or None,
+                historical_median=finite_number(getattr(metric, "historical_median", None)),
+                premium_to_historical_median_pct=finite_number(
+                    getattr(metric, "premium_to_median_pct", None)
+                ),
+                historical_position=_text(getattr(metric, "position", None)) or None,
+                historical_sample_count=_int_or_none(
+                    components.get("historical_sample_count")
+                ),
+                historical_method=_text(components.get("historical_method")) or None,
+                peer_company_value=peer_company_value,
+                peer_median=peer_median,
+                peer_difference=(
+                    finite_number(getattr(peer, "difference", None))
+                    if peer is not None
+                    else None
+                ),
+                peer_percentile=(
+                    finite_number(getattr(peer, "percentile", None))
+                    if peer is not None
+                    else None
+                ),
+                peer_count=(
+                    _int_or_none(getattr(peer, "peer_count", None))
+                    if peer is not None
+                    else None
+                ),
+                peer_relative_position=_peer_relative_position(
+                    peer_company_value,
+                    peer_median,
+                ),
+                peer_source_provider=peer_provider,
+                peer_data_family=peer_family,
+                limitations=tuple(
+                    dict.fromkeys(metric_limitations + peer_limitations)
+                ),
+            )
+        )
+
+    if not typed:
+        return None
+    return SecurityValuationContext(
+        metrics=tuple(typed),
+        as_of=_text(getattr(view, "as_of", None)) or None,
+        source="company_intelligence",
+        authority=AUTHORITY_COMPANY_INTELLIGENCE,
+        peer_selection_method=peer_selection_method,
+    )
+
+
 def _ingest_company_intelligence(
     slots: _FactSlots,
     view: Any,
@@ -649,15 +793,21 @@ def _ingest_company_intelligence(
                     break
             if dest is None:
                 continue
+            data_family = _text(getattr(metric, "data_family", None)).lower()
+            valuation_period_kind = (
+                PERIOD_MIXED
+                if "hybrid" in data_family
+                else PERIOD_TTM
+            )
             slots.set(
                 dest,
                 getattr(metric, "current_value", None),
                 source="company_intelligence",
                 authority=AUTHORITY_COMPANY_INTELLIGENCE,
                 source_as_of=_text(getattr(metric, "fundamental_period_end", None)) or None,
-                period_kind=PERIOD_TTM,
+                period_kind=valuation_period_kind,
                 convert_ratio_percent=dest == "fcf_yield",
-                confidence="LOW",
+                confidence=_text(getattr(metric, "confidence", None)) or "LOW",
             )
 
 
@@ -975,6 +1125,11 @@ class SecurityFactsService:
         official_stale = bool(getattr(bist_market_facts, "stale", False)) if bist_market_facts is not None else False
         candidate_stale = stale or _text(cand.get("freshness_status")).upper() == "STALE" or official_stale
         skip_unofficial_market = is_bist and bist_market_facts is not None
+        valuation_context = (
+            None
+            if skip_unofficial_market
+            else _build_security_valuation_context(company_intelligence)
+        )
         _ingest_candidate(slots, cand, stale=candidate_stale, skip_market_fields=skip_unofficial_market)
         _ingest_participation_inputs(
             slots,
@@ -1054,6 +1209,7 @@ class SecurityFactsService:
             missing_fields=missing,
             provenance=tuple(slots.provenance[name] for name in NUMERIC_FACT_FIELDS if name in slots.provenance),
             facts_version=FACTS_VERSION,
+            valuation_context=valuation_context,
             **slots.values,
             **quality,
         )

@@ -86,6 +86,31 @@ _OVERALL_WEIGHTS = {
 _MIN_CORE_SCORED = 3
 _CHANGE_SCORE_DELTA = 5.0
 
+_LOWER_IS_BETTER_VALUATION_CODES = frozenset(
+    {
+        "pe",
+        "price_to_sales",
+        "price_to_book",
+        "price_to_fcf",
+        "ev_to_ebit",
+        "ev_ebitda",
+    }
+)
+_HISTORICAL_POSITION_SCORES = {
+    "BELOW_HISTORICAL_RANGE": 80.0,
+    "BELOW_HISTORICAL_MEDIAN": 65.0,
+    "NEAR_HISTORICAL_MEDIAN": 50.0,
+    "ABOVE_HISTORICAL_MEDIAN": 35.0,
+    "ABOVE_HISTORICAL_RANGE": 20.0,
+}
+_PEER_POSITION_SCORES = {
+    "BELOW_PEER_MEDIAN": 65.0,
+    "AT_PEER_MEDIAN": 50.0,
+    "ABOVE_PEER_MEDIAN": 35.0,
+}
+_MIN_RELATIVE_VALUATION_PEER_SAMPLE = 3
+_RELATIVE_VALUATION_WEIGHT = 0.25
+
 
 def _present(value: Optional[float]) -> bool:
     return value is not None
@@ -195,19 +220,81 @@ def _balance_sheet(facts: SecurityFacts) -> DimensionResult:
     )
 
 
+def _relative_valuation_signal(
+    facts: SecurityFacts,
+) -> tuple[Optional[float], tuple[str, ...]]:
+    context = facts.valuation_context
+    if context is None:
+        return None, ()
+
+    scores: list[float] = []
+    reasons: list[str] = []
+    for metric in context.metrics:
+        if metric.code not in _LOWER_IS_BETTER_VALUATION_CODES:
+            continue
+
+        historical_score = _HISTORICAL_POSITION_SCORES.get(
+            metric.historical_position or ""
+        )
+        sample_count = metric.historical_sample_count
+        historical_sample_ok = sample_count is None or sample_count >= 3
+        if (
+            historical_score is not None
+            and metric.historical_median is not None
+            and historical_sample_ok
+        ):
+            scores.append(historical_score)
+            reasons.append(f"VALUATION_{metric.historical_position}")
+
+        peer_score = _PEER_POSITION_SCORES.get(
+            metric.peer_relative_position or ""
+        )
+        if (
+            peer_score is not None
+            and metric.peer_company_value is not None
+            and metric.peer_median is not None
+            and (metric.peer_count or 0) >= _MIN_RELATIVE_VALUATION_PEER_SAMPLE
+        ):
+            scores.append(peer_score)
+            reasons.append(f"VALUATION_{metric.peer_relative_position}")
+
+    if not scores:
+        return None, ()
+    return (
+        round(sum(scores) / len(scores), 1),
+        tuple(
+            dict.fromkeys(
+                ("VALUATION_RELATIVE_CONTEXT_USED", *reasons)
+            )
+        ),
+    )
+
+
 def _valuation(facts: SecurityFacts) -> DimensionResult:
     extra: list[str] = []
     if facts.pe is not None and facts.pe > 40:
         extra.append("VALUATION_EXPENSIVE")
     elif facts.pe is not None and 0 < facts.pe <= 18:
         extra.append("VALUATION_ATTRACTIVE")
+
+    relative_score, relative_reasons = _relative_valuation_signal(facts)
+    extra.extend(relative_reasons)
+    items = [
+        ("pe", inverse(facts.pe, 12, 40), 0.50),
+        ("price_to_sales", inverse(facts.price_to_sales, 1.5, 10), 0.25),
+        ("price_to_book", inverse(facts.price_to_book, 1.5, 10), 0.25),
+    ]
+    if relative_score is not None:
+        items.append(
+            (
+                "relative_valuation_context",
+                relative_score,
+                _RELATIVE_VALUATION_WEIGHT,
+            )
+        )
     return _dimension(
         DIM_VALUATION,
-        [
-            ("pe", inverse(facts.pe, 12, 40), 0.50),
-            ("price_to_sales", inverse(facts.price_to_sales, 1.5, 10), 0.25),
-            ("price_to_book", inverse(facts.price_to_book, 1.5, 10), 0.25),
-        ],
+        items,
         extra_reasons=tuple(extra),
     )
 

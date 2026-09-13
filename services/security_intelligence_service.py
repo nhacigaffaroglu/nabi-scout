@@ -55,15 +55,17 @@ def build_canonical_security_intelligence_inputs(
     participation_snapshot: Optional[Mapping[str, Any]] = None,
     queue_row: Optional[Mapping[str, Any]] = None,
     security_resolution: Any = None,
+    company_intelligence: Any = None,
     client: Any = None,
     facts_service: Optional[SecurityFactsService] = None,
 ) -> tuple[SecurityFacts, SecurityParticipationContext]:
-    """Shared Company Report / facade SI inputs. Persisted sources only."""
+    """Shared SI inputs; accepts caller-provided Company Intelligence without provider calls."""
     facts = (facts_service or SecurityFactsService()).build(
         symbol,
         candidate=candidate,
         participation_snapshot=participation_snapshot,
         security_resolution=security_resolution,
+        company_intelligence=company_intelligence,
         stale=str((candidate or {}).get("freshness_status") or "").upper() == "STALE",
         allow_sec_cache_replay=True,
         client=client,

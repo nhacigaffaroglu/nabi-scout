@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 if TYPE_CHECKING:
     from services.signal_intelligence_contract import SignalIntelligenceContext
 
-ENGINE_VERSION = "security_intelligence_8b.1"
-FACTS_VERSION = "security_facts_8c.1"
+ENGINE_VERSION = "security_intelligence_8b.2"
+FACTS_VERSION = "security_facts_8c.2"
 
 DIM_QUALITY = "QUALITY"
 DIM_GROWTH = "GROWTH"
@@ -235,6 +235,91 @@ class FactProvenance:
 
 
 @dataclass(frozen=True)
+class SecurityValuationMetricContext:
+    # Typed valuation evidence supplied to Security Intelligence.
+    # Current/historical and peer values remain separate because their period
+    # semantics can differ. Relative evidence never implies absolute fair value.
+
+    code: str
+    current_value: Optional[float] = None
+    fundamental_period_end: Optional[str] = None
+    market_data_as_of: Optional[str] = None
+    source_provider: Optional[str] = None
+    data_family: Optional[str] = None
+    authority: str = AUTHORITY_COMPANY_INTELLIGENCE
+    confidence: Optional[str] = None
+    alignment_status: Optional[str] = None
+    historical_median: Optional[float] = None
+    premium_to_historical_median_pct: Optional[float] = None
+    historical_position: Optional[str] = None
+    historical_sample_count: Optional[int] = None
+    historical_method: Optional[str] = None
+    peer_company_value: Optional[float] = None
+    peer_median: Optional[float] = None
+    peer_difference: Optional[float] = None
+    peer_percentile: Optional[float] = None
+    peer_count: Optional[int] = None
+    peer_relative_position: Optional[str] = None
+    peer_source_provider: Optional[str] = None
+    peer_data_family: Optional[str] = None
+    limitations: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "current_value": self.current_value,
+            "fundamental_period_end": self.fundamental_period_end,
+            "market_data_as_of": self.market_data_as_of,
+            "source_provider": self.source_provider,
+            "data_family": self.data_family,
+            "authority": self.authority,
+            "confidence": self.confidence,
+            "alignment_status": self.alignment_status,
+            "historical_median": self.historical_median,
+            "premium_to_historical_median_pct": self.premium_to_historical_median_pct,
+            "historical_position": self.historical_position,
+            "historical_sample_count": self.historical_sample_count,
+            "historical_method": self.historical_method,
+            "peer_company_value": self.peer_company_value,
+            "peer_median": self.peer_median,
+            "peer_difference": self.peer_difference,
+            "peer_percentile": self.peer_percentile,
+            "peer_count": self.peer_count,
+            "peer_relative_position": self.peer_relative_position,
+            "peer_source_provider": self.peer_source_provider,
+            "peer_data_family": self.peer_data_family,
+            "limitations": list(self.limitations),
+        }
+
+
+@dataclass(frozen=True)
+class SecurityValuationContext:
+    # Canonical typed valuation bridge into Security Intelligence.
+
+    metrics: tuple[SecurityValuationMetricContext, ...] = ()
+    as_of: Optional[str] = None
+    source: str = "company_intelligence"
+    authority: str = AUTHORITY_COMPANY_INTELLIGENCE
+    peer_selection_method: Optional[str] = None
+
+    def metric(self, code: str) -> Optional[SecurityValuationMetricContext]:
+        wanted = str(code or "").strip().lower()
+        for item in self.metrics:
+            if item.code == wanted:
+                return item
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "metrics": [item.to_dict() for item in self.metrics],
+            "as_of": self.as_of,
+            "source": self.source,
+            "authority": self.authority,
+            "peer_selection_method": self.peer_selection_method,
+        }
+
+
+@dataclass(frozen=True)
 class SecurityFacts:
     """Normalized factual inputs. Missing stays None. Never invent values."""
 
@@ -276,6 +361,7 @@ class SecurityFacts:
     price_to_book: Optional[float] = None
     ev_ebitda: Optional[float] = None
     fcf_yield: Optional[float] = None
+    valuation_context: Optional[SecurityValuationContext] = None
     debt_to_equity: Optional[float] = None
     net_debt: Optional[float] = None
     net_debt_to_fcf: Optional[float] = None
@@ -345,6 +431,11 @@ class SecurityFacts:
             "price_to_book": self.price_to_book,
             "ev_ebitda": self.ev_ebitda,
             "fcf_yield": self.fcf_yield,
+            "valuation_context": (
+                self.valuation_context.to_dict()
+                if self.valuation_context is not None
+                else None
+            ),
             "debt_to_equity": self.debt_to_equity,
             "net_debt": self.net_debt,
             "net_debt_to_fcf": self.net_debt_to_fcf,
