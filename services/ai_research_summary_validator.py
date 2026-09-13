@@ -72,14 +72,14 @@ RESEARCH_DOMAIN_ACRONYMS = frozenset(
 _TICKER_LIKE_TOKEN_PATTERN = re.compile(r"\b([A-Z]{2,5})\b")
 
 VALUATION_DISCLAIMER_MARKERS = (
-    "göreceli çekicilik",
-    "kanıt sınırlı",
-    "tarihsel ve benzer",
-    "karşılaştırması olmadığı",
+    # Only explicit denial language may neutralize a matched absolute term.
+    # Generic caveats such as "kanıt sınırlı" must never legitimize "ucuz/pahalı".
     "değerlendirilemez",
     "yapılmamalı",
     "yorumlanamaz",
     "yorumu yapılamaz",
+    "söylenemez",
+    "denemez",
 )
 
 
@@ -94,6 +94,57 @@ VALUATION_ATTRACTIVENESS_PATTERNS = (
     re.compile(r"\bovervalued\b", re.IGNORECASE),
     re.compile(r"\bundervalued\b", re.IGNORECASE),
 )
+
+
+HISTORICAL_RELATIVE_VALUATION_PATTERNS = (
+    re.compile(
+        r"\btarihsel\s+(?:medyan\w*|band\w*|aralık\w*)[^.\n]{0,48}"
+        r"\b(?:üzerinde|üstünde|altında|daha yüksek|daha düşük)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bhistorical\s+(?:median|range)[^.\n]{0,48}"
+        r"\b(?:above|below|higher|lower)\b",
+        re.IGNORECASE,
+    ),
+)
+
+PEER_RELATIVE_VALUATION_PATTERNS = (
+    re.compile(
+        r"\b(?:benzer şirket(?:ler)?|peer)\b[^.\n]{0,64}"
+        r"\b(?:medyan\w*|median)[^.\n]{0,48}"
+        r"\b(?:üzerinde|üstünde|altında|daha yüksek|daha düşük|above|below|higher|lower)\b",
+        re.IGNORECASE,
+    ),
+)
+
+RELATIVE_VALUATION_POST_NEGATION_MARKERS = (
+    " değil",
+    " degil",
+    " söylenemez",
+    " denemez",
+    " belirlenemez",
+    " yorumlanamaz",
+    " olmadığı",
+    " bilinmiyor",
+)
+
+
+def _relative_valuation_claim_violation(
+    text: str,
+    patterns: Sequence[re.Pattern[str]],
+) -> bool:
+    lowered = text.lower()
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            before = lowered[max(0, match.start() - 48):match.start()]
+            after = lowered[match.end():min(len(lowered), match.end() + 64)]
+            if any(marker in before for marker in NEGATION_MARKERS):
+                continue
+            if any(marker in after for marker in RELATIVE_VALUATION_POST_NEGATION_MARKERS):
+                continue
+            return True
+    return False
 
 
 def _valuation_attractiveness_violation(text: str) -> bool:
@@ -491,10 +542,31 @@ def validate_ai_research_summary(
             safety_flags.append("rebalance_instruction")
             break
 
-    if not constraints.historical_valuation_available:
-        if _valuation_attractiveness_violation(text):
-            reasons.append("unsupported_valuation_attractiveness")
-            safety_flags.append("valuation_attractiveness")
+    # Historical medians support relative-above/below statements, not absolute
+    # cheap/expensive/fair-value claims. Keep this guard active even when history exists.
+    if _valuation_attractiveness_violation(text):
+        reasons.append("unsupported_valuation_attractiveness")
+        safety_flags.append("valuation_attractiveness")
+
+    if (
+        not constraints.historical_valuation_available
+        and _relative_valuation_claim_violation(
+            text,
+            HISTORICAL_RELATIVE_VALUATION_PATTERNS,
+        )
+    ):
+        reasons.append("unsupported_historical_valuation_comparison")
+        safety_flags.append("historical_valuation_comparison")
+
+    if (
+        not constraints.peers_available
+        and _relative_valuation_claim_violation(
+            text,
+            PEER_RELATIVE_VALUATION_PATTERNS,
+        )
+    ):
+        reasons.append("unsupported_peer_valuation_comparison")
+        safety_flags.append("peer_valuation_comparison")
 
     for pattern in TARGET_PRICE_PATTERNS:
         if _pattern_matches_unnegated(text, pattern):

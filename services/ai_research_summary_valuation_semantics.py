@@ -30,6 +30,13 @@ def _compact_metrics(unified: UnifiedResearchContext) -> Tuple[dict[str, Any], .
                 "code": metric.get("code"),
                 "label": label,
                 "current_value": current_value,
+                "historical_median": metric.get("historical_median"),
+                "premium_to_median_pct": metric.get("premium_to_median_pct"),
+                "position": metric.get("position"),
+                "source_provider": metric.get("source_provider"),
+                "confidence": metric.get("confidence"),
+                "historical_sample_count": metric.get("historical_sample_count"),
+                "historical_method": metric.get("historical_method"),
             }
         )
     return tuple(metrics)
@@ -60,6 +67,18 @@ def _usable_peer_valuation_comparison_available(
     return False
 
 
+def _usable_historical_valuation_median_available(
+    metrics: Tuple[dict[str, Any], ...],
+) -> bool:
+    return any(metric.get("historical_median") is not None for metric in metrics)
+
+
+def _format_number(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.2f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
 def _format_metric_values_phrase(metrics: Tuple[dict[str, Any], ...]) -> str:
     parts: list[str] = []
     for metric in metrics[:5]:
@@ -67,12 +86,48 @@ def _format_metric_values_phrase(metrics: Tuple[dict[str, Any], ...]) -> str:
         value = metric.get("current_value")
         if not label or value is None:
             continue
-        if isinstance(value, float):
-            formatted = f"{value:.2f}".rstrip("0").rstrip(".")
-        else:
-            formatted = str(value)
-        parts.append(f"{label} {formatted}")
+        parts.append(f"{label} {_format_number(value)}")
     return ", ".join(parts)
+
+
+def _historical_position_phrase(position: Any) -> Optional[str]:
+    mapping = {
+        "ABOVE_HISTORICAL_RANGE": "tarihsel bandın üzerinde",
+        "ABOVE_HISTORICAL_MEDIAN": "tarihsel medyanın üzerinde",
+        "BELOW_HISTORICAL_RANGE": "tarihsel bandın altında",
+        "BELOW_HISTORICAL_MEDIAN": "tarihsel medyanın altında",
+        "NEAR_HISTORICAL_MEDIAN": "tarihsel medyan civarında",
+    }
+    return mapping.get(str(position or "").strip().upper())
+
+
+def _format_historical_relative_phrase(metrics: Tuple[dict[str, Any], ...]) -> str:
+    parts: list[str] = []
+    for metric in metrics[:5]:
+        current = metric.get("current_value")
+        median = metric.get("historical_median")
+        if current is None or median is None:
+            continue
+        label = str(metric.get("label") or metric.get("code") or "").strip()
+        if not label:
+            continue
+        premium = metric.get("premium_to_median_pct")
+        position = _historical_position_phrase(metric.get("position"))
+        detail = (
+            f"{label} {_format_number(current)}; tarihsel medyan {_format_number(median)}"
+        )
+        if isinstance(premium, (int, float)):
+            premium_value = float(premium)
+            if premium_value > 0:
+                detail += f"; medyana göre %{_format_number(abs(premium_value))} daha yüksek"
+            elif premium_value < 0:
+                detail += f"; medyana göre %{_format_number(abs(premium_value))} daha düşük"
+            else:
+                detail += "; tarihsel medyan ile aynı"
+        if position:
+            detail += f" ({position})"
+        parts.append(detail)
+    return "; ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -85,30 +140,49 @@ class ValuationSemantics:
     available_metrics: Tuple[dict[str, Any], ...]
 
     def recommended_summary_framing(self, *, include_values: bool = False) -> Optional[str]:
-        if self.current_metrics_available and self.relative_valuation_context_limited:
-            if include_values:
-                values_phrase = _format_metric_values_phrase(self.available_metrics)
-                if values_phrase:
-                    return (
-                        f"Hibrit yıllık değerleme oranları ({values_phrase}) mevcut; ancak tarihsel "
-                        "medyan ve benzer şirket karşılaştırması olmadığı için göreceli "
-                        "değerleme yorumu sınırlı."
-                    )
-            labels = ", ".join(
-                str(metric.get("label") or metric.get("code") or "").strip()
-                for metric in self.available_metrics[:5]
-                if str(metric.get("label") or metric.get("code") or "").strip()
-            )
-            if labels:
-                return (
-                    f"Hibrit yıllık değerleme oranları ({labels}) mevcut; ancak tarihsel "
-                    "medyan ve benzer şirket karşılaştırması olmadığı için göreceli "
-                    "değerleme yorumu sınırlı."
+        if self.current_metrics_available and self.historical_median_available:
+            historical_phrase = _format_historical_relative_phrase(self.available_metrics)
+            if historical_phrase:
+                peer_note = (
+                    " Benzer şirket karşılaştırması mevcut değil."
+                    if not self.peer_comparison_available
+                    else ""
                 )
-            return (
-                "Hibrit yıllık değerleme oranları mevcut; ancak tarihsel medyan ve benzer "
-                "şirket karşılaştırması olmadığı için göreceli değerleme yorumu sınırlı."
+                return (
+                    "Tarihsel göreceli değerleme: "
+                    f"{historical_phrase}.{peer_note}"
+                ).strip()
+        if self.current_metrics_available and self.relative_valuation_context_limited:
+            values_phrase = (
+                _format_metric_values_phrase(self.available_metrics)
+                if include_values
+                else ", ".join(
+                    str(metric.get("label") or metric.get("code") or "").strip()
+                    for metric in self.available_metrics[:5]
+                    if str(metric.get("label") or metric.get("code") or "").strip()
+                )
             )
+            prefix = (
+                f"Hibrit yıllık değerleme oranları ({values_phrase}) mevcut"
+                if values_phrase
+                else "Hibrit yıllık değerleme oranları mevcut"
+            )
+            if not self.historical_median_available and self.peer_comparison_available:
+                return (
+                    f"{prefix}; benzer şirket değerleme karşılaştırması mevcut, ancak "
+                    "tarihsel medyan mevcut değil. Tarihsel göreceli değerleme bağlamı sınırlı."
+                )
+            if not self.historical_median_available and not self.peer_comparison_available:
+                return (
+                    f"{prefix}; ancak tarihsel medyan ve benzer şirket karşılaştırması "
+                    "mevcut değil. Göreceli değerleme yorumu sınırlı."
+                )
+            if self.historical_median_available and not self.peer_comparison_available:
+                return (
+                    f"{prefix}; tarihsel medyan bağlamı mevcut, ancak benzer şirket "
+                    "karşılaştırması mevcut değil."
+                )
+            return prefix
         if not self.current_metrics_available:
             return "Mevcut değerleme oranları hesaplanamıyor."
         return None
@@ -158,11 +232,21 @@ def valuation_semantics_from_snapshot(payload: Optional[Mapping[str, Any]]) -> O
                 "code": metric.get("code"),
                 "label": label,
                 "current_value": current_value,
+                "historical_median": metric.get("historical_median"),
+                "premium_to_median_pct": metric.get("premium_to_median_pct"),
+                "position": metric.get("position"),
+                "source_provider": metric.get("source_provider"),
+                "confidence": metric.get("confidence"),
+                "historical_sample_count": metric.get("historical_sample_count"),
+                "historical_method": metric.get("historical_method"),
             }
         )
     return ValuationSemantics(
         current_metrics_available=bool(payload.get("current_valuation_metrics_available")),
-        historical_median_available=bool(payload.get("historical_valuation_median_available")),
+        historical_median_available=(
+            bool(payload.get("historical_valuation_median_available"))
+            and _usable_historical_valuation_median_available(tuple(available_metrics))
+        ),
         peer_comparison_available=bool(payload.get("peer_valuation_comparison_available")),
         relative_valuation_context_limited=bool(payload.get("relative_valuation_context_limited")),
         thesis_valuation_context_code=(
@@ -185,7 +269,10 @@ def derive_valuation_semantics(unified: UnifiedResearchContext) -> ValuationSema
     dq = merged_unified_data_quality(unified)
     available_metrics = _compact_metrics(unified)
     current_metrics_available = bool(dq.get("valuation_available")) or bool(available_metrics)
-    historical_median_available = bool(dq.get("historical_valuation_available"))
+    historical_median_available = (
+        bool(dq.get("historical_valuation_available"))
+        and _usable_historical_valuation_median_available(available_metrics)
+    )
     peer_comparison_available = _usable_peer_valuation_comparison_available(unified)
     relative_valuation_context_limited = (
         not historical_median_available or not peer_comparison_available

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 AI_RESEARCH_SUMMARY_VERSION = "ai-research-summary-v1"
-AI_RESEARCH_SUMMARY_DISPLAY_VERSION = "display-polish-v3"
+AI_RESEARCH_SUMMARY_DISPLAY_VERSION = "display-polish-v4"
 
 SUMMARY_STATUSES = ("AVAILABLE", "UNAVAILABLE", "VALIDATION_FAILED")
 EVIDENCE_LEVELS = ("STRONG", "MODERATE", "LIMITED")

@@ -1261,7 +1261,7 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
         self.assertNotIn("hesaplanamıyor", polished.valuation_summary.lower())
         self.assertIn("P/S", polished.valuation_summary)
         self.assertIn("3.87", polished.valuation_summary)
-        self.assertIn("göreceli değerleme yorumu sınırlı", polished.valuation_summary)
+        self.assertIn("göreceli değerleme yorumu sınırlı", polished.valuation_summary.lower())
 
     def test_hybrid_valuation_wording_distinguishes_metrics_and_context(self) -> None:
         from services.ai_research_summary_display import polish_ai_research_summary_view
@@ -1278,7 +1278,7 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
         )
         self.assertNotIn("VALUATION_UNAVAILABLE", polished.valuation_summary)
         self.assertIn("P/S", polished.valuation_summary)
-        self.assertIn("göreceli değerleme yorumu sınırlı", polished.valuation_summary)
+        self.assertIn("göreceli değerleme yorumu sınırlı", polished.valuation_summary.lower())
 
     def test_no_metrics_keeps_unavailable_wording(self) -> None:
         from services.ai_research_summary_display import polish_valuation_summary_text
@@ -1388,7 +1388,14 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
             company_intelligence={
                 "symbol": "CRM",
                 "valuation_metrics": [
-                    {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                    {
+                        "code": "price_to_sales",
+                        "label": "P/S",
+                        "current_value": 3.87,
+                        "historical_median": 4.0,
+                        "premium_to_median_pct": -3.25,
+                        "position": "NEAR_HISTORICAL_MEDIAN",
+                    },
                 ],
                 "peer_observations": [],
                 "data_quality": {
@@ -1428,7 +1435,14 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
             company_intelligence={
                 "symbol": "CRM",
                 "valuation_metrics": [
-                    {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                    {
+                        "code": "price_to_sales",
+                        "label": "P/S",
+                        "current_value": 3.87,
+                        "historical_median": 4.0,
+                        "premium_to_median_pct": -3.25,
+                        "position": "NEAR_HISTORICAL_MEDIAN",
+                    },
                 ],
                 "peer_comparisons": [
                     {
@@ -1478,7 +1492,14 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
             company_intelligence={
                 "symbol": "CRM",
                 "valuation_metrics": [
-                    {"code": "price_to_sales", "label": "P/S", "current_value": 3.87},
+                    {
+                        "code": "price_to_sales",
+                        "label": "P/S",
+                        "current_value": 3.87,
+                        "historical_median": 4.0,
+                        "premium_to_median_pct": -3.25,
+                        "position": "NEAR_HISTORICAL_MEDIAN",
+                    },
                 ],
                 "peer_comparisons": [
                     {
@@ -1617,7 +1638,7 @@ class AIResearchSummaryDisplayTests(unittest.TestCase):
         from services import ai_research_summary_service as summary_service_module
         from unittest.mock import patch
 
-        self.assertEqual(AI_RESEARCH_SUMMARY_DISPLAY_VERSION, "display-polish-v3")
+        self.assertEqual(AI_RESEARCH_SUMMARY_DISPLAY_VERSION, "display-polish-v4")
         kwargs = {
             "symbol": "CRM",
             "participation_result": None,

@@ -124,8 +124,12 @@ def compute_ci_semantic_fingerprint(
                 metric.code,
                 metric.current_value,
                 metric.historical_median,
+                metric.premium_to_median_pct,
                 metric.position,
+                metric.source_provider,
+                metric.confidence,
                 metric.alignment_status,
+                tuple(metric.components),
             )
             for metric in (valuation.metrics if valuation else ())
         ),
@@ -184,6 +188,7 @@ def build_summary_constraints(
 ) -> AIResearchSummaryConstraints:
     ci = unified.company_intelligence or {}
     dq = merged_unified_data_quality(unified)
+    valuation_semantics = derive_valuation_semantics(unified)
     thesis = unified.investment_thesis or {}
     participation = unified.participation_context
     return AIResearchSummaryConstraints(
@@ -194,8 +199,8 @@ def build_summary_constraints(
         evidence_level=evidence_level,
         earnings_available=bool(dq.get("earnings_expectations_available")),
         news_available=bool(dq.get("news_available")),
-        peers_available=bool(dq.get("peer_data_available")),
-        historical_valuation_available=bool(dq.get("historical_valuation_available")),
+        peers_available=valuation_semantics.peer_comparison_available,
+        historical_valuation_available=valuation_semantics.historical_median_available,
         allowed_symbols=(unified.symbol,),
         context_uppercase_tokens=extract_context_uppercase_tokens(unified.to_dict()),
     )

@@ -33,8 +33,14 @@ Authoritative rules:
   VALUATION_UNAVAILABLE refers only to limited relative/historical/peer context,
   not missing current valuation metrics.
   Prefer recommended_valuation_summary_framing when provided.
-- If historical valuation median or peer benchmark is unavailable, use safe wording such as:
-  "Değerleme oranları hesaplanabiliyor ancak tarihsel ve benzer şirket karşılaştırması olmadığı için göreceli çekicilik konusunda kanıt sınırlı."
+- Historical valuation medians authorize only relative historical statements already present in context,
+  such as above/below the historical median or range. They never prove absolute cheapness,
+  expensiveness, fair value, or a target price.
+  Historical and peer-relative evidence, alone or together, never authorizes an absolute
+  cheap/expensive, fair-value, or target-price conclusion.
+- Peer comparison is an independent evidence dimension. If peer evidence is unavailable, do not
+  invent peer-relative conclusions even when historical valuation is available.
+- If historical valuation median or peer benchmark is unavailable, disclose the missing comparison.
   Do not use the words ucuz, pahalı, iskontolu, aşırı değerli, cazip değerleme, fair value, target price, or adil değer.
 - If earnings/news/peers sections are unavailable, state that evidence is missing; do not infer absence of risk.
 - Deterministic thesis status and confidence in context are authoritative; do not upgrade them.
@@ -108,8 +114,15 @@ def build_authoritative_constraints(
             "news_available": bool(dq.get("news_available")),
             "catalyst_data_available": bool(dq.get("catalyst_data_available")),
         },
-        "valuation_attractiveness_claims_allowed": bool(
-            dq.get("historical_valuation_available")
+        # Historical medians support relative comparisons only; they do not establish
+        # absolute attractiveness or fair value. Keep this false until an explicit
+        # fair-value evidence model exists.
+        "valuation_attractiveness_claims_allowed": False,
+        "historical_relative_valuation_claims_allowed": (
+            valuation_semantics.historical_median_available
+        ),
+        "peer_relative_valuation_claims_allowed": (
+            valuation_semantics.peer_comparison_available
         ),
         "news_absence_inference_allowed": False,
     }

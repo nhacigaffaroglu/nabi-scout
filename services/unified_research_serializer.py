@@ -55,13 +55,19 @@ def serialize_company_intelligence_for_adviser(
         for metric in view.valuation.metrics[:5]:
             if not metric.meaningful:
                 continue
+            components = dict(metric.components)
             valuation_metrics.append(
                 {
                     "code": metric.code,
                     "label": metric.label,
                     "current_value": metric.current_value,
+                    "historical_median": metric.historical_median,
                     "position": metric.position,
                     "premium_to_median_pct": metric.premium_to_median_pct,
+                    "source_provider": metric.source_provider,
+                    "confidence": metric.confidence,
+                    "historical_sample_count": components.get("historical_sample_count"),
+                    "historical_method": components.get("historical_method"),
                 }
             )
     return {
