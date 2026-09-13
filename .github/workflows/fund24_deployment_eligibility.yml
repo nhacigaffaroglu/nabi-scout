@@ -83,6 +83,12 @@ jobs:
               return {
                   "fund_code": code,
                   "canonical_decision": action,
+                  "canonical_decision_payload": {
+                      "decision": action,
+                      "exposure_increase_allowed": (
+                          action == DECISION_CONSIDER_NEW_POSITION
+                      ),
+                  },
                   "canonical_decision_source_rank": rank,
                   "decision_evaluation_source_rank": rank,
                   "decision_rank": rank,
