@@ -114,9 +114,15 @@ def _build_idempotency_key(
 
 
 def _assert_fund25_firewall(artifact: Mapping[str, Any]) -> None:
-    if artifact.get("schema") != INPUT_SCHEMA:
+    schema = artifact.get("schema_version", artifact.get("schema"))
+    status = artifact.get(
+        "allocation_integration_status",
+        artifact.get("status"),
+    )
+
+    if schema != INPUT_SCHEMA:
         raise FundWealthOsIntegrationContractError("fund25_schema_mismatch")
-    if artifact.get("status") != INPUT_STATUS:
+    if status != INPUT_STATUS:
         raise FundWealthOsIntegrationContractError("fund25_status_mismatch")
     if artifact.get("research_only") is not True:
         raise FundWealthOsIntegrationContractError(
@@ -209,7 +215,10 @@ def build_fund_wealth_os_integration_artifact(
     artifact = _as_dict(fund25_artifact, field="fund25_artifact")
     _assert_fund25_firewall(artifact)
 
-    rows = _as_list(artifact.get("rows"), field="fund25_rows")
+    rows_value = artifact.get("candidates")
+    if rows_value is None:
+        rows_value = artifact.get("rows")
+    rows = _as_list(rows_value, field="fund25_rows")
     source_generated_at = (
         str(artifact.get("generated_at") or "").strip()
         or None
@@ -292,11 +301,11 @@ def build_fund_wealth_os_integration_artifact(
             "idempotency_key": idempotency_key,
             "notes": (
                 f"NABI FUND26 Wealth OS handoff; "
-                f"source_schema={INPUT_SCHEMA}; source_rank={rank}"
+                f"source_schema={OUTPUT_SCHEMA}; source_rank={rank}"
             ),
             "source_rank": rank,
-            "source_schema": INPUT_SCHEMA,
-            "source_status": INPUT_STATUS,
+            "source_schema": OUTPUT_SCHEMA,
+            "source_status": OUTPUT_STATUS,
             "execution_ready": handoff_ready,
         }
 
