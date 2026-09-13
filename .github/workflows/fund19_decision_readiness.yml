@@ -1,0 +1,170 @@
+name: FUND19 Decision Readiness
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_decision_readiness_research.py"
+      - "tests/test_turkiye_fund_decision_readiness_research.py"
+      - "tests/test_fund19_decision_readiness_workflow.py"
+      - ".github/workflows/fund19_decision_readiness.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_decision_readiness_research.py"
+      - "tests/test_turkiye_fund_decision_readiness_research.py"
+      - "tests/test_fund19_decision_readiness_workflow.py"
+      - ".github/workflows/fund19_decision_readiness.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund19-decision-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-readiness-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND19 focused contract tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_decision_readiness_research.py \
+            tests/test_fund19_decision_readiness_workflow.py
+
+      - name: Compile FUND19
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_decision_readiness_research.py
+
+      - name: Validate FUND19 firewall
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from services.turkiye_fund_decision_readiness_research import (
+              READINESS_READY,
+              build_decision_readiness_artifact,
+          )
+
+          zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+
+          evidence = {
+              "schema_version": "fund18_portfolio_fit_evidence_1",
+              "fund_code": "IAT",
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "dimensions": {},
+          }
+
+          fund18 = {
+              "schema_version":
+                  "fund18_portfolio_fit_research_artifact_1",
+              "source": {
+                  "fund17_schema_version":
+                      "fund17_portfolio_fit_artifact_1",
+                  "source": {},
+              },
+              "generated_at": "2026-09-13T12:00:00Z",
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "portfolio_context": {
+                  "schema_version": "fund17_portfolio_context_1",
+              },
+              "portfolio_fit_status":
+                  "DESCRIPTIVE_RESEARCH_COMPLETE",
+              "portfolio_fit_winner": None,
+              "portfolio_fit_composite_score": None,
+              "recommendation": None,
+              "counts": {
+                  "candidates": 1,
+                  "descriptive_assessments": 1,
+              },
+              "candidates": [
+                  {
+                      "fund_code": "IAT",
+                      "fund_name": "IAT Fund",
+                      "category": "sukuk",
+                      "fi_score": 60.49,
+                      "fi_state": "NEUTRAL",
+                      "return_1y": 40.76,
+                      "return_1y_rank": None,
+                      "max_drawdown": -0.22,
+                      "drawdown_resilience_rank": None,
+                      "role_fit": "STRONG",
+                      "economic_overlap": "LOW",
+                      "diversification_contribution": "HIGH",
+                      "concentration_risk": "LOW",
+                      "rationale": [
+                          "Synthetic CI fixture only."
+                      ],
+                      "evidence": evidence,
+                      "portfolio_fit_composite_score": None,
+                      "portfolio_fit_rank": None,
+                      "recommendation": None,
+                  }
+              ],
+              "write_proof": zero,
+          }
+
+          result = build_decision_readiness_artifact(
+              fund18,
+              generated_at="2026-09-13T13:00:00Z",
+          )
+
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+          assert result["production_persist"] is False
+
+          assert result["portfolio_fit_winner"] is None
+          assert result["portfolio_fit_composite_score"] is None
+          assert result["recommendation"] is None
+
+          assert result["write_proof"] == zero
+
+          row = result["candidates"][0]
+
+          assert row["decision_readiness"] == READINESS_READY
+          assert row["portfolio_fit_composite_score"] is None
+          assert row["portfolio_fit_rank"] is None
+          assert row["recommendation"] is None
+
+          assert "allocation" not in row
+          assert "eight_e_action" not in row
+          assert "new_money_action" not in row
+
+          print("PASS: FUND19 readiness only")
+          print("PASS: no score/rank/winner/recommendation")
+          print("PASS: no writes/execution/8E/New Money")
+          PY
