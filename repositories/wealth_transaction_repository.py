@@ -62,6 +62,26 @@ class WealthTransactionRepository:
         )
         return bool(response.data)
 
+    def get_by_idempotency_key(
+        self,
+        user_id: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        normalized_key = str(idempotency_key or "").strip()
+        if not normalized_key:
+            return None
+
+        response = (
+            self.client.table(self.table)
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("idempotency_key", normalized_key)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return rows[0] if rows else None
+
     def insert(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = self.client.table(self.table).insert(payload).execute()
         rows = response.data or []

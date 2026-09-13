@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
+from postgrest.exceptions import APIError
 
 from repositories.wealth_account_repository import WealthAccountRepository
 from repositories.wealth_asset_repository import WealthAssetRepository
@@ -314,6 +315,38 @@ class WealthCoreService:
             cost_currency=cost_currency,
         )
 
+    @staticmethod
+    def _idempotent_transaction_matches(
+        existing: Dict[str, Any],
+        *,
+        account_id: str,
+        asset_id: Optional[str],
+        txn_type: str,
+        quantity: float,
+        amount: float,
+        currency: str,
+        price: Optional[float],
+        reversal_of_id: Optional[str],
+    ) -> bool:
+        def _same_number(left: Any, right: Any, *, tolerance: float = 1e-6) -> bool:
+            if left is None or right is None:
+                return left is None and right is None
+            try:
+                return abs(float(left) - float(right)) <= tolerance
+            except (TypeError, ValueError):
+                return False
+
+        return (
+            str(existing.get("account_id") or "") == str(account_id or "")
+            and str(existing.get("asset_id") or "") == str(asset_id or "")
+            and str(existing.get("txn_type") or "").strip().lower() == str(txn_type or "").strip().lower()
+            and _same_number(existing.get("quantity"), quantity)
+            and _same_number(existing.get("amount"), amount)
+            and str(existing.get("currency") or "").strip().upper() == str(currency or "").strip().upper()
+            and _same_number(existing.get("price"), price)
+            and str(existing.get("reversal_of_id") or "") == str(reversal_of_id or "")
+        )
+
     def post_transaction(
         self,
         *,
@@ -327,6 +360,7 @@ class WealthCoreService:
         executed_at: Optional[str] = None,
         notes: Optional[str] = None,
         reversal_of_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized_type = self._validate_transaction_payload(
             account_id=account_id,
@@ -349,6 +383,29 @@ class WealthCoreService:
                 price=price,
                 amount=amount,
             )
+
+        normalized_idempotency_key = str(idempotency_key or "").strip() or None
+        if normalized_idempotency_key:
+            existing = self.transactions.get_by_idempotency_key(
+                self.user_id,
+                normalized_idempotency_key,
+            )
+            if existing is not None:
+                if not self._idempotent_transaction_matches(
+                    existing,
+                    account_id=account_id,
+                    asset_id=asset_id,
+                    txn_type=normalized_type,
+                    quantity=quantity,
+                    amount=normalized_amount,
+                    currency=currency,
+                    price=price,
+                    reversal_of_id=reversal_of_id,
+                ):
+                    raise WealthValidationError(
+                        "Idempotency key daha önce farklı bir işlem için kullanılmış."
+                    )
+                return existing
 
         if reversal_of_id:
             self._validate_reversal_before_insert(
@@ -397,7 +454,48 @@ class WealthCoreService:
             "notes": notes.strip() if notes else None,
             "reversal_of_id": reversal_of_id,
         }
-        inserted = self.transactions.insert(payload)
+        if normalized_idempotency_key is not None:
+            payload["idempotency_key"] = normalized_idempotency_key
+        try:
+            inserted = self.transactions.insert(payload)
+        except APIError as exc:
+            error_payload = {}
+            if exc.args:
+                raw_error = exc.args[0]
+                if isinstance(raw_error, dict):
+                    error_payload = raw_error
+                else:
+                    try:
+                        import ast
+                        parsed_error = ast.literal_eval(str(raw_error))
+                        if isinstance(parsed_error, dict):
+                            error_payload = parsed_error
+                    except (ValueError, SyntaxError):
+                        error_payload = {}
+
+            if (
+                normalized_idempotency_key
+                and str(error_payload.get("code") or "") == "23505"
+            ):
+                existing = self.transactions.get_by_idempotency_key(
+                    self.user_id,
+                    normalized_idempotency_key,
+                )
+
+                if existing is not None and self._idempotent_transaction_matches(
+                    existing,
+                    account_id=account_id,
+                    asset_id=asset_id,
+                    txn_type=normalized_type,
+                    quantity=quantity,
+                    amount=normalized_amount,
+                    currency=currency,
+                    price=price,
+                    reversal_of_id=reversal_of_id,
+                ):
+                    return existing
+
+            raise
 
         if asset_id:
             try:

@@ -102,6 +102,243 @@ class WealthCoreServiceTests(unittest.TestCase):
             "asset-1",
         )
 
+    def test_post_transaction_idempotent_replay_returns_existing_transaction(self) -> None:
+        existing = {
+            "id": "txn-existing",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "buy",
+            "quantity": 10,
+            "amount": 1000,
+            "currency": "USD",
+            "price": 100,
+            "reversal_of_id": None,
+            "idempotency_key": "fund27:test:001",
+        }
+        self.service.transactions.get_by_idempotency_key = MagicMock(
+            return_value=existing
+        )
+        self.service.transactions.insert = MagicMock()
+
+        result = self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="buy",
+            quantity=10,
+            price=100,
+            amount=1000,
+            currency="USD",
+            idempotency_key="  fund27:test:001  ",
+        )
+
+        self.assertEqual(result, existing)
+        self.service.transactions.get_by_idempotency_key.assert_called_once_with(
+            self.user_id,
+            "fund27:test:001",
+        )
+        self.service.transactions.insert.assert_not_called()
+
+    def test_post_transaction_rejects_idempotency_key_payload_mismatch(self) -> None:
+        existing = {
+            "id": "txn-existing",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "buy",
+            "quantity": 10,
+            "amount": 1000,
+            "currency": "USD",
+            "price": 100,
+            "reversal_of_id": None,
+            "idempotency_key": "fund27:test:002",
+        }
+        self.service.transactions.get_by_idempotency_key = MagicMock(
+            return_value=existing
+        )
+        self.service.transactions.insert = MagicMock()
+
+        with self.assertRaises(WealthValidationError):
+            self.service.post_transaction(
+                account_id="acc-1",
+                asset_id="asset-1",
+                txn_type="buy",
+                quantity=10,
+                price=100,
+                amount=1200,
+                currency="USD",
+                idempotency_key="fund27:test:002",
+            )
+
+        self.service.transactions.insert.assert_not_called()
+
+    def test_post_transaction_persists_normalized_idempotency_key(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+
+        self.service.transactions.get_by_idempotency_key = MagicMock(
+            return_value=None
+        )
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.insert = MagicMock(
+            return_value={
+                "id": "txn-new",
+                "txn_type": "buy",
+                "idempotency_key": "fund27:test:003",
+            }
+        )
+        self.service.transactions.list_for_position = MagicMock(
+            return_value=[
+                {
+                    "txn_type": "buy",
+                    "quantity": 10,
+                    "amount": 1000,
+                    "executed_at": "2026-01-01",
+                    "created_at": "2026-01-01",
+                }
+            ]
+        )
+        self.service.positions.upsert = MagicMock(return_value={"quantity": 10})
+
+        result = self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="buy",
+            quantity=10,
+            price=100,
+            amount=1000,
+            currency="USD",
+            idempotency_key="  fund27:test:003  ",
+        )
+
+        self.assertEqual(result["id"], "txn-new")
+        payload = self.service.transactions.insert.call_args.args[0]
+        self.assertEqual(payload["idempotency_key"], "fund27:test:003")
+
+    def test_post_transaction_without_idempotency_key_preserves_legacy_path(self) -> None:
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+
+        self.service.transactions.get_by_idempotency_key = MagicMock()
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.insert = MagicMock(
+            return_value={"id": "txn-legacy", "txn_type": "buy"}
+        )
+        self.service.transactions.list_for_position = MagicMock(
+            return_value=[
+                {
+                    "txn_type": "buy",
+                    "quantity": 1,
+                    "amount": 100,
+                    "executed_at": "2026-01-01",
+                    "created_at": "2026-01-01",
+                }
+            ]
+        )
+        self.service.positions.upsert = MagicMock(return_value={"quantity": 1})
+
+        self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="buy",
+            quantity=1,
+            price=100,
+            amount=100,
+        )
+
+        self.service.transactions.get_by_idempotency_key.assert_not_called()
+        payload = self.service.transactions.insert.call_args.args[0]
+        self.assertNotIn("idempotency_key", payload)
+
+    def test_post_transaction_recovers_from_concurrent_idempotency_unique_violation(self) -> None:
+        from postgrest.exceptions import APIError
+
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+        existing = {
+            "id": "txn-race-winner",
+            "account_id": "acc-1",
+            "asset_id": "asset-1",
+            "txn_type": "buy",
+            "quantity": 2,
+            "amount": 100,
+            "currency": "USD",
+            "price": 50,
+            "reversal_of_id": None,
+            "idempotency_key": "fund27:race:001",
+        }
+
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.get_by_idempotency_key = MagicMock(
+            side_effect=[None, existing]
+        )
+        self.service.transactions.list_for_position = MagicMock(return_value=[])
+        self.service.transactions.insert = MagicMock(
+            side_effect=APIError(
+                {
+                    "message": "duplicate key value violates unique constraint",
+                    "code": "23505",
+                    "hint": None,
+                    "details": None,
+                }
+            )
+        )
+        self.service.positions.upsert = MagicMock()
+
+        result = self.service.post_transaction(
+            account_id="acc-1",
+            asset_id="asset-1",
+            txn_type="buy",
+            quantity=2,
+            price=50,
+            amount=100,
+            currency="USD",
+            idempotency_key="fund27:race:001",
+        )
+
+        self.assertEqual(result, existing)
+        self.assertEqual(
+            self.service.transactions.get_by_idempotency_key.call_count,
+            2,
+        )
+        self.service.positions.upsert.assert_not_called()
+
+    def test_post_transaction_does_not_swallow_non_unique_database_error(self) -> None:
+        from postgrest.exceptions import APIError
+
+        account = {"id": "acc-1", "currency": "USD"}
+        asset = {"id": "asset-1", "currency": "USD"}
+
+        self.service.accounts.get_by_id = MagicMock(return_value=account)
+        self.service.assets.get_by_id = MagicMock(return_value=asset)
+        self.service.transactions.get_by_idempotency_key = MagicMock(
+            return_value=None
+        )
+        self.service.transactions.list_for_position = MagicMock(return_value=[])
+        self.service.transactions.insert = MagicMock(
+            side_effect=APIError(
+                {
+                    "message": "database unavailable",
+                    "code": "08006",
+                    "hint": None,
+                    "details": None,
+                }
+            )
+        )
+
+        with self.assertRaises(APIError):
+            self.service.post_transaction(
+                account_id="acc-1",
+                asset_id="asset-1",
+                txn_type="buy",
+                quantity=2,
+                price=50,
+                amount=100,
+                currency="USD",
+                idempotency_key="fund27:race:002",
+            )
+
     def test_register_asset_is_idempotent(self) -> None:
         existing = {"id": "asset-1", "symbol": "AAPL"}
         self.service.assets.find_by_identity = MagicMock(return_value=existing)
