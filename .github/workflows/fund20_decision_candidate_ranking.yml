@@ -1,0 +1,178 @@
+name: FUND20 Decision Candidate Ranking
+
+on:
+  pull_request:
+    paths:
+      - "services/turkiye_fund_decision_candidate_ranking.py"
+      - "tests/test_turkiye_fund_decision_candidate_ranking.py"
+      - "tests/test_fund20_decision_candidate_ranking_workflow.py"
+      - ".github/workflows/fund20_decision_candidate_ranking.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_decision_candidate_ranking.py"
+      - "tests/test_turkiye_fund_decision_candidate_ranking.py"
+      - "tests/test_fund20_decision_candidate_ranking_workflow.py"
+      - ".github/workflows/fund20_decision_candidate_ranking.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund20-decision-ranking-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  decision-candidate-ranking-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install application dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install test runner
+        run: python -m pip install pytest
+
+      - name: FUND20 focused contract tests
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q \
+            tests/test_turkiye_fund_decision_candidate_ranking.py \
+            tests/test_fund20_decision_candidate_ranking_workflow.py
+
+      - name: Compile FUND20
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_decision_candidate_ranking.py
+
+      - name: Validate FUND20 firewall
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from services.turkiye_fund_decision_candidate_ranking import (
+              build_decision_candidate_ranking_artifact,
+          )
+
+          zero = {
+              "production_writes": 0,
+              "trade_actions": 0,
+              "orders": 0,
+              "portfolio_writes": 0,
+              "eight_e_calls": 0,
+              "new_money_calls": 0,
+          }
+
+          fund19 = {
+              "schema_version":
+                  "fund19_decision_readiness_artifact_1",
+              "source": {},
+              "generated_at": "2026-09-13T13:00:00Z",
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "decision_readiness_status":
+                  "DECISION_READINESS_RESEARCH_COMPLETE",
+              "portfolio_fit_winner": None,
+              "portfolio_fit_composite_score": None,
+              "recommendation": None,
+              "counts": {
+                  "candidates": 2,
+                  "ready": 2,
+                  "not_ready": 0,
+              },
+              "candidates": [
+                  {
+                      "fund_code": "AAA",
+                      "fund_name": "AAA Fund",
+                      "category": "sukuk",
+                      "fi_score": 95.0,
+                      "fi_state": "ATTRACTIVE",
+                      "data_completeness": 0.95,
+                      "confidence": 0.95,
+                      "role_fit": "PARTIAL",
+                      "economic_overlap": "LOW",
+                      "diversification_contribution": "HIGH",
+                      "concentration_risk": "LOW",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "portfolio_fit_composite_score": None,
+                      "portfolio_fit_rank": None,
+                      "recommendation": None,
+                  },
+                  {
+                      "fund_code": "BBB",
+                      "fund_name": "BBB Fund",
+                      "category": "sukuk",
+                      "fi_score": 70.0,
+                      "fi_state": "NEUTRAL",
+                      "data_completeness": 0.90,
+                      "confidence": 0.90,
+                      "role_fit": "STRONG",
+                      "economic_overlap": "LOW",
+                      "diversification_contribution": "HIGH",
+                      "concentration_risk": "LOW",
+                      "decision_readiness": "READY",
+                      "decision_readiness_reasons": [],
+                      "portfolio_fit_composite_score": None,
+                      "portfolio_fit_rank": None,
+                      "recommendation": None,
+                  },
+              ],
+              "write_proof": zero,
+          }
+
+          result = build_decision_candidate_ranking_artifact(
+              fund19,
+              generated_at="2026-09-13T14:00:00Z",
+          )
+
+          rows = {
+              row["fund_code"]: row
+              for row in result["candidates"]
+          }
+
+          assert rows["BBB"]["decision_rank"] == 1
+          assert rows["AAA"]["decision_rank"] == 2
+
+          assert result["decision_winner"] is None
+          assert result["recommendation"] is None
+          assert result["allocation"] is None
+
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+          assert result["production_persist"] is False
+
+          assert result["write_proof"] == zero
+
+          leader = rows["BBB"]
+
+          assert leader["decision_winner"] is None
+          assert leader["recommendation"] is None
+          assert leader["allocation"] is None
+
+          assert "trade" not in leader
+          assert "order" not in leader
+          assert "eight_e_action" not in leader
+          assert "new_money_action" not in leader
+          assert "target_weight" not in leader
+          assert "quantity" not in leader
+
+          print("PASS: portfolio fit precedes FI score")
+          print("PASS: rank #1 is not winner/recommendation")
+          print("PASS: no allocation/execution/8E/New Money")
+          PY
