@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.company_intelligence_constants import MAX_PEER_COUNT
@@ -10,6 +10,7 @@ from services.company_intelligence_provider_diagnostics import (
     ProviderDiagnostic,
     diagnostic_from_fmp_error,
 )
+from services.company_intelligence_utils import safe_float
 from services.fmp_client import FMPClient, FMPError
 
 
@@ -32,6 +33,8 @@ class CompanyProviderBundle:
     earnings_surprises: List[Dict[str, Any]] = field(default_factory=list)
     earnings_calendar: List[Dict[str, Any]] = field(default_factory=list)
     sec_financials: Dict[str, Any] = field(default_factory=dict)
+    historical_prices: List[Dict[str, Any]] = field(default_factory=list)
+    historical_price_scope: Tuple[str, ...] = field(default_factory=tuple)
     market_cap_fallback: Optional[float] = None
     peer_profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     peer_ratios_ttm: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -68,8 +71,6 @@ def load_company_provider_bundle(
     if sec_financials:
         bundle.sec_financials = dict(sec_financials)
     if market_cap_fallback is not None:
-        from services.company_intelligence_utils import safe_float
-
         fallback = safe_float(market_cap_fallback)
         if fallback is not None and fallback > 0:
             bundle.market_cap_fallback = fallback
@@ -114,17 +115,38 @@ def load_company_provider_bundle(
     if isinstance(key_metrics_ttm, dict):
         bundle.key_metrics_ttm = key_metrics_ttm
 
-    ratios_history = _safe_fetch("ratios_history", lambda: fmp.ratios(normalized, limit=20), bundle)
-    if isinstance(ratios_history, list):
-        bundle.ratios_history = ratios_history
-
-    key_metrics_history = _safe_fetch(
-        "key_metrics_history",
-        lambda: fmp.key_metrics(normalized, limit=20),
-        bundle,
+    # Keep the company-intelligence hard FMP budget <= 15 calls.
+    # When current FMP valuation ratios are unavailable but SEC annual facts exist,
+    # FMP valuation-history endpoints cannot produce the active valuation path.
+    # Reserve that budget for one bounded fiscal-year historical-price call instead.
+    current_valuation_values = (
+        safe_float(bundle.ratios_ttm.get("priceToEarningsRatioTTM")),
+        safe_float(bundle.ratios_ttm.get("priceToSalesRatioTTM")),
+        safe_float(bundle.ratios_ttm.get("priceToBookRatioTTM")),
+        safe_float(bundle.ratios_ttm.get("dividendYieldTTM")),
+        safe_float(bundle.key_metrics_ttm.get("enterpriseValueOverEBITDATTM")),
+        safe_float(bundle.key_metrics_ttm.get("freeCashFlowYieldTTM")),
+        safe_float(bundle.key_metrics_ttm.get("earningsYieldTTM")),
     )
-    if isinstance(key_metrics_history, list):
-        bundle.key_metrics_history = key_metrics_history
+    reserve_sec_hybrid_history_slot = bool(bundle.sec_financials) and not any(
+        value is not None for value in current_valuation_values
+    )
+    if not reserve_sec_hybrid_history_slot:
+        ratios_history = _safe_fetch(
+            "ratios_history",
+            lambda: fmp.ratios(normalized, limit=20),
+            bundle,
+        )
+        if isinstance(ratios_history, list):
+            bundle.ratios_history = ratios_history
+
+        key_metrics_history = _safe_fetch(
+            "key_metrics_history",
+            lambda: fmp.key_metrics(normalized, limit=20),
+            bundle,
+        )
+        if isinstance(key_metrics_history, list):
+            bundle.key_metrics_history = key_metrics_history
 
     peers = _safe_fetch("stock_peers", lambda: fmp.stock_peers(normalized), bundle)
     if isinstance(peers, list):
@@ -167,8 +189,56 @@ def load_company_provider_bundle(
     return bundle
 
 
+def load_sec_hybrid_historical_prices(
+    fmp: FMPClient,
+    bundle: CompanyProviderBundle,
+) -> None:
+    from services.company_intelligence_utils import safe_float
+
+    annual_history = bundle.sec_financials.get("annual_history") or []
+    period_dates: list[date] = []
+    for row in list(annual_history)[:5]:
+        shares = safe_float(row.get("weighted_average_shares"))
+        revenue = safe_float(row.get("revenue"))
+        free_cash_flow = safe_float(row.get("free_cash_flow"))
+        if shares is None or shares <= 0:
+            continue
+        if not ((revenue is not None and revenue > 0) or (free_cash_flow is not None and free_cash_flow > 0)):
+            continue
+        text = str(row.get("period_end") or "").strip()
+        try:
+            period_dates.append(date.fromisoformat(text[:10]))
+        except (TypeError, ValueError):
+            continue
+    scope = tuple(sorted(item.isoformat() for item in period_dates))
+    if len(scope) < 3:
+        return
+    if bundle.historical_price_scope == scope and (
+        bundle.historical_prices or "historical_price_eod_light" in bundle.call_counts
+    ):
+        return
+
+    # A changed SEC annual-history scope must never reuse prices from an older scope.
+    bundle.historical_prices = []
+    bundle.historical_price_scope = scope
+    from_date = (min(period_dates) - timedelta(days=7)).isoformat()
+    to_date = max(period_dates).isoformat()
+    rows = _safe_fetch(
+        "historical_price_eod_light",
+        lambda: fmp.historical_price_eod_light(
+            bundle.symbol,
+            from_date=from_date,
+            to_date=to_date,
+        ),
+        bundle,
+    )
+    if isinstance(rows, list):
+        bundle.historical_prices = rows
+
+
 def max_expected_provider_calls(*, peer_count: int = MAX_PEER_COUNT) -> int:
     """Upper bound for cold company intelligence load."""
+    # SEC-hybrid history reserves one slot by skipping two unused FMP valuation-history calls.
     base_calls = 12
     return base_calls + min(peer_count, MAX_PEER_COUNT)
 

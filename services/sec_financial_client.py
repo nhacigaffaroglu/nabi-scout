@@ -632,6 +632,13 @@ class SECFinancialClient:
             if prior_ocf is not None and prior_capex is not None:
                 prior_payload["free_cash_flow_prior"] = prior_ocf - abs(prior_capex)
 
+        annual_history = self._build_annual_history(
+            revenue=revenue,
+            operating_cash=operating_cash,
+            capex=capex,
+            shares=shares,
+        )
+
         return {
             "revenue": revenue_latest,
             "revenue_growth_1y": self._growth(revenue, 1),
@@ -694,8 +701,50 @@ class SECFinancialClient:
             "annual_periods_found": len(revenue) if revenue else len(assets),
             "financial_currency": currency,
             "financial_taxonomy": taxonomy,
+            "annual_history": annual_history,
             **prior_payload,
         }
+
+    @staticmethod
+    def _value_at_period_end(
+        series: Sequence[Dict[str, Any]],
+        period_end: str,
+    ) -> Optional[float]:
+        for row in series:
+            if str(row.get("end") or "") == period_end:
+                return row.get("value")
+        return None
+
+    def _build_annual_history(
+        self,
+        *,
+        revenue: Sequence[Dict[str, Any]],
+        operating_cash: Sequence[Dict[str, Any]],
+        capex: Sequence[Dict[str, Any]],
+        shares: Sequence[Dict[str, Any]],
+        limit: int = 8,
+    ) -> List[Dict[str, Any]]:
+        history: List[Dict[str, Any]] = []
+        for revenue_row in list(revenue)[:limit]:
+            period_end = str(revenue_row.get("end") or "").strip()
+            revenue_value = self._number(revenue_row.get("value"))
+            if not period_end or revenue_value is None:
+                continue
+            operating_cash_value = self._value_at_period_end(operating_cash, period_end)
+            capex_value = self._value_at_period_end(capex, period_end)
+            shares_value = self._value_at_period_end(shares, period_end)
+            free_cash_flow = None
+            if operating_cash_value is not None and capex_value is not None:
+                free_cash_flow = operating_cash_value - abs(capex_value)
+            history.append({
+                "period_end": period_end,
+                "revenue": revenue_value,
+                "operating_cash_flow": operating_cash_value,
+                "capital_expenditure": capex_value,
+                "free_cash_flow": free_cash_flow,
+                "weighted_average_shares": shares_value,
+            })
+        return history
 
     def _resolve_facts(
         self,

@@ -14,6 +14,7 @@ from services.company_intelligence_data import (
     CompanyProviderBundle,
     bundle_call_summary,
     load_company_provider_bundle,
+    load_sec_hybrid_historical_prices,
 )
 from services.company_news_intelligence import build_catalysts, build_news_intelligence
 from services.company_peer_intelligence import build_peer_intelligence
@@ -96,8 +97,8 @@ def _build_factual_risks(
                         value=metric.current_value,
                         comparison_value=metric.historical_median,
                         evidence=(("position", metric.position),),
-                        source="fmp",
-                        confidence="MEDIUM",
+                        source=metric.source_provider or "fmp",
+                        confidence=metric.confidence or "MEDIUM",
                         limitations=("Değerleme primi otomatik olarak aşırı değerli anlamına gelmez.",),
                     )
                 )
@@ -279,6 +280,9 @@ class CompanyIntelligenceCoreService:
         if not valuation_section_has_meaningful_metrics(valuation):
             hybrid_valuation = build_sec_hybrid_valuation(bundle)
             if hybrid_valuation is not None:
+                load_sec_hybrid_historical_prices(self.fmp, bundle)
+                if bundle.historical_prices:
+                    hybrid_valuation = build_sec_hybrid_valuation(bundle) or hybrid_valuation
                 valuation = hybrid_valuation
         peers = build_peer_intelligence(bundle) if bundle.peers or bundle.failures else None
         news = build_news_intelligence(bundle) if bundle.news or any(

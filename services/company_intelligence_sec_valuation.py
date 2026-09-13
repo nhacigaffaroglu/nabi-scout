@@ -9,6 +9,9 @@ from services.company_intelligence_contract import (
     ValuationSection,
 )
 from services.company_intelligence_data import CompanyProviderBundle
+from services.company_intelligence_historical_hybrid_valuation import (
+    enrich_sec_hybrid_metrics,
+)
 from services.company_intelligence_utils import safe_float
 from services.company_intelligence_valuation_alignment import (
     alignment_allows_hybrid_valuation,
@@ -173,11 +176,25 @@ def build_sec_hybrid_valuation(
     if not metrics:
         return None
 
+    metrics = list(enrich_sec_hybrid_metrics(
+        metrics,
+        annual_history=sec_financials.get("annual_history") or [],
+        historical_prices=bundle.historical_prices,
+    ))
+    historical_context_available = any(
+        metric.historical_median is not None for metric in metrics
+    )
+
     observations = [
         IntelligenceObservation(
             code="VALUATION_HYBRID_ANNUAL_MARKET",
             status="FACT",
             statement=(
+                "Değerleme oranları SEC yıllık finansallar ile güncel piyasa değerinin "
+                "hibrit birleşiminden türetildi; mali yıl sonu hibrit tarihsel medyan "
+                "bağlamı eklendi."
+                if historical_context_available
+                else
                 "Değerleme oranları SEC yıllık finansallar ile güncel piyasa değerinin "
                 "hibrit birleşiminden türetildi; tarihsel medyan karşılaştırması yok."
             ),
