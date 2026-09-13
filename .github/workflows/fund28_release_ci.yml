@@ -1,0 +1,117 @@
+name: FUND28 Release CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/turkiye_fund_recommendation_layer.py"
+      - "services/turkiye_fund_deployment_eligibility.py"
+      - "services/turkiye_fund_allocation_integration.py"
+      - "services/turkiye_fund_wealth_os_integration.py"
+      - "services/turkiye_fund_controlled_execution.py"
+      - "services/turkiye_fund_production_automation.py"
+      - "services/wealth_new_money_allocation.py"
+      - "services/wealth_core_service.py"
+      - "repositories/wealth_transaction_repository.py"
+      - "database/migration_wealth_transaction_idempotency.sql"
+      - "tests/test_turkiye_fund_recommendation_layer.py"
+      - "tests/test_turkiye_fund_deployment_eligibility.py"
+      - "tests/test_turkiye_fund_allocation_integration.py"
+      - "tests/test_turkiye_fund_wealth_os_integration.py"
+      - "tests/test_turkiye_fund_controlled_execution.py"
+      - "tests/test_fund27c_materialization_recovery.py"
+      - "tests/test_fund27d_automation_firewall.py"
+      - "tests/test_wealth_core.py"
+      - "tests/test_wealth_transaction_idempotency_migration.py"
+      - "tests/test_fund28_end_to_end_release.py"
+      - ".github/workflows/fund27d_production_automation.yml"
+      - ".github/workflows/fund27d_firewall_ci.yml"
+      - ".github/workflows/fund28_release_ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund28-release-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: fund28-release-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run FUND28 release regression
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_recommendation_layer.py \
+            tests/test_turkiye_fund_deployment_eligibility.py \
+            tests/test_turkiye_fund_allocation_integration.py \
+            tests/test_turkiye_fund_wealth_os_integration.py \
+            tests/test_turkiye_fund_controlled_execution.py \
+            tests/test_fund27c_materialization_recovery.py \
+            tests/test_fund27d_automation_firewall.py \
+            tests/test_wealth_core.py \
+            tests/test_wealth_transaction_idempotency_migration.py \
+            tests/test_fund28_end_to_end_release.py
+
+      - name: Compile release boundary
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_recommendation_layer.py \
+            services/turkiye_fund_deployment_eligibility.py \
+            services/turkiye_fund_allocation_integration.py \
+            services/turkiye_fund_wealth_os_integration.py \
+            services/turkiye_fund_controlled_execution.py \
+            services/turkiye_fund_production_automation.py \
+            services/wealth_new_money_allocation.py \
+            services/wealth_core_service.py
+
+      - name: Verify production automation firewall
+        run: |
+          grep -n 'mode=MODE_DRY_RUN' \
+            services/turkiye_fund_production_automation.py
+
+          grep -n 'execution_authority=False' \
+            services/turkiye_fund_production_automation.py
+
+          grep -n 'wealth_core_service=None' \
+            services/turkiye_fund_production_automation.py
+
+          ! grep -n '\.post_transaction(' \
+            services/turkiye_fund_production_automation.py
+
+          ! grep -nEi \
+            'MODE_EXECUTE|create_order|submit_order|place_order|execute_trade|broker_api' \
+            services/turkiye_fund_production_automation.py
+
+      - name: Verify release workflow has no execution authority
+        run: |
+          ! grep -nEi \
+            'secrets\.|MODE_EXECUTE|execution_authority[=: ]+true|post_transaction|create_order|submit_order|place_order|execute_trade|broker_api' \
+            .github/workflows/fund28_release_ci.yml
+
+          grep -n 'contents: read' \
+            .github/workflows/fund28_release_ci.yml
+
+          grep -n 'cancel-in-progress: false' \
+            .github/workflows/fund28_release_ci.yml
+
+          echo "FUND28_RELEASE_GATE_OK"
