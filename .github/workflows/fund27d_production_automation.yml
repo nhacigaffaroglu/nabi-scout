@@ -1,0 +1,71 @@
+name: FUND27D Production Automation Firewall
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Production automation safety validation.
+    # 07:00 Europe/Istanbul (UTC+3) == 04:00 UTC.
+    - cron: "0 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-fund27d-production-automation
+  cancel-in-progress: false
+
+jobs:
+  production-automation-firewall:
+    name: production-automation-firewall
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run FUND27D automation firewall contract
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_fund27d_automation_firewall.py \
+            tests/test_turkiye_fund_controlled_execution.py \
+            tests/test_fund27c_materialization_recovery.py
+
+      - name: Compile production automation boundary
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_production_automation.py \
+            services/turkiye_fund_controlled_execution.py \
+            services/turkiye_fund_wealth_os_integration.py \
+            services/wealth_core_service.py
+
+      - name: Verify production execution firewall
+        run: |
+          grep -n \
+            'mode=MODE_DRY_RUN' \
+            services/turkiye_fund_production_automation.py
+
+          grep -n \
+            'execution_authority=False' \
+            services/turkiye_fund_production_automation.py
+
+          ! grep -n \
+            '\.post_transaction(' \
+            services/turkiye_fund_production_automation.py
+
+          ! grep -nEi \
+            'create_order|submit_order|place_order|execute_trade|broker_api' \
+            services/turkiye_fund_production_automation.py
+
+          echo "FUND27D_PRODUCTION_FIREWALL_OK"
