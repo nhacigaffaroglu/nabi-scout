@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -83,7 +84,7 @@ def source():
         "source_type": "FUND17_PORTFOLIO_CONTEXT",
         "source_id": "synthetic-context-1",
         "observed_fact": "Synthetic evidence only.",
-        "as_of": "2026-09-11T18:00:00Z",
+        "as_of": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
 
