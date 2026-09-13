@@ -72,6 +72,9 @@ from components.portfolio_security_decision_ui import (
 )
 from components.security_intelligence_ui import render_security_intelligence_section
 from components.signal_intelligence_ui import render_signal_intelligence_section
+from services.security_intelligence_authority_parity import (
+    compare_security_intelligence_authority,
+)
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
@@ -85,7 +88,10 @@ from services.security_intelligence_service import (
     build_canonical_security_intelligence_inputs,
 )
 from services.security_intelligence_contract import ENGINE_VERSION
-from services.security_intelligence_snapshot_service import load_previous_for_evaluation
+from services.security_intelligence_snapshot_service import (
+    load_previous_for_evaluation,
+    snapshot_from_row,
+)
 from services.signal_intelligence_service import SignalIntelligenceService
 from services.research_workflow_service import (
     ResearchWorkflowSchemaError,
@@ -719,11 +725,17 @@ si_view = SecurityIntelligenceService().evaluate(
     si_participation,
     previous=si_previous,
 )
+si_authority_snapshot = snapshot_from_row(si_persisted) if si_persisted else None
+si_authority_parity = compare_security_intelligence_authority(
+    si_view,
+    si_authority_snapshot,
+)
 render_security_intelligence_section(
     si_view,
     si_facts,
     nabi_score=candidate.get("nabi_score"),
     persisted_row=si_persisted,
+    authority_parity=si_authority_parity,
 )
 if symbol and symbol != "—":
     portfolio_decision = evaluate_portfolio_security_for_symbol(client, str(symbol))

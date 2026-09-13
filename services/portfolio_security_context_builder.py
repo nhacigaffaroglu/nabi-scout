@@ -23,7 +23,10 @@ from services.security_intelligence_contract import (
     SecurityIntelligenceSnapshot,
     persisted_snapshot_is_stale,
 )
-from services.security_intelligence_snapshot_service import latest_snapshot
+from services.security_intelligence_snapshot_service import (
+    latest_snapshot,
+    summarise_security_intelligence_data_quality,
+)
 from services.security_master_contract import INSTRUMENT_UNKNOWN
 from services.signal_intelligence_contract import (
     CONFLICTING,
@@ -71,12 +74,7 @@ def _si_state(snap: Optional[SecurityIntelligenceSnapshot]) -> Optional[str]:
 def _si_data_quality(snap: Optional[SecurityIntelligenceSnapshot]) -> Optional[str]:
     if snap is None:
         return None
-    quality = snap.data_quality or {}
-    for key in ("status", "freshness_status", "overall"):
-        value = _text(quality.get(key))
-        if value:
-            return value
-    return None
+    return summarise_security_intelligence_data_quality(snap.data_quality)
 
 
 def _signal_flags(context: Optional[SignalIntelligenceContext]) -> tuple[bool, bool, bool, Optional[str], Optional[str]]:

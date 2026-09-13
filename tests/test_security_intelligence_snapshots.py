@@ -479,7 +479,14 @@ class SnapshotIdempotencyTests(unittest.TestCase):
         self.assertNotIn(".insert(", facade)
         self.assertNotIn("nabi_score_v4", facade)
         ui = Path("components/security_intelligence_ui.py").read_text(encoding="utf-8")
-        self.assertIn("Canlı evaluate()", ui)
+        self.assertIn(
+            "Canlı Security Intelligence bu sayfanın araştırma görünümüdür.",
+            ui,
+        )
+        self.assertIn(
+            "8E karar otoritesi son persisted SI snapshot'tır.",
+            ui,
+        )
 
 
 if __name__ == "__main__":

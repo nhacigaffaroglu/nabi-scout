@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import streamlit as st
 
+from services.security_intelligence_authority_parity import (
+    SecurityIntelligenceAuthorityParity,
+    SecurityIntelligenceParityStatus,
+)
 from services.security_intelligence_contract import SecurityFacts, SecurityIntelligenceView
 
 
@@ -29,6 +33,7 @@ def render_security_intelligence_section(
     *,
     nabi_score=None,
     persisted_row=None,
+    authority_parity: SecurityIntelligenceAuthorityParity | None = None,
 ) -> None:
     st.subheader("Security Intelligence")
     st.caption(
@@ -47,8 +52,26 @@ def render_security_intelligence_section(
         f"facts {view.facts_version} · engine {view.engine_version}"
     )
     st.caption(
-        "Canlı evaluate() kaynak gerçektir. Kayıtlı snapshot geçmiş ve değişim içindir."
+        "Canlı Security Intelligence bu sayfanın araştırma görünümüdür. "
+        "8E karar otoritesi son persisted SI snapshot'tır."
     )
+    if authority_parity is not None:
+        if authority_parity.status == SecurityIntelligenceParityStatus.PERSISTED_MISSING:
+            st.warning(
+                "SI authority parity: PERSISTED_MISSING · 8E için persisted SI snapshot "
+                "bulunmuyor; canlı araştırma görünümü karar otoritesi yerine geçmez."
+            )
+        elif authority_parity.status == SecurityIntelligenceParityStatus.MISMATCH:
+            fields = ", ".join(authority_parity.mismatched_fields) or "—"
+            st.warning(
+                "SI authority parity: MISMATCH · farklı karar alanları: "
+                f"{fields}. 8E persisted snapshot kullanmaya devam eder."
+            )
+        else:
+            st.info(
+                "SI authority parity: MATCH · canlı araştırma görünümü ile "
+                "persisted 8E karar snapshot'ı karar alanlarında eşleşiyor."
+            )
     if persisted_row:
         st.caption(
             "Kayıtlı snapshot: "

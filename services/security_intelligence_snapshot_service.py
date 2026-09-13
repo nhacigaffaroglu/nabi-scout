@@ -32,6 +32,21 @@ from services.security_intelligence_contract import (
 UNDATED_AS_OF_KEY = "UNDATED"
 MIN_PERSIST_COMPLETENESS_PCT = 50.0
 PERSISTENCE_METADATA_FIELDS = frozenset({"id", "created_at", "updated_at"})
+
+
+def summarise_security_intelligence_data_quality(
+    mapping: Mapping[str, Any] | None,
+) -> Optional[str]:
+    """Return the same compact SI data-quality signal consumed by 8E."""
+    if not mapping:
+        return None
+    for key in ("status", "freshness_status", "overall"):
+        value = str(mapping.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
 SEMANTIC_FIELDS = (
     "symbol",
     "as_of",
