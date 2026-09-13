@@ -38,7 +38,9 @@ from services.portfolio_security_decision_contract import (
 from services.portfolio_security_decision_engine import evaluate_portfolio_security_decision
 from services.portfolio_security_decision_service import evaluate_portfolio_security_for_symbol
 from services.security_intelligence_contract import (
+    FRESHNESS_FRESH,
     FRESHNESS_STALE,
+    FRESHNESS_UNKNOWN,
     PERIOD_YTD,
     STATE_ATTRACTIVE,
     SecurityFacts,
@@ -46,8 +48,11 @@ from services.security_intelligence_contract import (
     persisted_snapshot_is_stale,
 )
 from services.security_intelligence_publish import (
+    REASON_AS_OF_MISSING,
+    REASON_FRESHNESS_NOT_FRESH,
     REASON_IDENTITY_MISSING,
     REASON_INSUFFICIENT_FACTS,
+    REASON_SUPERSEDED_BY_NEWER,
     REASON_UNSAFE_PERIOD,
     publish_canonical_security_intelligence,
 )
@@ -173,6 +178,41 @@ def _publish(facts, repo, *, participation=None, identity_ok=True, kap_bundle=No
         kap_bundle=kap_bundle,
         dry_run=dry_run,
     )
+
+
+def _us_facts(**overrides: Any) -> SecurityFacts:
+    payload: Dict[str, Any] = {
+        "symbol": "CRM",
+        "exchange": "NASDAQ",
+        "currency": "USD",
+        "instrument_type": INSTRUMENT_EQUITY,
+        "as_of": "2026-08-30",
+        "freshness_status": FRESHNESS_FRESH,
+        "completeness_pct": 90.0,
+        "roic": 18.0,
+        "roe": 20.0,
+        "roa": 9.0,
+        "revenue_cagr_3y": 12.0,
+        "eps_cagr_3y": 14.0,
+        "fcf_cagr_3y": 10.0,
+        "operating_margin": 18.0,
+        "fcf_margin": 14.0,
+        "net_margin": 12.0,
+        "gross_margin": 75.0,
+        "pe": 30.0,
+        "price_to_sales": 6.0,
+        "price_to_book": 5.0,
+        "debt_to_equity": 0.3,
+        "net_debt_to_fcf": 0.4,
+        "current_ratio": 1.2,
+        "interest_coverage": 20.0,
+        "price": 250.0,
+        "market_cap": 200_000_000_000.0,
+        "revenue": 30_000_000_000.0,
+        "free_cash_flow": 8_000_000_000.0,
+    }
+    payload.update(overrides)
+    return SecurityFacts(**payload)
 
 
 def _position(symbol: str) -> PositionValuationRow:
@@ -310,6 +350,112 @@ class CanonicalPublishContractTests(unittest.TestCase):
         self.assertTrue(result.published)
         self.assertTrue(result.eligibility.can_score)
         self.assertTrue(result.eligibility.production_quality_sufficient)
+
+
+class GenericPublishDisciplineTests(unittest.TestCase):
+    def test_us_publish_requires_explicit_identity(self) -> None:
+        result = _publish(_us_facts(), _FakeRepo(), identity_ok=False)
+        self.assertFalse(result.published)
+        self.assertTrue(result.blocked)
+        self.assertEqual(result.block_reason, REASON_IDENTITY_MISSING)
+
+    def test_us_publish_requires_dated_canonical_freshness(self) -> None:
+        missing_as_of = _publish(_us_facts(as_of=None), _FakeRepo())
+        self.assertFalse(missing_as_of.published)
+        self.assertEqual(missing_as_of.block_reason, REASON_AS_OF_MISSING)
+
+        unknown = _publish(
+            _us_facts(freshness_status=FRESHNESS_UNKNOWN),
+            _FakeRepo(),
+        )
+        self.assertFalse(unknown.published)
+        self.assertEqual(unknown.block_reason, REASON_FRESHNESS_NOT_FRESH)
+
+        stale = _publish(
+            _us_facts(freshness_status=FRESHNESS_STALE, stale=True),
+            _FakeRepo(),
+        )
+        self.assertFalse(stale.published)
+        self.assertEqual(stale.block_reason, REASON_FRESHNESS_NOT_FRESH)
+
+    def test_no_invented_calendar_age_threshold(self) -> None:
+        result = _publish(
+            _us_facts(as_of="2020-01-01", freshness_status=FRESHNESS_FRESH),
+            _FakeRepo(),
+        )
+        self.assertTrue(result.published)
+
+    def test_backdated_publish_cannot_replace_newer_authority(self) -> None:
+        repo = _FakeRepo()
+        newer = _publish(_us_facts(as_of="2026-08-30"), repo)
+        older = _publish(_us_facts(as_of="2026-08-29"), repo)
+        self.assertTrue(newer.published)
+        self.assertFalse(older.published)
+        self.assertTrue(older.blocked)
+        self.assertEqual(older.block_reason, REASON_SUPERSEDED_BY_NEWER)
+        self.assertEqual(len(repo.rows), 1)
+
+    def test_same_day_older_timestamp_cannot_overwrite_same_identity(self) -> None:
+        repo = _FakeRepo()
+        newer = _publish(
+            _us_facts(as_of="2026-08-30T15:00:00+00:00"),
+            repo,
+        )
+        older = _publish(
+            _us_facts(as_of="2026-08-30T10:00:00+00:00"),
+            repo,
+        )
+        self.assertTrue(newer.published)
+        self.assertFalse(older.published)
+        self.assertTrue(older.blocked)
+        self.assertEqual(older.block_reason, REASON_SUPERSEDED_BY_NEWER)
+        self.assertEqual(repo.upserts, 1)
+        latest = repo.get_latest("CRM")
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["as_of"], "2026-08-30T15:00:00+00:00")
+
+    def test_latest_authority_orders_timezone_offsets_by_actual_instant(self) -> None:
+        client = _MemoryClient()
+        client.tables["security_intelligence_snapshots"] = [
+            {
+                "id": "local-clock-later",
+                "symbol": "CRM",
+                "as_of": "2026-08-30T15:00:00+03:00",
+                "as_of_key": "2026-08-30",
+                "facts_version": "facts-a",
+                "engine_version": "engine-a",
+                "updated_at": "2026-08-30T16:00:00+00:00",
+            },
+            {
+                "id": "actual-later",
+                "symbol": "CRM",
+                "as_of": "2026-08-30T13:00:00+00:00",
+                "as_of_key": "2026-08-30",
+                "facts_version": "facts-b",
+                "engine_version": "engine-b",
+                "updated_at": "2026-08-30T16:00:00+00:00",
+            },
+        ]
+        repo = SecurityIntelligenceSnapshotRepository(client)
+        latest = repo.get_latest("CRM")
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["id"], "actual-later")
+
+    def test_same_day_new_version_becomes_deterministic_latest(self) -> None:
+        client = _MemoryClient()
+        repo = SecurityIntelligenceSnapshotRepository(client)
+        first_facts = _us_facts()
+        second_facts = replace(
+            first_facts,
+            facts_version=f"{first_facts.facts_version}-next",
+        )
+        first = _publish(first_facts, repo)
+        second = _publish(second_facts, repo)
+        self.assertTrue(first.published)
+        self.assertTrue(second.published)
+        latest = latest_snapshot(repo, "CRM")
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.facts_version, second_facts.facts_version)
 
 
 class FailureMatrixTests(unittest.TestCase):

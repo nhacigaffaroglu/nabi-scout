@@ -1,6 +1,42 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+
+
+UNDATED_AS_OF_KEY = "UNDATED"
+
+
+def _authority_instant(row: Dict[str, Any]) -> Optional[datetime]:
+    raw = str(row.get("as_of") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _authority_row_sort_key(row: Dict[str, Any]) -> tuple:
+    """Deterministic persisted-authority ordering.
+
+    Freshest evidence instant wins first. Same-instant rows are resolved by
+    persistence timestamp, then stable version/id tie-breakers. Comparing UTC
+    instants avoids lexicographic mistakes across timezone offsets.
+    """
+    instant = _authority_instant(row)
+    updated = str(row.get("updated_at") or row.get("created_at") or "").strip()
+    return (
+        1 if instant is not None else 0,
+        instant or datetime.min.replace(tzinfo=timezone.utc),
+        updated,
+        str(row.get("engine_version") or ""),
+        str(row.get("facts_version") or ""),
+        str(row.get("id") or ""),
+    )
 
 
 class SecurityIntelligenceSnapshotRepository:
@@ -25,16 +61,10 @@ class SecurityIntelligenceSnapshotRepository:
         normalized = str(symbol or "").strip().upper()
         if not normalized:
             return None
-        response = (
-            self.client.table(self.TABLE)
-            .select("*")
-            .eq("symbol", normalized)
-            .order("as_of", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = response.data if isinstance(response.data, list) else []
-        return rows[0] if rows else None
+        rows = self.get_recent_history(normalized, limit=25)
+        if not rows:
+            return None
+        return max(rows, key=_authority_row_sort_key)
 
     def get_by_identity(
         self,
@@ -98,7 +128,7 @@ class SecurityIntelligenceSnapshotRepository:
             self.client.table(self.TABLE)
             .select("*")
             .eq("symbol", normalized)
-            .order("as_of", desc=True)
+            .order("as_of", desc=True, nullsfirst=False)
             .limit(max(1, min(int(limit), 25)))
             .execute()
         )

@@ -75,6 +75,10 @@ from components.signal_intelligence_ui import render_signal_intelligence_section
 from services.security_intelligence_authority_parity import (
     compare_security_intelligence_authority,
 )
+from services.security_intelligence_publish import (
+    bist_readiness_applies,
+    publish_canonical_security_intelligence,
+)
 from repositories.security_intelligence_snapshot_repository import (
     SecurityIntelligenceSnapshotRepository,
 )
@@ -88,6 +92,7 @@ from services.security_intelligence_service import (
     build_canonical_security_intelligence_inputs,
 )
 from services.security_intelligence_contract import ENGINE_VERSION
+from services.security_master_contract import RESOLUTION_RESOLVED
 from services.security_intelligence_snapshot_service import (
     load_previous_for_evaluation,
     snapshot_from_row,
@@ -726,6 +731,32 @@ si_view = SecurityIntelligenceService().evaluate(
     si_participation,
     previous=si_previous,
 )
+si_publish_result = None
+si_publish_is_bist = bist_readiness_applies(si_facts)
+if not si_publish_is_bist:
+    if st.button(
+        "SI snapshot'ını yayımla",
+        key=f"publish_security_intelligence_{symbol}",
+        help=(
+            "Canlı araştırma görünümünü canonical persisted SI authority olarak "
+            "yayınlar. Freshness, identity, sufficiency ve monotonic as_of "
+            "kontrolleri başarısızsa hiçbir kayıt yazılmaz."
+        ),
+    ):
+        si_publish_result = publish_canonical_security_intelligence(
+            si_facts,
+            si_participation,
+            si_snapshot_repo,
+            previous=si_previous,
+            identity_ok=(
+                getattr(security_resolution, "status", None) == RESOLUTION_RESOLVED
+            ),
+        )
+        if si_publish_result.published or si_publish_result.skipped_duplicate:
+            try:
+                si_persisted = si_snapshot_repo.get_latest(str(symbol))
+            except Exception:
+                si_persisted = None
 si_authority_snapshot = snapshot_from_row(si_persisted) if si_persisted else None
 si_authority_parity = compare_security_intelligence_authority(
     si_view,
@@ -738,6 +769,26 @@ render_security_intelligence_section(
     persisted_row=si_persisted,
     authority_parity=si_authority_parity,
 )
+if si_publish_is_bist:
+    st.caption(
+        "BIST persisted SI publication Company Report canlı görünümünden yapılmaz; "
+        "resmi KAP/Borsa production-quality refresh yolu canonical authority'dir."
+    )
+elif si_publish_result is not None:
+    if si_publish_result.published:
+        st.success("Security Intelligence snapshot canonical authority olarak yayımlandı.")
+    elif si_publish_result.skipped_duplicate:
+        st.info("Aynı canonical SI snapshot zaten kayıtlı; yeni yazma yapılmadı.")
+    elif si_publish_result.failed_to_persist:
+        st.error(
+            f"SI snapshot yayınlanamadı: "
+            f"{si_publish_result.block_reason or si_publish_result.message}"
+        )
+    else:
+        st.warning(
+            f"SI snapshot yayınlanmadı: "
+            f"{si_publish_result.block_reason or si_publish_result.message}"
+        )
 if symbol and symbol != "—":
     portfolio_decision = evaluate_portfolio_security_for_symbol(client, str(symbol))
 else:

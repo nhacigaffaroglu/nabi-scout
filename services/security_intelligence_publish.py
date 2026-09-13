@@ -8,6 +8,7 @@ or New Money. Does not create a second SI store.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from services.bist_si_readiness import (
@@ -19,13 +20,18 @@ from services.bist_si_readiness import (
 )
 from services.bist_symbol_mapping import BIST_EXCHANGES
 from services.security_intelligence_contract import (
+    FRESHNESS_FRESH,
+    PERIOD_INCOMPATIBLE,
     SecurityFacts,
     SecurityIntelligenceView,
     SecurityParticipationContext,
 )
 from services.security_intelligence_service import SecurityIntelligenceService
 from services.security_intelligence_snapshot_service import (
+    UNDATED_AS_OF_KEY,
     SaveSecurityIntelligenceResult,
+    as_of_key,
+    canonicalize_as_of,
     may_persist_view,
     save_security_intelligence_snapshot,
 )
@@ -38,6 +44,31 @@ REASON_PRODUCTION_QUALITY = "PRODUCTION_QUALITY_INSUFFICIENT"
 REASON_IDENTITY_MISSING = "MISSING_IDENTITY"
 REASON_UNSAFE_PERIOD = "UNSAFE_PERIOD"
 REASON_INSUFFICIENT_FACTS = "INSUFFICIENT_FACTS"
+REASON_AS_OF_MISSING = "AS_OF_MISSING"
+REASON_FRESHNESS_NOT_FRESH = "FRESHNESS_NOT_FRESH"
+REASON_SUPERSEDED_BY_NEWER = "SUPERSEDED_BY_NEWER_SNAPSHOT"
+REASON_AUTHORITY_LOOKUP_FAILED = "PERSISTED_AUTHORITY_LOOKUP_FAILED"
+
+
+def _as_of_instant(value: Any) -> Optional[datetime]:
+    """Comparable UTC instant for monotonic publish checks.
+
+    Date-only authority is treated as midnight UTC. Non-midnight timestamps
+    preserve their evidence ordering; timezone-aware values are normalized.
+    """
+    canonical = canonicalize_as_of(value)
+    if canonical is None:
+        return None
+    text = str(canonical).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def bist_readiness_applies(facts: SecurityFacts) -> bool:
@@ -66,6 +97,11 @@ class PublishSecurityIntelligenceResult:
     block_reason: str = ""
     message: str = ""
 
+    @property
+    def failed_to_persist(self) -> bool:
+        """UI-safe alias for persistence failure state."""
+        return bool(self.persistence_failed)
+
 
 def publish_canonical_security_intelligence(
     facts: SecurityFacts,
@@ -92,7 +128,8 @@ def publish_canonical_security_intelligence(
         )
 
     eligibility = None
-    if bist_readiness_applies(facts):
+    readiness_applies = bist_readiness_applies(facts)
+    if readiness_applies:
         eligibility = assess_bist_si_eligibility(
             facts,
             view,
@@ -126,6 +163,49 @@ def publish_canonical_security_intelligence(
                 block_reason=reason,
                 message="Existing production-quality gate refused this snapshot.",
             )
+    elif not identity_ok:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            view=view,
+            block_reason=REASON_IDENTITY_MISSING,
+            message="Security Master identity is required to publish SI.",
+        )
+
+    publish_as_of_key = as_of_key(facts.as_of)
+    if publish_as_of_key == UNDATED_AS_OF_KEY:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            view=view,
+            eligibility=eligibility,
+            block_reason=REASON_AS_OF_MISSING,
+            message="A dated SecurityFacts as_of is required for persisted SI authority.",
+        )
+
+    freshness = str(facts.freshness_status or "").strip().upper()
+    if bool(facts.stale) or freshness != FRESHNESS_FRESH:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            view=view,
+            eligibility=eligibility,
+            block_reason=REASON_FRESHNESS_NOT_FRESH,
+            message=(
+                "SecurityFacts freshness must be canonically FRESH before "
+                "publishing persisted SI authority."
+            ),
+        )
+
+    if str(facts.period_compatibility or "").strip().upper() == PERIOD_INCOMPATIBLE:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            view=view,
+            eligibility=eligibility,
+            block_reason=REASON_UNSAFE_PERIOD,
+            message="Incompatible fact periods cannot be published as SI authority.",
+        )
 
     if require_sufficient and not may_persist_view(
         view, completeness_pct=facts.completeness_pct
@@ -137,6 +217,51 @@ def publish_canonical_security_intelligence(
             eligibility=eligibility,
             block_reason=REASON_INSUFFICIENT_FACTS,
             message="SecurityFacts too sparse to persist a snapshot.",
+        )
+
+    try:
+        latest_row = repo.get_latest(facts.symbol)
+    except Exception:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            persistence_failed=True,
+            view=view,
+            eligibility=eligibility,
+            block_reason=REASON_AUTHORITY_LOOKUP_FAILED,
+            message="Persisted SI authority could not be read before publish.",
+        )
+
+    latest_key = (
+        as_of_key((latest_row or {}).get("as_of") or (latest_row or {}).get("as_of_key"))
+        if latest_row
+        else UNDATED_AS_OF_KEY
+    )
+    publish_instant = _as_of_instant(facts.as_of)
+    latest_instant = _as_of_instant((latest_row or {}).get("as_of")) if latest_row else None
+    backdated = (
+        latest_key != UNDATED_AS_OF_KEY
+        and (
+            publish_as_of_key < latest_key
+            or (
+                publish_as_of_key == latest_key
+                and publish_instant is not None
+                and latest_instant is not None
+                and publish_instant < latest_instant
+            )
+        )
+    )
+    if backdated:
+        return PublishSecurityIntelligenceResult(
+            published=False,
+            blocked=True,
+            view=view,
+            eligibility=eligibility,
+            block_reason=REASON_SUPERSEDED_BY_NEWER,
+            message=(
+                "A newer persisted SI snapshot already exists; backdated publish "
+                "cannot replace canonical authority."
+            ),
         )
 
     save = save_security_intelligence_snapshot(
