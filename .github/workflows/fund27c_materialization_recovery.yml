@@ -1,0 +1,82 @@
+name: FUND27C Materialization Recovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/wealth_core_service.py'
+      - 'services/turkiye_fund_wealth_os_integration.py'
+      - 'services/turkiye_fund_controlled_execution.py'
+      - 'tests/test_fund27c_materialization_recovery.py'
+      - 'tests/test_turkiye_fund_wealth_os_integration.py'
+      - 'tests/test_turkiye_fund_controlled_execution.py'
+      - 'tests/test_wealth_core.py'
+      - 'tests/test_wealth_transaction_idempotency_migration.py'
+      - '.github/workflows/fund27c_materialization_recovery.yml'
+
+jobs:
+  materialization-recovery-contract:
+    name: materialization-recovery-contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run FUND27C regression contract
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_wealth_os_integration.py \
+            tests/test_turkiye_fund_controlled_execution.py \
+            tests/test_wealth_core.py \
+            tests/test_wealth_transaction_idempotency_migration.py \
+            tests/test_fund27c_materialization_recovery.py
+
+      - name: Compile FUND27C boundary
+        run: |
+          python -m py_compile \
+            services/wealth_core_service.py \
+            services/turkiye_fund_wealth_os_integration.py \
+            services/turkiye_fund_controlled_execution.py \
+            tests/test_fund27c_materialization_recovery.py
+
+      - name: Verify recovery and execution firewall
+        run: |
+          grep -n \
+            'def recover_position_materialization(' \
+            services/wealth_core_service.py
+
+          grep -n \
+            '_recover_existing_transaction_materialization(existing)' \
+            services/wealth_core_service.py
+
+          grep -n \
+            '"idempotency_key": idempotency_key' \
+            services/turkiye_fund_wealth_os_integration.py
+
+          grep -n \
+            '"source_generated_at": source_generated_at' \
+            services/turkiye_fund_wealth_os_integration.py
+
+          ! grep -nEi \
+            'create_order|submit_order|place_order|execute_trade|broker_api' \
+            services/turkiye_fund_wealth_os_integration.py
+
+          ! grep -n \
+            '\.post_transaction(' \
+            services/turkiye_fund_wealth_os_integration.py
+
+          echo "FUND27C_RECOVERY_FIREWALL_OK"
