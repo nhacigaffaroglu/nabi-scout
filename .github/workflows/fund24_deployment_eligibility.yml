@@ -1,0 +1,161 @@
+name: FUND24 Deployment Eligibility
+
+on:
+  push:
+    paths:
+      - "services/turkiye_fund_deployment_eligibility.py"
+      - "tests/test_turkiye_fund_deployment_eligibility.py"
+      - "tests/test_fund24_deployment_eligibility_workflow.py"
+      - ".github/workflows/fund24_deployment_eligibility.yml"
+  pull_request:
+    paths:
+      - "services/turkiye_fund_deployment_eligibility.py"
+      - "tests/test_turkiye_fund_deployment_eligibility.py"
+      - "tests/test_fund24_deployment_eligibility_workflow.py"
+      - ".github/workflows/fund24_deployment_eligibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund24-deployment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deployment-eligibility-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run FUND24 focused tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_deployment_eligibility.py \
+            tests/test_fund24_deployment_eligibility_workflow.py
+
+      - name: Compile FUND24 service
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_deployment_eligibility.py
+
+      - name: Verify research and allocation firewall
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          from services.portfolio_security_decision_contract import (
+              DECISION_CONSIDER_NEW_POSITION,
+              DECISION_WATCH,
+          )
+          from services.turkiye_fund_deployment_eligibility import (
+              build_fund_deployment_eligibility_artifact,
+          )
+
+          service = Path(
+              "services/turkiye_fund_deployment_eligibility.py"
+          ).read_text()
+
+          forbidden = (
+              "allocate_new_money(",
+              "build_nabi_recommendation(",
+              "build_nabi_decision_v3(",
+              "AllocationPlan(",
+              "AllocationRecommendation(",
+              "supabase",
+          )
+
+          for token in forbidden:
+              assert token not in service, token
+
+          def row(code, action, rank):
+              return {
+                  "fund_code": code,
+                  "canonical_decision": action,
+                  "canonical_decision_source_rank": rank,
+                  "decision_evaluation_source_rank": rank,
+                  "decision_rank": rank,
+                  "recommendation_state": "RECOMMENDATION_READY",
+                  "recommendation_action": action,
+                  "recommendation_reasons": ["R1"],
+                  "recommendation_source_rank": rank,
+                  "recommendation_source": "CANONICAL_8E_DECISION",
+                  "recommended_symbol": None,
+                  "decision_winner": None,
+                  "allocation": None,
+                  "target_weight": None,
+                  "quantity": None,
+                  "trade": None,
+                  "order": None,
+              }
+
+          artifact = {
+              "schema_version": "fund23_recommendation_layer_artifact_1",
+              "recommendation_layer_status": "RECOMMENDATION_LAYER_COMPLETE",
+              "research_only": True,
+              "execution_authority": False,
+              "production_persist": False,
+              "decision_winner": None,
+              "recommended_symbol": None,
+              "allocation": None,
+              "target_weight": None,
+              "quantity": None,
+              "trade": None,
+              "order": None,
+              "candidates": [
+                  row("BBB", DECISION_WATCH, 2),
+                  row("AAA", DECISION_CONSIDER_NEW_POSITION, 1),
+              ],
+          }
+
+          result = build_fund_deployment_eligibility_artifact(artifact)
+
+          assert [x["fund_code"] for x in result["candidates"]] == [
+              "BBB",
+              "AAA",
+          ]
+          assert [
+              x["deployment_source_rank"]
+              for x in result["candidates"]
+          ] == [2, 1]
+
+          by_code = {
+              x["fund_code"]: x
+              for x in result["candidates"]
+          }
+
+          assert by_code["AAA"]["deployment_eligible"] is True
+          assert (
+              by_code["AAA"]["deployment_action"]
+              == DECISION_CONSIDER_NEW_POSITION
+          )
+
+          assert by_code["BBB"]["deployment_eligible"] is False
+          assert by_code["BBB"]["deployment_action"] is None
+
+          assert result["deployment_target"] is None
+          assert result["deployment_amount"] is None
+          assert result["allocation"] is None
+          assert result["allocation_pct"] is None
+          assert result["target_weight"] is None
+          assert result["quantity"] is None
+          assert result["trade"] is None
+          assert result["order"] is None
+
+          assert result["write_proof"]["new_money_calls"] == 0
+          assert result["write_proof"]["allocation_calls"] == 0
+          assert result["research_only"] is True
+          assert result["execution_authority"] is False
+          assert result["production_persist"] is False
+          PY
