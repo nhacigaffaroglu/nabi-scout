@@ -163,6 +163,7 @@ class _Security:
     price_currency: str
     asset_class: str
     whole_share: bool
+    source_rank: Optional[int] = None
 
 
 def _dec(value: Any) -> Optional[Decimal]:
@@ -923,6 +924,15 @@ def allocate_new_money(
                     price_currency=normalize_currency(raw.get("currency") or currency),
                     asset_class=asset_class,
                     whole_share=_whole_share_required(asset_class),
+                    source_rank=(
+                        raw.get("fund25_source_rank")
+                        if (
+                            isinstance(raw.get("fund25_source_rank"), int)
+                            and not isinstance(raw.get("fund25_source_rank"), bool)
+                            and raw.get("fund25_source_rank") > 0
+                        )
+                        else None
+                    ),
                 )
             )
             mapped = True
@@ -1143,7 +1153,15 @@ def allocate_new_money(
         existing = sorted((row for row in securities if row.existing), key=lambda row: row.symbol)
         newcomers = sorted(
             (row for row in securities if not row.existing),
-            key=lambda row: (DECISION_RANK.get(row.decision or "", 99), row.symbol),
+            key=lambda row: (
+                0 if row.source_rank is not None else 1,
+                (
+                    row.source_rank
+                    if row.source_rank is not None
+                    else DECISION_RANK.get(row.decision or "", 99)
+                ),
+                row.symbol,
+            ),
         )
         deployed = False
         progressed = True

@@ -1,0 +1,82 @@
+name: FUND25 Allocation Integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/turkiye_fund_allocation_integration.py"
+      - "services/wealth_new_money_allocation.py"
+      - "tests/test_turkiye_fund_allocation_integration.py"
+      - ".github/workflows/fund25_allocation_integration.yml"
+  pull_request:
+    paths:
+      - "services/turkiye_fund_allocation_integration.py"
+      - "services/wealth_new_money_allocation.py"
+      - "tests/test_turkiye_fund_allocation_integration.py"
+      - ".github/workflows/fund25_allocation_integration.yml"
+  workflow_dispatch:
+
+jobs:
+  allocation-integration-contract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run FUND25 focused tests
+        run: |
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_turkiye_fund_allocation_integration.py
+
+      - name: Compile FUND25 service
+        run: |
+          python -m py_compile \
+            services/turkiye_fund_allocation_integration.py \
+            tests/test_turkiye_fund_allocation_integration.py
+
+      - name: Verify research and execution firewall
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service = Path(
+              "services/turkiye_fund_allocation_integration.py"
+          ).read_text(encoding="utf-8")
+
+          required = (
+              'research_only": True',
+              'execution_authority": False',
+              'production_persist": False',
+              '"trade": None',
+              '"order": None',
+              "allocate_new_money(",
+              "DEPLOYMENT_ELIGIBLE",
+          )
+
+          for token in required:
+              assert token in service, f"missing firewall token: {token}"
+
+          forbidden = (
+              "build_nabi_recommendation(",
+              "build_nabi_decision_v3(",
+              "evaluate_fund_new_money_readiness(",
+          )
+
+          for token in forbidden:
+              assert token not in service, (
+                  f"forbidden second-authority call: {token}"
+              )
+
+          print("FUND25_FIREWALL_OK")
+          PY
