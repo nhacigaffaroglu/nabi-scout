@@ -620,6 +620,80 @@ def _holding(
     )
 
 
+
+_DATE_LEADING_ISIN_WEIGHT_RE = re.compile(
+    r"^(?P<date>\d{2}\.\d{2}\.\d{4})\s+"
+    r"(?P<isin>[A-Z0-9]{12})\s+"
+    r"(?P<issuer>.+?)\s+"
+    r"(?P<nominal>-?\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s+"
+    r"(?P<mv>-?\d{1,3}(?:\.\d{3})+,\d{2})\s+"
+    r"(?P<weight>-?\d+,\d+)\s+"
+    r"(?P<trailing>-?\d+,\d+)"
+    r"(?:\s+.*)?$"
+)
+
+
+def _parse_date_leading_isin_weight_row(
+    line: str,
+    *,
+    fund_code: str,
+    report_period: Optional[str],
+    report_date: Optional[str],
+    section: Optional[str],
+    fund_total_value: Optional[float],
+    source_notification_id: Optional[str],
+    source_attachment: Optional[str],
+) -> Optional[KapPdrHolding]:
+    """Parse KAP rows shaped as date / ISIN / issuer / nominal / MV / weight / trailing ratio."""
+
+    text = _plain(line)
+    match = _DATE_LEADING_ISIN_WEIGHT_RE.match(text)
+    if not match:
+        return None
+
+    isin = match.group("isin")
+    if isin not in _isin_tokens(text):
+        return None
+
+    weight = parse_tr_number(match.group("weight"))
+    trailing = parse_tr_number(match.group("trailing"))
+    market_value = parse_tr_number(match.group("mv"))
+    nominal_raw = match.group("nominal")
+    nominal = _parse_kap_number(nominal_raw)
+    if nominal is None and re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+", nominal_raw):
+        nominal = float(nominal_raw.replace(".", ""))
+
+    if (
+        weight is None
+        or market_value is None
+        or nominal is None
+        or abs(weight) > 100.5
+        or trailing is None
+    ):
+        return None
+
+    return _holding(
+        fund_code=fund_code,
+        report_period=report_period,
+        report_date=report_date,
+        asset_group_raw=section,
+        security_name_raw=None,
+        issuer_raw=_plain(match.group("issuer")) or None,
+        isin=isin,
+        official_code=isin,
+        maturity_date=parse_tr_date(text),
+        currency=None,
+        quantity=None,
+        nominal=nominal,
+        unit_price=None,
+        market_value=market_value,
+        portfolio_weight=weight,
+        fund_total_value=fund_total_value,
+        source_notification_id=source_notification_id,
+        source_attachment=source_attachment,
+    )
+
+
 def _parse_isin_row(
     line: str,
     *,
@@ -1433,6 +1507,8 @@ def _is_holding_row_start(line: str) -> bool:
     first = text.split()[0].rstrip(".,;:")
     if is_valid_isin(first):
         return True
+    if _DATE_LEADING_ISIN_WEIGHT_RE.match(text):
+        return True
     if _percent_tail_ticker_match(text):
         return True
     if _TICKER_ROW_RE.match(text) and re.search(r"\b(TL|TRY|USD|EUR|AU1)\b", text):
@@ -1623,6 +1699,19 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if (
             buf
             and _physical_participation_row(line)
+        ):
+            flush()
+            buf = line
+            continue
+
+        # Date-leading KAP security rows are complete physical holdings.
+        # Do not merge consecutive lease-certificate / security rows into
+        # one wrapped chunk merely because they do not use the classic
+        # GRUP/FPD/FTD tail layout.
+        if (
+            buf
+            and _DATE_LEADING_ISIN_WEIGHT_RE.match(_plain(buf))
+            and _DATE_LEADING_ISIN_WEIGHT_RE.match(_plain(line))
         ):
             flush()
             buf = line
@@ -2060,6 +2149,20 @@ def parse_kap_pdr_text(
     holdings: list[KapPdrHolding] = []
     section: Optional[str] = None
     for section, line in _prepare_pdr_chunks(holdings_body):
+        date_leading_isin = _parse_date_leading_isin_weight_row(
+            line,
+            fund_code=code,
+            report_period=report_period,
+            report_date=report_date,
+            section=section,
+            fund_total_value=fund_total,
+            source_notification_id=source_notification_id,
+            source_attachment=source_attachment,
+        )
+        if date_leading_isin:
+            holdings.append(date_leading_isin)
+            continue
+
         zpe = _parse_zpe_equity_row(
             line,
             fund_code=code,

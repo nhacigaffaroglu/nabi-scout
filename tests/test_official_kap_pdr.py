@@ -253,6 +253,80 @@ ASEgS.E ASEgSAN ELEKTRONİK TRAASEgS91H3 TL 100 10 1000 0.50% 0.37%
     assert holding.isin is None
     assert holding.official_code is None
 
+def test_zck_lease_certificate_trailing_100_does_not_override_portfolio_weight():
+    """ZCK-style KAP row: trailing 100,000 is not the portfolio weight."""
+    from services.official_kap_pdr import parse_kap_pdr_text
+
+    text = """
+O - KİRA SERTİFİKASI KIYMETLER         İhraçcı                      Nominal     Rayiç Değer        Oran (%)
+        13.11.2026 TRDBRKTK2614        ALBARAKA TÜRK              3.000.000    3.055.553,48        0,759414              100,000
+        18.12.2026 TRDEVKSA2659        TÜRKİYE EMLAK KATILI       3.000.000    3.033.295,35        0,753882              100,000
+        17.11.2026 TRDKTLMK2633        BRİSA                      5.000.000    5.577.056,13        1,386097              100,000
+"""
+
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="ZCK",
+        report_period="2026-08",
+    )
+
+    rows = [
+        row for row in parsed.holdings
+        if row.asset_group == "LEASE_CERTIFICATE"
+    ]
+
+    assert len(rows) == 3
+
+    by_code = {row.official_code: row for row in rows}
+
+    assert round(by_code["TRDBRKTK2614"].portfolio_weight, 6) == 0.759414
+    assert round(by_code["TRDEVKSA2659"].portfolio_weight, 6) == 0.753882
+    assert round(by_code["TRDKTLMK2633"].portfolio_weight, 6) == 1.386097
+
+    assert round(by_code["TRDBRKTK2614"].market_value, 2) == 3055553.48
+    assert round(by_code["TRDEVKSA2659"].market_value, 2) == 3033295.35
+    assert round(by_code["TRDKTLMK2633"].market_value, 2) == 5577056.13
+
+    assert all(row.portfolio_weight != 100.0 for row in rows)
+
+def test_sale_promise_purchase_trailing_value_does_not_override_market_value():
+    """KAP Satış Vaadiyle Alış trailing field is not Rayiç Değer."""
+    from services.official_kap_pdr import parse_kap_pdr_text
+
+    text = """
+1 - FON PORTFÖY DEĞERİ TABLOSU
+Z - Satış Vaadiyle Alış İhraçcı Nominal Rayiç Değer Oran (%)
+01.09.2026 TRD080927T34 HAZİNE 428.280.780 428.280.780,47 22,265850 150,60
+01.09.2026 TRD020627T17 HAZİNE 300.301.233 300.301.232,88 15,612333 232,57
+AA - Alış Vaadiyle Satış İhraçcı Nominal Rayiç Değer Oran (%)
+"""
+
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="ZPO",
+        report_period="2026-08",
+    )
+
+    rows = {
+        row.official_code: row
+        for row in parsed.holdings
+        if row.official_code in {"TRD080927T34", "TRD020627T17"}
+    }
+
+    assert set(rows) == {"TRD080927T34", "TRD020627T17"}
+
+    assert rows["TRD080927T34"].asset_group == "REPO"
+    assert round(rows["TRD080927T34"].nominal, 2) == 428280780.00
+    assert round(rows["TRD080927T34"].market_value, 2) == 428280780.47
+    assert round(rows["TRD080927T34"].portfolio_weight, 6) == 22.265850
+
+    assert rows["TRD020627T17"].asset_group == "REPO"
+    assert round(rows["TRD020627T17"].nominal, 2) == 300301233.00
+    assert round(rows["TRD020627T17"].market_value, 2) == 300301232.88
+    assert round(rows["TRD020627T17"].portfolio_weight, 6) == 15.612333
+
+
+
 def test_zpo_physical_participation_accounts_keep_row_values_isolated():
     """Physical KAP participation-account rows must retain their own values."""
     from services.official_kap_pdr import parse_kap_pdr_text
