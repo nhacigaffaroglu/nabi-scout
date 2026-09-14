@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from services.turkiye_fund_current_evidence import filter_current_packs
+
 COMPATIBLE_DEPENDENCY_BLOBS = {
     "services/turkiye_fund_source_capture.py": "6d02e7e874a52fcbcf906287541b3b810647742c",
     "services/turkiye_fund_broad_capture.py": "1fb32d36ff24a6015dccccc38e069a8f44839a4f",
@@ -265,30 +267,6 @@ def save_tefas_overlay(
         },
     )
 
-
-def filter_current_packs(
-    packs: Mapping[str, Mapping[str, Any]],
-    identities: Sequence[Any],
-) -> tuple[dict[str, dict[str, Any]], tuple[str, ...]]:
-    """Quarantine a stale pack when current KAP disclosure identity has advanced."""
-    by_code = {row.fund_code: row for row in identities}
-    current: dict[str, dict[str, Any]] = {}
-    quarantined: list[str] = []
-    for code, raw in packs.items():
-        pack = dict(raw)
-        identity = by_code.get(code)
-        if identity is None:
-            continue
-        if pack.get("pilot_frozen"):
-            current[code] = pack
-            continue
-        expected = int(identity.kap_disclosure_index or 0)
-        actual = int(pack.get("kap_disclosure_index") or 0)
-        if expected and actual != expected:
-            quarantined.append(code)
-            continue
-        current[code] = pack
-    return current, tuple(sorted(quarantined))
 
 
 def _fresh_tefas_snapshot(
