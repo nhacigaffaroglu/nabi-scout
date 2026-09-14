@@ -28,6 +28,9 @@ from services.supabase_admin_client import create_admin_supabase_client
 from services.turkiye_fund_portfolio_fit_production_evidence import (
     build_production_portfolio_fit_evidence,
 )
+from services.turkiye_fund_portfolio_fit_effective_assessment import (
+    apply_effective_portfolio_fit_assessment_policy,
+)
 from services.turkiye_fund_portfolio_fit_research import (
     build_evidence_backed_portfolio_fit_research_artifact,
 )
@@ -100,6 +103,12 @@ def main() -> int:
         default=None,
     )
 
+    parser.add_argument(
+        "--assessment-policy-input",
+        type=Path,
+        default=None,
+    )
+
     args = parser.parse_args()
 
     fund14a = _read_json(args.fund14a_input)
@@ -115,6 +124,12 @@ def main() -> int:
     metric_policy = (
         _read_json(args.metric_assessment_policy_input)
         if args.metric_assessment_policy_input
+        else None
+    )
+
+    assessment_policy = (
+        _read_json(args.assessment_policy_input)
+        if args.assessment_policy_input
         else None
     )
 
@@ -136,6 +151,13 @@ def main() -> int:
         metric_assessment_policy=metric_policy,
     )
 
+    if assessment_policy is not None:
+        artifact = apply_effective_portfolio_fit_assessment_policy(
+            artifact,
+            assessment_inputs=assembled["assessment_inputs"],
+            assessment_policy=assessment_policy,
+        )
+
     output = {
         "schema_version": "fund18_production_research_run_1",
         "research_only": True,
@@ -143,6 +165,7 @@ def main() -> int:
         "production_persist": False,
         "production_writes": 0,
         "evidence_diagnostics": assembled["diagnostics"],
+        "assessment_inputs": assembled["assessment_inputs"],
         "fund18": artifact,
     }
 

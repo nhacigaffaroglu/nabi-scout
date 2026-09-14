@@ -192,8 +192,26 @@ def build_production_portfolio_fit_evidence(
         generated_at=generated_at,
     )
 
+    portfolio_context = fund17.get("portfolio_context")
+    desired_roles: list[str] = []
+
+    if isinstance(portfolio_context, Mapping):
+        raw_roles = portfolio_context.get("desired_roles")
+        if isinstance(raw_roles, list):
+            desired_roles = [
+                str(role).strip()
+                for role in raw_roles
+                if str(role).strip()
+            ]
+
     return {
         "evidence": evidence,
+        "assessment_inputs": {
+            "candidate_exposures": candidate_exposures,
+            "portfolio_exposure": portfolio_inputs["portfolio_exposure"],
+            "portfolio_weights": portfolio_inputs["portfolio_weights"],
+            "desired_roles": desired_roles,
+        },
         "diagnostics": {
             "candidate_codes": list(candidate_codes),
             "candidate_count": len(candidate_codes),
