@@ -252,3 +252,75 @@ ASEgS.E ASEgSAN ELEKTRONİK TRAASEgS91H3 TL 100 10 1000 0.50% 0.37%
     assert holding.security_name_raw == "ASEgS.E"
     assert holding.isin is None
     assert holding.official_code is None
+
+def test_zpo_physical_participation_accounts_keep_row_values_isolated():
+    """Physical KAP participation-account rows must retain their own values."""
+    from services.official_kap_pdr import parse_kap_pdr_text
+
+    text = """
+1 - FON PORTFÖY DEĞERİ TABLOSU
+S - KATILIM HESABI                     İhraçcı                      Nominal     Rayiç Değer        Oran (%)
+11.09.2026 3AyaKadarVD-ALK-TRY 155.861.301 154.186.643,84 8,015995
+11.09.2026 3AyaKadarVD-ZTB-TRY 155.861.301 154.186.643,84 8,015995
+08.10.2026 3AyaKadarVD-ZTB-TRY 104.931.507 100.876.712,33 5,244470
+01.09.2026 3AyaKadarVD-VKF-TRY 301.815.981 301.815.981,31 15,691084
+"""
+
+    parsed = parse_kap_pdr_text(
+        text,
+        fund_code="ZPO",
+        report_period="2026-08",
+    )
+
+    rows = [
+        row
+        for row in parsed.holdings
+        if row.asset_group == "PARTICIPATION_ACCOUNT"
+    ]
+
+    assert len(rows) == 4
+
+    expected = [
+        (
+            "3AyaKadarVD-ALK-TRY",
+            "2026-09-11",
+            155861301.0,
+            154186643.84,
+            8.015995,
+        ),
+        (
+            "3AyaKadarVD-ZTB-TRY",
+            "2026-09-11",
+            155861301.0,
+            154186643.84,
+            8.015995,
+        ),
+        (
+            "3AyaKadarVD-ZTB-TRY",
+            "2026-10-08",
+            104931507.0,
+            100876712.33,
+            5.244470,
+        ),
+        (
+            "3AyaKadarVD-VKF-TRY",
+            "2026-09-01",
+            301815981.0,
+            301815981.31,
+            15.691084,
+        ),
+    ]
+
+    actual = [
+        (
+            row.official_code,
+            row.maturity_date,
+            round(row.nominal, 2),
+            round(row.market_value, 2),
+            round(row.portfolio_weight, 6),
+        )
+        for row in rows
+    ]
+
+    assert actual == expected
+    assert all(row.currency == "TRY" for row in rows)

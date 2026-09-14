@@ -789,6 +789,57 @@ def _parse_deposit_row(
 ) -> Optional[KapPdrHolding]:
     if _isin_tokens(line) or "GRUP TOPLAMI" in line.upper():
         return None
+
+    # Physical KAP participation-account row, e.g.
+    # 11.09.2026 3AyaKadarVD-ALK-TRY 155.861.301 154.186.643,84 8,015995
+    physical = re.match(
+        r"^\s*"
+        r"(?P<date>\d{2}[./]\d{2}[./]\d{4})\s+"
+        r"(?P<code>[A-Za-z0-9ÇĞİÖŞÜçğıöşü._/-]+-(?:TRY|TL))\s+"
+        r"(?P<nominal>-?[0-9.]+(?:,[0-9]+)?)\s+"
+        r"(?P<market_value>-?[0-9.]+(?:,[0-9]+)?)\s+"
+        r"(?P<weight>-?[0-9]+(?:[.,][0-9]+)?)"
+        r"\s*$",
+        _plain(line),
+        flags=re.I,
+    )
+
+    if physical:
+        code = physical.group("code").strip()
+        nominal_token = physical.group("nominal")
+        nominal = parse_tr_number(nominal_token)
+        if nominal is None and re.fullmatch(r"-?\d{1,3}(?:\.\d{3})+", nominal_token):
+            nominal = float(nominal_token.replace(".", ""))
+
+        market_value = parse_tr_number(physical.group("market_value"))
+        weight = parse_tr_number(physical.group("weight"))
+
+        if (
+            nominal is not None
+            and market_value is not None
+            and weight is not None
+            and abs(weight) <= 100.5
+        ):
+            return _holding(
+                fund_code=fund_code,
+                report_period=report_period,
+                report_date=report_date,
+                asset_group_raw=section or "KATILIM HESABI",
+                security_name_raw=code,
+                issuer_raw=None,
+                isin=None,
+                official_code=code,
+                maturity_date=parse_tr_date(line),
+                currency="TRY",
+                quantity=None,
+                nominal=nominal,
+                unit_price=None,
+                market_value=market_value,
+                portfolio_weight=weight,
+                fund_total_value=fund_total_value,
+                source_notification_id=source_notification_id,
+                source_attachment=source_attachment,
+            )
     if not re.search(r"\bTL\b", line):
         return None
     if not _TR_DATE_RE.search(line):
@@ -1551,6 +1602,32 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
         if re.search(r"\b(?:ARA|ANA)?\s*GRUP\s+TOPLAM", line, flags=re.I) and not _isin_tokens(line):
             flush()
             continue
+        # Date-leading physical KAP participation-account rows are complete
+        # holdings too. Keep consecutive bank/deposit rows atomic so values
+        # from adjacent rows can never be merged into a hybrid holding.
+        def _physical_participation_row(value: str) -> bool:
+            return bool(
+                re.match(
+                    r"^\s*"
+                    r"\d{2}[./]\d{2}[./]\d{4}\s+"
+                    r"[A-Za-z0-9ÇĞİÖŞÜçğıöşü._/-]+-(?:TRY|TL)\s+"
+                    r"-?[0-9.]+(?:,[0-9]+)?\s+"
+                    r"-?[0-9.]+(?:,[0-9]+)?\s+"
+                    r"-?[0-9]+(?:[.,][0-9]+)?"
+                    r"\s*$",
+                    _plain(value),
+                    flags=re.I,
+                )
+            )
+
+        if (
+            buf
+            and _physical_participation_row(line)
+        ):
+            flush()
+            buf = line
+            continue
+
         # Repeated complete ISIN lots are distinct official rows, not wraps.
         if buf:
             buf_first = _plain(buf).split()[0].rstrip(".,;:") if _plain(buf).split() else ""
@@ -2056,6 +2133,26 @@ def parse_kap_pdr_text(
             ASSET_GROUP_PARTICIPATION_ACCOUNT,
             ASSET_GROUP_REPO,
         } and not _isin_tokens(line):
+            normalized_section = normalize_pdr_asset_group(section)
+
+            # Participation-account rows have their own physical KAP layout.
+            # Parse them before the generic ZPE fallback so nominal and
+            # market-value columns cannot be collapsed into the same value.
+            if normalized_section == ASSET_GROUP_PARTICIPATION_ACCOUNT:
+                deposit = _parse_deposit_row(
+                    line,
+                    fund_code=code,
+                    report_period=report_period,
+                    report_date=report_date,
+                    section=section,
+                    fund_total_value=fund_total,
+                    source_notification_id=source_notification_id,
+                    source_attachment=source_attachment,
+                )
+                if deposit:
+                    holdings.append(deposit)
+                    continue
+
             other = _parse_zpe_other_row(
                 line,
                 fund_code=code,
@@ -2069,19 +2166,21 @@ def parse_kap_pdr_text(
             if other:
                 holdings.append(other)
                 continue
-            deposit = _parse_deposit_row(
-                line,
-                fund_code=code,
-                report_period=report_period,
-                report_date=report_date,
-                section=section,
-                fund_total_value=fund_total,
-                source_notification_id=source_notification_id,
-                source_attachment=source_attachment,
-            )
-            if deposit:
-                holdings.append(deposit)
-                continue
+
+            if normalized_section != ASSET_GROUP_PARTICIPATION_ACCOUNT:
+                deposit = _parse_deposit_row(
+                    line,
+                    fund_code=code,
+                    report_period=report_period,
+                    report_date=report_date,
+                    section=section,
+                    fund_total_value=fund_total,
+                    source_notification_id=source_notification_id,
+                    source_attachment=source_attachment,
+                )
+                if deposit:
+                    holdings.append(deposit)
+                    continue
         if _isin_tokens(line):
             parsed = _parse_isin_row(
                 _plain(line),
