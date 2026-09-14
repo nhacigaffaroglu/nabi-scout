@@ -130,7 +130,11 @@ def _assert_fund20_firewall(artifact: Mapping[str, Any]) -> None:
         raise DecisionEvaluationReadinessContractError(
             "unsupported_fund20_schema"
         )
-    if artifact.get("decision_candidate_ranking_status") != INPUT_STATUS:
+    upstream_status = artifact.get("decision_ranking_status")
+    if upstream_status is None:
+        upstream_status = artifact.get("decision_candidate_ranking_status")
+
+    if upstream_status != INPUT_STATUS:
         raise DecisionEvaluationReadinessContractError(
             "upstream_fund20_status_invalid"
         )

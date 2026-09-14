@@ -63,6 +63,30 @@ class CandidateDetailPageTests(unittest.TestCase):
             self.page,
         )
 
+    def test_scanner_links_to_candidate_detail_without_promoting_it_to_primary_nav(self):
+        scanner_page = Path("pages/13_Turkiye_Fon_Tarama.py").read_text(encoding="utf-8")
+        ui_source = Path("services/ui.py").read_text(encoding="utf-8")
+
+        self.assertIn('st.button("Aday Detayını Aç"', scanner_page)
+        self.assertIn(
+            'st.session_state["turkiye_fund_candidate_detail_code"] = selected',
+            scanner_page,
+        )
+        self.assertIn(
+            'st.query_params["candidate_fund"] = selected',
+            scanner_page,
+        )
+        self.assertIn(
+            'st.switch_page("pages/14_Fon_Aday_Detayi.py")',
+            scanner_page,
+        )
+
+        self.assertNotIn(
+            '("pages/14_Fon_Aday_Detayi.py", "Fon Aday Detayı", "🔎")',
+            ui_source,
+        )
+
+
     def test_service_declares_no_authority(self):
         self.assertIn("execution_authority: bool = False", self.service)
         self.assertIn("production_persist: bool = False", self.service)

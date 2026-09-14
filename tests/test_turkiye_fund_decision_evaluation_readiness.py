@@ -61,6 +61,36 @@ def artifact(*rows):
     }
 
 
+
+def test_canonical_decision_ranking_status_is_accepted():
+    payload = artifact(candidate("AAA", rank=1, ranking_eligible=True))
+    payload["decision_ranking_status"] = INPUT_STATUS
+    payload.pop("decision_candidate_ranking_status")
+
+    result = build_decision_evaluation_readiness_artifact(payload)
+
+    assert result["decision_evaluation_readiness_status"] == OUTPUT_STATUS
+
+
+def test_legacy_decision_candidate_ranking_status_remains_accepted():
+    payload = artifact(candidate("AAA", rank=1, ranking_eligible=True))
+
+    result = build_decision_evaluation_readiness_artifact(payload)
+
+    assert result["decision_evaluation_readiness_status"] == OUTPUT_STATUS
+
+
+def test_canonical_status_takes_precedence_over_legacy_status():
+    payload = artifact(candidate("AAA", rank=1, ranking_eligible=True))
+    payload["decision_ranking_status"] = "wrong"
+
+    with pytest.raises(
+        DecisionEvaluationReadinessContractError,
+        match="upstream_fund20_status_invalid",
+    ):
+        build_decision_evaluation_readiness_artifact(payload)
+
+
 def test_ready_ranked_candidate_advances_without_decision_authority():
     result = build_decision_evaluation_readiness_artifact(
         artifact(

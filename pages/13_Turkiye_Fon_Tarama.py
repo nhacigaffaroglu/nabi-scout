@@ -183,6 +183,12 @@ selected = st.selectbox(
 if selected != "(seçiniz)":
     detail = next(row for row in payload["rows"] if row["fund_code"] == selected)
     st.json(detail)
+
+    if st.button("Aday Detayını Aç", key=f"candidate_detail_{selected}"):
+        st.session_state["turkiye_fund_candidate_detail_code"] = selected
+        st.query_params["candidate_fund"] = selected
+        st.switch_page("pages/14_Fon_Aday_Detayi.py")
+
     if is_turkiye_fund_nav_identity(selected):
         if st.button("Fon Raporu", key=f"scanner_fund_report_{selected}"):
             apply_turkiye_fund_report_handoff(

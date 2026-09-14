@@ -10,7 +10,6 @@ PRIMARY_NAV = (
     ("pages/1_Dashboard.py", "Dashboard", "📊"),
     ("pages/10_Wealth.py", "Wealth", "🏦"),
     ("pages/5_Firsatlar.py", "Fırsatlar", "🎯"),
-    ("pages/14_Fon_Aday_Detayi.py", "Fon Aday Detayı", "🔎"),
 )
 
 HIDDEN_NAV_PAGE_HREFS = (
