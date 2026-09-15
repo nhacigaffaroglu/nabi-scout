@@ -337,3 +337,52 @@ class IsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SukukGeneralizedHoldingsPolicyTests(unittest.TestCase):
+    def test_sukuk_participation_account_and_repo_are_not_material_contradictions(self) -> None:
+        provider = default_tefas_fund_provider()
+        code = "HPV"
+
+        identity = provider.turkiye_identity(code)
+        kap = provider.kap_mandate(code)
+
+        verdict = evaluate_turkiye_fund_participation(
+            code,
+            identity_status=identity.identity_status,
+            official_name=identity.official_name,
+            umbrella_type=kap.umbrella_type,
+            official_profile=provider.participation_holdings_profile(code),
+            bundle=provider.participation_bundle(code),
+        )
+
+        self.assertEqual(verdict.holdings_state, HOLDINGS_COMPLIANT)
+        self.assertFalse(verdict.contradiction)
+        self.assertNotIn("MATERIAL_CONTRADICTION", verdict.blockers)
+        self.assertFalse(
+            any(
+                reason.startswith("HOLDING_GROUP_OUTSIDE_MANDATE")
+                for reason in verdict.blockers
+            )
+        )
+
+    def test_sukuk_below_80_lease_certificate_remains_review(self) -> None:
+        provider = default_tefas_fund_provider()
+        code = "VFK"
+
+        identity = provider.turkiye_identity(code)
+        kap = provider.kap_mandate(code)
+
+        verdict = evaluate_turkiye_fund_participation(
+            code,
+            identity_status=identity.identity_status,
+            official_name=identity.official_name,
+            umbrella_type=kap.umbrella_type,
+            official_profile=provider.participation_holdings_profile(code),
+            bundle=provider.participation_bundle(code),
+        )
+
+        self.assertEqual(verdict.holdings_state, "REVIEW")
+        self.assertFalse(verdict.contradiction)
+        self.assertIn("IAT_KIRA_BELOW_80", verdict.blockers)
+        self.assertNotIn("MATERIAL_CONTRADICTION", verdict.blockers)
