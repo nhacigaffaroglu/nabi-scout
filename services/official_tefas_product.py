@@ -278,6 +278,26 @@ class TefasFundProductProvider:
             ybf_payload=dict(kap.get("ybf") or {}),
         )
 
+    def participation_bundle(self, symbol: str) -> dict[str, Any]:
+        """Canonical Participation evidence bundle enriched from current KAP pack."""
+        code = self._require(symbol)
+        bundle = load_participation_bundle()
+        funds = dict(bundle.get("funds") or {})
+        existing = dict(funds.get(code) or {})
+        pack = dict(self._packs.get(code) or {})
+
+        if not existing.get("mandate_excerpts") and pack:
+            funds[code] = {
+                "mandate_excerpts": list(pack.get("mandate_excerpts") or ()),
+                "governance_excerpts": list(pack.get("governance_excerpts") or ()),
+                "purification_excerpts": list(pack.get("purification_excerpts") or ()),
+                "izahname_url": pack.get("izahname_url") or "",
+                "izahname_date": pack.get("source_as_of") or "",
+            }
+            bundle = {**bundle, "funds": funds}
+
+        return bundle
+
     def mandate(self, symbol: str) -> OfficialFundMandate:
         code = self._require(symbol)
         canonical = self.kap_mandate(code)
@@ -342,20 +362,7 @@ class TefasFundProductProvider:
         code = self._require(symbol)
         mandate = self.kap_mandate(code)
         identity = self.turkiye_identity(code)
-        participation_bundle = load_participation_bundle()
-        funds = dict(participation_bundle.get("funds") or {})
-        existing = dict(funds.get(code) or {})
-        pack = dict(self._packs.get(code) or {})
-
-        if not existing.get("mandate_excerpts") and pack:
-            funds[code] = {
-                "mandate_excerpts": list(pack.get("mandate_excerpts") or ()),
-                "governance_excerpts": list(pack.get("governance_excerpts") or ()),
-                "purification_excerpts": list(pack.get("purification_excerpts") or ()),
-                "izahname_url": pack.get("izahname_url") or "",
-                "izahname_date": pack.get("source_as_of") or "",
-            }
-            participation_bundle = {**participation_bundle, "funds": funds}
+        participation_bundle = self.participation_bundle(code)
 
         verdict = evaluate_turkiye_fund_participation(
             code,

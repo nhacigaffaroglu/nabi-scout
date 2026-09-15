@@ -155,6 +155,8 @@ def compute_turkiye_fund_snapshots(
                     identity_status=identity.identity_status,
                     official_name=identity.official_name,
                     umbrella_type=kap.umbrella_type,
+                    official_profile=resolved.participation_holdings_profile(fund_code),
+                    bundle=resolved.participation_bundle(fund_code),
                 )
             )
     if verdict is None:

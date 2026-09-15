@@ -42,6 +42,7 @@ from services.turkiye_fund_refresh_contract import (
     TABLE_PARTICIPATION_SNAPSHOTS,
     TABLE_SI_SNAPSHOTS,
 )
+import services.turkiye_fund_refresh_orchestrator as refresh_orchestrator
 from services.turkiye_fund_refresh_orchestrator import (
     compute_turkiye_fund_snapshots,
     run_turkiye_fund_refresh,
@@ -129,6 +130,39 @@ class TurkiyeFundRefreshTests(unittest.TestCase):
     def setUp(self) -> None:
         self.provider = default_tefas_fund_provider()
         self.stamp = CALCULATED_AT
+
+    def test_refresh_participation_uses_provider_live_evidence_bundle_and_profile(self) -> None:
+        original = refresh_orchestrator.evaluate_turkiye_fund_participation
+
+        with patch.object(
+            refresh_orchestrator,
+            "evaluate_turkiye_fund_participation",
+            wraps=original,
+        ) as evaluator:
+            bundle = compute_turkiye_fund_snapshots(
+                "ZPE",
+                calculated_at=self.stamp,
+            )
+
+        evaluator.assert_called_once()
+        kwargs = evaluator.call_args.kwargs
+
+        self.assertEqual(
+            kwargs["official_profile"],
+            self.provider.participation_holdings_profile("ZPE"),
+        )
+        self.assertEqual(
+            kwargs["bundle"],
+            self.provider.participation_bundle("ZPE"),
+        )
+
+        participation = bundle[LAYER_PARTICIPATION]
+        self.assertEqual(
+            participation.payload["status"],
+            PARTICIPATION_STATUS_UYGUN,
+        )
+        self.assertTrue(participation.payload["research_allowed"])
+        self.assertTrue(participation.publishable)
 
     def test_canonical_payloads_preserve_frozen_state(self) -> None:
         for code, (score, state) in FROZEN_FI.items():
