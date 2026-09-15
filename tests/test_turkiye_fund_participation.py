@@ -386,3 +386,58 @@ class SukukGeneralizedHoldingsPolicyTests(unittest.TestCase):
         self.assertFalse(verdict.contradiction)
         self.assertIn("IAT_KIRA_BELOW_80", verdict.blockers)
         self.assertNotIn("MATERIAL_CONTRADICTION", verdict.blockers)
+
+
+class LiquidityGeneralizedHoldingsPolicyTests(unittest.TestCase):
+    @staticmethod
+    def _verdict(code: str):
+        provider = default_tefas_fund_provider()
+        identity = provider.turkiye_identity(code)
+        kap = provider.kap_mandate(code)
+
+        return evaluate_turkiye_fund_participation(
+            code,
+            identity_status=identity.identity_status,
+            official_name=identity.official_name,
+            umbrella_type=kap.umbrella_type,
+            official_profile=provider.participation_holdings_profile(code),
+            bundle=provider.participation_bundle(code),
+        )
+
+    def test_liquidity_cash_is_not_outside_mandate(self) -> None:
+        verdict = self._verdict("MPE")
+
+        self.assertNotIn(
+            "HOLDING_GROUP_OUTSIDE_MANDATE:CASH",
+            verdict.blockers,
+        )
+
+    def test_accounting_other_rows_are_not_investment_exposure(self) -> None:
+        verdict = self._verdict("MPE")
+
+        self.assertFalse(
+            any(
+                reason.startswith("HOLDING_GROUP_OUTSIDE_MANDATE:")
+                and "OTHER" in reason.split(":", 1)[1].split(",")
+                for reason in verdict.blockers
+            )
+        )
+
+    def test_liquidity_participation_account_over_50_remains_review(self) -> None:
+        verdict = self._verdict("KKL")
+
+        self.assertEqual(verdict.holdings_state, "REVIEW")
+        self.assertIn("AIS_KATILMA_OVER_50", verdict.blockers)
+
+    def test_liquidity_derivative_remains_material_contradiction(self) -> None:
+        verdict = self._verdict("TLV")
+
+        self.assertTrue(verdict.contradiction)
+        self.assertTrue(
+            any(
+                reason.startswith("HOLDING_GROUP_OUTSIDE_MANDATE:")
+                and "DERIVATIVE" in reason.split(":", 1)[1].split(",")
+                for reason in verdict.blockers
+            )
+        )
+        self.assertIn("MATERIAL_CONTRADICTION", verdict.blockers)

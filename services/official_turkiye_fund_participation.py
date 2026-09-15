@@ -81,7 +81,9 @@ SPK_EXEMPT_GROUPS = frozenset(
     {ASSET_GROUP_LEASE_CERTIFICATE, ASSET_GROUP_PARTICIPATION_ACCOUNT, ASSET_GROUP_REPO}
 )
 AIS_ALLOWED = SPK_EXEMPT_GROUPS
-LIQUIDITY_ALLOWED = AIS_ALLOWED
+LIQUIDITY_ALLOWED = frozenset(
+    AIS_ALLOWED | {ASSET_GROUP_CASH}
+)
 ZPE_ALLOWED = frozenset(
     {ASSET_GROUP_EQUITY, ASSET_GROUP_FUND, ASSET_GROUP_PARTICIPATION_ACCOUNT, ASSET_GROUP_REPO}
 )
@@ -258,11 +260,39 @@ def _holdings_state(
     if file is None or not file.holdings:
         return HOLDINGS_MISSING, ("OFFICIAL_PDR_MISSING",), ()
     groups = asset_group_weights(file)
+
+    # KAP PDR accounting rows such as BORÇLAR / ALACAKLAR are
+    # reconciliation components, not investment exposures. Preserve them
+    # in the raw official holdings and generic asset_group_weights(), but
+    # exclude their OTHER contribution from mandate-exposure checks.
+    accounting_other = sum(
+        float(row.portfolio_weight)
+        for row in file.holdings
+        if row.portfolio_weight is not None
+        and row.asset_group == ASSET_GROUP_OTHER
+        and str(row.asset_group_raw or "").strip().casefold()
+        in {"borçlar", "borclar", "alacaklar"}
+    )
+    exposure_groups = dict(groups)
+    if ASSET_GROUP_OTHER in exposure_groups:
+        exposure_other = round(
+            exposure_groups[ASSET_GROUP_OTHER] - accounting_other,
+            4,
+        )
+        if abs(exposure_other) <= 0.0001:
+            exposure_groups.pop(ASSET_GROUP_OTHER, None)
+        else:
+            exposure_groups[ASSET_GROUP_OTHER] = exposure_other
+
     reasons: list[str] = []
     if not file.weights.weight_reconciled:
         reasons.append("PDR_WEIGHTS_UNRECONCILED")
     allowed = _allowed_groups(official_profile)
-    unknown = {name: weight for name, weight in groups.items() if name not in allowed}
+    unknown = {
+        name: weight
+        for name, weight in exposure_groups.items()
+        if name not in allowed
+    }
     if unknown:
         reasons.append("HOLDING_GROUP_OUTSIDE_MANDATE:" + ",".join(sorted(unknown)))
     if official_profile in LIQUIDITY_PROFILES:
