@@ -613,6 +613,17 @@ class TurkiyeFundFoundationTests(unittest.TestCase):
                     PROFILE_SUKUK_LEASE_CERTIFICATE,
                 )
 
+    def test_participation_holdings_profile_uses_official_name_only_as_legacy_fallback(self) -> None:
+        # MPF: current KAP/YBF extraction does not resolve the historical
+        # holdings profile, but the official structural fund name does.
+        mpf = self.provider.participation_holdings_profile("MPF")
+        self.assertEqual(mpf, PROFILE_SUKUK_LEASE_CERTIFICATE)
+
+        # Safety regression: existing FUND10 sukuk resolution must retain
+        # precedence and must not be re-routed to another profile.
+        iv8 = self.provider.participation_holdings_profile("IV8")
+        self.assertEqual(iv8, PROFILE_SUKUK_LEASE_CERTIFICATE)
+
     def test_participation_holdings_profile_is_fund10_methodology_freeze(self) -> None:
         fi = parse_kap_mandate(
             fund_code="TST",

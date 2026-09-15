@@ -276,6 +276,11 @@ class TefasFundProductProvider:
             umbrella_type=ozet.get(OZET_LABEL_UMBRELLA_TYPE),
             ybf_text=str(kap.get("ybf_text") or ""),
             ybf_payload=dict(kap.get("ybf") or {}),
+            official_name=str(
+                (kap.get("ybf") or {}).get("official_name")
+                or kap.get("official_name")
+                or ""
+            ),
         )
 
     def participation_bundle(self, symbol: str) -> dict[str, Any]:

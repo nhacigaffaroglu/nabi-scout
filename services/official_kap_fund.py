@@ -239,6 +239,7 @@ def participation_holdings_profile_from_kap_fund10(
     umbrella_type: Optional[str],
     ybf_text: str = "",
     ybf_payload: Optional[Mapping[str, Any]] = None,
+    official_name: Optional[str] = None,
 ) -> Optional[str]:
     """Freeze FUND-10 holdings-profile semantics for Participation only.
 
@@ -330,10 +331,24 @@ def participation_holdings_profile_from_kap_fund10(
             )
         ),
     }
-    return _fund10_participation_profile_from_legacy_facts(
+    legacy_profile = _fund10_participation_profile_from_legacy_facts(
         umbrella_type=umbrella_type,
         ybf=legacy,
     )
+    if legacy_profile is not None:
+        return legacy_profile
+
+    name_profile = _official_name_profile_hint(official_name)
+    if name_profile in {
+        PROFILE_PARTICIPATION_EQUITY,
+        PROFILE_SUKUK_LEASE_CERTIFICATE,
+        PROFILE_PRECIOUS_METALS_PARTICIPATION,
+        PROFILE_REAL_ESTATE_PARTICIPATION,
+        PROFILE_MIXED_MULTI_ASSET_PARTICIPATION,
+    }:
+        return name_profile
+
+    return None
 
 def match_tefas_kap_identity(
     *,
