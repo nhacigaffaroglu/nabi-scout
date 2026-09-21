@@ -1,0 +1,278 @@
+name: US Candidate Controlled Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Explicit US symbols, comma separated (max 2)"
+        required: true
+        type: string
+        default: "ADBE,ADSK"
+      confirmation:
+        description: "Type REFRESH_US_CANDIDATES to authorize candidate updates"
+        required: true
+        type: string
+        default: "NO"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-us-candidate-controlled-refresh
+  cancel-in-progress: false
+
+jobs:
+  controlled-candidate-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SEC Company Facts evidence cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-candidate-refresh-${{ github.run_id }}
+          restore-keys: |
+            sec-company-facts-${{ github.ref_name }}-
+            sec-company-facts-
+
+      - name: Validate bounded refresh authorization
+        env:
+          SYMBOLS: ${{ inputs.symbols }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+        run: |
+          set -euo pipefail
+
+          test "$CONFIRMATION" = "REFRESH_US_CANDIDATES" || {
+            echo "Invalid candidate refresh confirmation token."
+            exit 1
+          }
+
+          test -n "$SUPABASE_URL" || {
+            echo "Missing SUPABASE_URL"
+            exit 1
+          }
+
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY)"
+            exit 1
+          fi
+
+          test -n "$FMP_API_KEY" || {
+            echo "Missing FMP_API_KEY"
+            exit 1
+          }
+
+          test -n "$SEC_CONTACT_EMAIL" || {
+            echo "Missing SEC_CONTACT_EMAIL"
+            exit 1
+          }
+
+          python - <<'PY2'
+          import os
+          import re
+
+          symbols = [
+              item.strip().upper()
+              for item in os.environ.get(
+                  "SYMBOLS", ""
+              ).split(",")
+              if item.strip()
+          ]
+
+          if not symbols:
+              raise SystemExit(
+                  "At least one symbol is required."
+              )
+
+          if len(symbols) > 2:
+              raise SystemExit(
+                  f"Candidate refresh allows at most 2 symbols; got {len(symbols)}."
+              )
+
+          if len(set(symbols)) != len(symbols):
+              raise SystemExit(
+                  "Duplicate symbols are not allowed."
+              )
+
+          for symbol in symbols:
+              if not re.fullmatch(
+                  r"[A-Z][A-Z0-9.\-]{0,11}",
+                  symbol,
+              ):
+                  raise SystemExit(
+                      f"Invalid symbol: {symbol}"
+                  )
+
+          print(
+              "SYMBOL_SCOPE_OK="
+              + ",".join(symbols)
+          )
+          print(
+              "CANDIDATE_REFRESH_AUTHORIZATION=PASS"
+          )
+          PY2
+
+      - name: Run controlled candidate refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+          SYMBOLS: ${{ inputs.symbols }}
+        run: |
+          set -euo pipefail
+
+          REPORT="$RUNNER_TEMP/us_candidate_refresh_report.json"
+
+          python scripts/refresh_us_candidate_subset.py \
+            --symbols "$SYMBOLS" \
+            --max-symbols 2 \
+            --execute \
+            --persist-candidate \
+            --allow-live \
+            > "$REPORT"
+
+          cat "$REPORT"
+
+          python - "$REPORT" <<'PY2'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(
+              Path(sys.argv[1]).read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          assert payload["execute_providers"] is True, payload
+          assert payload["persist_candidate"] is True, payload
+          assert payload["allow_live"] is True, payload
+
+          checked = int(
+              payload["symbols_checked"]
+          )
+
+          assert 1 <= checked <= 2, payload
+          assert int(
+              payload["provider_calls_observed"]
+          ) > 0, payload
+
+          assert int(payload["errors"]) == 0, payload
+          assert int(payload["blocked"]) == 0, payload
+          assert payload.get(
+              "blocked_writes"
+          ) == [], payload
+
+          items = payload.get("items") or []
+          assert len(items) == checked, payload
+          assert all(
+              item.get("status") == "UPDATED"
+              for item in items
+          ), payload
+          assert all(
+              item.get("freshness_status")
+              == "FRESH"
+              for item in items
+          ), payload
+          assert all(
+              item.get("financial_period_end")
+              for item in items
+          ), payload
+
+          writes = int(payload["writes"])
+          assert writes == checked, payload
+
+          attempts = (
+              payload.get(
+                  "allowed_write_attempts"
+              )
+              or []
+          )
+
+          assert attempts == [
+              "investment_candidates.update"
+          ] * checked, payload
+
+          print(
+              "CANDIDATE_REFRESH_GATE=PASS"
+          )
+          print(
+              f"SYMBOLS_CHECKED={checked}"
+          )
+          print(
+              "PROVIDER_CALLS_OBSERVED="
+              + str(
+                  payload[
+                      "provider_calls_observed"
+                  ]
+              )
+          )
+          print(f"WRITES={writes}")
+          print(
+              "UPDATED="
+              + str(payload["updated"])
+          )
+          print(
+              "ALLOWED_WRITE_ATTEMPTS="
+              + ",".join(attempts)
+          )
+
+          for item in items:
+              print(
+                  "REFRESHED="
+                  + str(item["symbol"])
+                  + "|period="
+                  + str(
+                      item[
+                          "financial_period_end"
+                      ]
+                  )
+                  + "|freshness="
+                  + str(
+                      item[
+                          "freshness_status"
+                      ]
+                  )
+                  + "|completeness="
+                  + str(
+                      item[
+                          "data_completeness"
+                      ]
+                  )
+              )
+          PY2
+
+      - name: Save SEC Company Facts evidence cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Upload controlled refresh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-candidate-controlled-refresh-${{ github.run_id }}
+          path: ${{ runner.temp }}/us_candidate_refresh_report.json
+          if-no-files-found: warn
+          retention-days: 14
