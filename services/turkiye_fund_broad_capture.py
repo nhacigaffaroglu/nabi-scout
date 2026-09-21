@@ -685,10 +685,27 @@ def capture_universe(
             # KAP evidence remains authoritative and fail-closed if this page
             # is temporarily unavailable or changes shape.
             directory = {}
+    day = _as_of(as_of)
     started = time.monotonic()
     packs: dict[str, dict[str, Any]] = {}
     for identity in active:
         sess.stats.funds_attempted += 1
+
+        latest_pdr_row = _latest_applicable_row(
+            catalog_rows,
+            identity.fund_code,
+            day,
+        )
+
+        expected_pdr_period = (
+            report_period_label(
+                latest_pdr_row.get("year"),
+                latest_pdr_row.get("period"),
+            )
+            if latest_pdr_row is not None
+            else None
+        )
+
         if resume:
             existing = read_evidence_pack(identity.fund_code)
             if existing and _pack_is_reusable(
@@ -697,6 +714,7 @@ def capture_universe(
                 require_participation_evidence=(
                     identity.fund_code in participation_evidence_required
                 ),
+                expected_pdr_period=expected_pdr_period,
             ):
                 sess.stats.cache_hits += 1
                 sess.stats.unchanged_documents += 1
@@ -740,11 +758,29 @@ def capture_universe(
     return packs, sess.stats
 
 
+def _pdr_period_key(value: Any) -> Optional[tuple[int, int]]:
+    """Return YYYY-MM ordering key for captured/applicable PDR periods."""
+    text = str(value or "").strip()
+
+    try:
+        year_text, month_text = text.split("-", 1)
+        year = int(year_text)
+        month = int(month_text)
+    except (TypeError, ValueError):
+        return None
+
+    if year < 2000 or month < 1 or month > 12:
+        return None
+
+    return year, month
+
+
 def _pack_is_reusable(
     pack: Mapping[str, Any],
     identity: TurkiyeFundUniverseIdentity,
     *,
     require_participation_evidence: bool = False,
+    expected_pdr_period: Optional[str] = None,
 ) -> bool:
     version = int(pack.get("evidence_recovery_version") or 0)
     if version not in ACCEPTED_PACK_VERSIONS:
@@ -755,6 +791,26 @@ def _pack_is_reusable(
         return False
     if pack.get("pilot_frozen") and identity.fund_code in PILOT_TEFAS_FUND_CODES:
         return True
+
+    # Do not let an older captured PDR suppress recapture after KAP
+    # publishes a newer applicable reporting period.
+    #
+    # Important: only observed < expected is stale. If local evidence is
+    # newer than a temporarily lagging catalog, keep the newer evidence.
+    observed_pdr_key = _pdr_period_key(
+        pack.get("pdr_period")
+    )
+    expected_pdr_key = _pdr_period_key(
+        expected_pdr_period
+    )
+
+    if (
+        observed_pdr_key is not None
+        and expected_pdr_key is not None
+        and observed_pdr_key < expected_pdr_key
+    ):
+        return False
+
     if require_participation_evidence:
         mandate_excerpts = tuple(pack.get("mandate_excerpts") or ())
         governance_excerpts = tuple(pack.get("governance_excerpts") or ())

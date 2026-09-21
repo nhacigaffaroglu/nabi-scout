@@ -504,6 +504,10 @@ def main() -> None:
 
     from services.fund_product_contract import PDR_SUBJECT_OID, PILOT_TEFAS_FUND_CODES
     from services.turkiye_fund_broad_capture import capture_universe
+    from services.turkiye_fund_pdr_materializer import (
+        materialize_kap_only_pdr_texts,
+        select_kap_only_pdr_recovery_codes,
+    )
     from services.turkiye_fund_tefas_history import capture_tefas_history
     from services.turkiye_fund_scanner import run_turkiye_fund_scanner
     from services.turkiye_fund_source_capture import (
@@ -694,6 +698,23 @@ def main() -> None:
         live=True,
         min_gap_sec=KAP_MIN_GAP_SEC,
     )
+
+    # KAP PDR availability is independent from TEFAS-active broad capture.
+    # This path covers ETFs/BYFs and other KAP funds that are intentionally
+    # absent/inactive in TEFAS while preserving the normal broad-capture gate.
+    kap_only_pdr_codes = select_kap_only_pdr_recovery_codes(
+        identities,
+        merged_rows,
+        as_of=day,
+    )
+    kap_only_pdr_results = materialize_kap_only_pdr_texts(
+        merged_rows,
+        session=kap_capture_session,
+        as_of=day,
+        fund_codes=kap_only_pdr_codes,
+        allow_ocr=False,
+    )
+
     captured, capture_stats = capture_universe(
         identities,
         catalog_rows=merged_rows,

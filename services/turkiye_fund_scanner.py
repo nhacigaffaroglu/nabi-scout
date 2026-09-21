@@ -21,6 +21,7 @@ from services.fund_product_contract import (
     MIN_READY_WEIGHT_COVERAGE,
     TURKISH_FI_PROFILES,
 )
+from services.official_kap_pdr import asset_group_weights
 from services.official_tefas import normalize_fund_code
 from services.official_tefas_product import default_tefas_fund_provider
 from services.official_turkiye_fund_exposure import classify_official_turkiye_fund_exposure
@@ -229,35 +230,104 @@ def _rank_key(row: TurkiyeFundScannerRow) -> tuple:
 
 
 
+def _runtime_pdr_quality(file: Any) -> dict[str, Any]:
+    # Diagnostics only: describe the exact current PDR object used by this run.
+    if file is None:
+        return {}
+
+    holdings = tuple(getattr(file, "holdings", ()) or ())
+    total = len(holdings) or 1
+    weights = getattr(file, "weights", None)
+
+    return {
+        "row_count": len(holdings),
+        "reported_weight": getattr(weights, "reported_weight_sum", None),
+        "known_weight": getattr(weights, "known_weight", None),
+        "unknown_weight": getattr(weights, "unknown_weight", None),
+        "reconciliation": bool(
+            getattr(weights, "weight_reconciled", False)
+        ),
+        "issuer_coverage": round(
+            sum(1 for row in holdings if getattr(row, "issuer_raw", None))
+            / total,
+            4,
+        ),
+        "maturity_coverage": round(
+            sum(1 for row in holdings if getattr(row, "maturity_date", None))
+            / total,
+            4,
+        ),
+        "currency_coverage": round(
+            sum(1 for row in holdings if getattr(row, "currency", None))
+            / total,
+            4,
+        ),
+        "isin_coverage": round(
+            sum(1 for row in holdings if getattr(row, "isin", None))
+            / total,
+            4,
+        ),
+        "asset_groups": asset_group_weights(file),
+        "renormalized": bool(getattr(weights, "renormalized", False)),
+    }
+
+
 def supersede_cached_pdr_reconciliation_reasons(
     reasons: Sequence[str],
     pdr: Any,
 ) -> list[str]:
-    """Drop stale cached PDR reconciliation blockers only when current
-    canonical official PDR evidence proves reconciliation succeeded.
+    """Supersede stale cached reconciliation blockers from current PDR truth.
 
     Fail-closed:
-    - current PDR unavailable -> keep blocker
-    - reconciliation False/unknown -> keep blocker
-    - reconciliation True -> cached reconciliation blocker is superseded
-
-    Current FI evaluation remains authoritative and may add the blocker again
-    later if its own canonical evidence requires it.
+    - current reconciled PDR -> cached reconciliation blocker is stale;
+    - current unreconciled/unknown PDR -> keep blocker;
+    - current PDR absent + explicit holdings-missing evidence -> reconciliation
+      cannot describe the current state, so remove only the cached
+      reconciliation blocker and preserve the missing-holdings blockers;
+    - current PDR absent without explicit holdings-missing evidence -> keep it.
     """
-    weights = getattr(pdr, "weights", None)
-    if getattr(weights, "weight_reconciled", None) is not True:
-        return list(reasons)
+    current = list(reasons)
 
     stale_codes = {
         "PDR_RECONCILIATION_FAILED",
         "PDR_WEIGHTS_UNRECONCILED",
     }
 
-    return [
-        reason
-        for reason in reasons
-        if str(reason or "").split(":", 1)[0].strip() not in stale_codes
-    ]
+    def reason_code(reason: Any) -> str:
+        return str(reason or "").split(":", 1)[0].strip()
+
+    weights = getattr(pdr, "weights", None)
+
+    if getattr(weights, "weight_reconciled", None) is True:
+        return [
+            reason
+            for reason in current
+            if reason_code(reason) not in stale_codes
+        ]
+
+    codes = {
+        reason_code(reason)
+        for reason in current
+    }
+
+    explicit_holdings_missing = bool(
+        pdr is None
+        and codes
+        & {
+            "HOLDINGS_MISSING",
+            "PDR_MISSING",
+            "OFFICIAL_PDR_MISSING",
+        }
+    )
+
+    if explicit_holdings_missing:
+        return [
+            reason
+            for reason in current
+            if reason_code(reason) not in stale_codes
+        ]
+
+    return current
 
 
 def fund_intelligence_review_reasons(view: Any) -> tuple[str, ...]:
@@ -335,6 +405,7 @@ def _evaluate_one(
     as_of: date,
     provider,
     packs: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    runtime_pdr_quality: Optional[dict[str, dict[str, Any]]] = None,
 ) -> TurkiyeFundScannerRow:
     code = identity.fund_code
     pack = dict((packs or {}).get(code) or {})
@@ -416,6 +487,12 @@ def _evaluate_one(
             pdr = provider.pdr_holdings(code)
         except (FileNotFoundError, ValueError):
             pdr = None
+
+        if runtime_pdr_quality is not None:
+            if pdr is None:
+                runtime_pdr_quality.pop(code, None)
+            else:
+                runtime_pdr_quality[code] = _runtime_pdr_quality(pdr)
 
         missing = supersede_cached_pdr_reconciliation_reasons(
             missing,
@@ -568,11 +645,20 @@ def run_turkiye_fund_scanner(
         evaluate_codes.add(inactive_discovered[0])
     by_code = {row.fund_code: row for row in identities}
     evaluated: list[TurkiyeFundScannerRow] = []
+    runtime_pdr_quality: dict[str, dict[str, Any]] = {}
     for code in sorted(evaluate_codes):
         identity = by_code.get(code)
         if identity is None:
             continue
-        evaluated.append(_evaluate_one(identity, as_of=day, provider=provider, packs=packs))
+        evaluated.append(
+            _evaluate_one(
+                identity,
+                as_of=day,
+                provider=provider,
+                packs=packs,
+                runtime_pdr_quality=runtime_pdr_quality,
+            )
+        )
     ranked_rows = _assign_ranks(evaluated)
     ready_rows = [row for row in ranked_rows if row.scanner_status == SCANNER_READY]
     ranked_by_category: dict[str, tuple[TurkiyeFundScannerRow, ...]] = {}
@@ -607,7 +693,12 @@ def run_turkiye_fund_scanner(
     )
     _ = latest_applicable_pdr_period(day)
     active_count = sum(1 for row in identities if row.tefas_status == TEFAS_STATUS_ACTIVE)
-    funnel = _coverage_funnel(identities, ranked_rows, packs)
+    funnel = _coverage_funnel(
+        identities,
+        ranked_rows,
+        packs,
+        pdr_quality=runtime_pdr_quality,
+    )
     reason_counts: dict[str, int] = {}
     for row in ranked_rows:
         if row.scanner_status == SCANNER_READY:
@@ -637,11 +728,19 @@ def run_turkiye_fund_scanner(
     for row in ranked_rows:
         state = row.fi_state or "INSUFFICIENT_DATA"
         fi_distribution[state] = fi_distribution.get(state, 0) + 1
+    evaluated_codes = {row.fund_code for row in ranked_rows}
     pdr_quality = {
-        code: dict(pack.get("pdr_quality") or {})
-        for code, pack in packs.items()
-        if pack.get("pdr_quality")
+        code: dict(quality)
+        for code, quality in runtime_pdr_quality.items()
+        if quality
     }
+    for code, pack in packs.items():
+        if (
+            code not in evaluated_codes
+            and code not in pdr_quality
+            and pack.get("pdr_quality")
+        ):
+            pdr_quality[code] = dict(pack.get("pdr_quality") or {})
     newly_uygun = tuple(
         row
         for row in ranked_rows
@@ -706,6 +805,8 @@ def _coverage_funnel(
     identities: Sequence[TurkiyeFundUniverseIdentity],
     rows: Sequence[TurkiyeFundScannerRow],
     packs: Mapping[str, Mapping[str, Any]],
+    *,
+    pdr_quality: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> dict[str, Any]:
     from services.fund_product_contract import IDENTITY_RESOLVED
 
@@ -733,7 +834,10 @@ def _coverage_funnel(
             mandate_ready += 1
         if pack.get("governance_excerpts") or (row and row.participation == PARTICIPATION_STATUS_UYGUN):
             governance_ready += 1
-        quality = dict(pack.get("pdr_quality") or {})
+        if row is not None:
+            quality = dict((pdr_quality or {}).get(identity.fund_code) or {})
+        else:
+            quality = dict(pack.get("pdr_quality") or {})
         if quality.get("row_count") or (row and row.exposure):
             pdr_ready += 1
     uygun = sum(1 for row in rows if row.participation == PARTICIPATION_STATUS_UYGUN)

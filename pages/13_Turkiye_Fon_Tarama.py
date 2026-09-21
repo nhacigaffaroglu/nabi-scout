@@ -1,4 +1,5 @@
 import pandas as pd
+from services.turkiye_fund_review_intelligence import build_review_intelligence
 import streamlit as st
 
 from services.turkiye_fund_navigation import (
@@ -210,6 +211,46 @@ if reason_counts:
         hide_index=True,
         use_container_width=True,
     )
+
+
+review_intelligence = build_review_intelligence(payload).to_dict()
+st.subheader("İnceleme zekâsı")
+
+root_cause_counts = dict(review_intelligence.get("root_cause_counts") or {})
+if root_cause_counts:
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"PRIMARY ROOT CAUSE": reason, "COUNT": count}
+                for reason, count in root_cause_counts.items()
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+else:
+    st.caption("Kök neden teşhisi üretilecek inceleme satırı yok.")
+
+unclassified_count = int(review_intelligence.get("unclassified_count") or 0)
+if unclassified_count:
+    st.warning(
+        f"{unclassified_count} inceleme satırı için yapılandırılmış kök neden "
+        "bulunamadı. Bu bir karar değişikliği değildir; diagnostics açığıdır."
+    )
+
+profile_reason_counts = dict(review_intelligence.get("profile_reason_counts") or {})
+profile_rows = [
+    {"PROFILE": profile, "PRIMARY ROOT CAUSE": reason, "COUNT": count}
+    for profile, counts in profile_reason_counts.items()
+    for reason, count in counts.items()
+]
+if profile_rows:
+    with st.expander("Profil bazında kök nedenler"):
+        st.dataframe(
+            pd.DataFrame(profile_rows),
+            hide_index=True,
+            use_container_width=True,
+        )
 
 st.subheader("İnceleme kuyruğu")
 queue = payload.get("review_queue") or []

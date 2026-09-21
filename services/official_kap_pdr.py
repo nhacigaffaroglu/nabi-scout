@@ -49,12 +49,23 @@ except ImportError:  # pragma: no cover
 KAP_HOST = _KAP_HOST
 PDR_DISCOVERY_URL = f"{KAP_HOST}{KAP_FUNDS_BY_CRITERIA}"
 PROVENANCE_KAP_PDR = "kap_pdr_official"
-PDR_PARSER_VERSION = "kap-pdr-v4"
-
+PDR_PARSER_VERSION = "kap-pdr-v11"
 _ISIN_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{10})\b")
 _GLUED_ISIN = re.compile(r"(?<=\d)(TR[A-Z0-9]{10})\b")
 _BIST_CODE_RE = re.compile(r"\b([A-Z0-9]{2,6}\.[EF])\b")
-_TICKER_ROW_RE = re.compile(r"\b([A-Z]{3,6}(?:-[A-Z0-9]{2,10})?)\s+(TL|TRY|USD|EUR|AU1)\b")
+_TICKER_ROW_RE = re.compile(
+    r"\b([A-Z][A-Z0-9]{2,5}(?:-[A-Z0-9]{2,10})?)"
+    r"\s+(TL|TRY|USD|EUR|AU1)\b"
+)
+
+_HYPHEN_DISPLAY_TICKER_RE = re.compile(
+    r"(?:^|\s)"
+    r"(?P<ticker>[A-Z][A-Z0-9]{2,5})"
+    r"\s+-\s+"
+    r".+?"
+    r"\s+(?P<ccy>TL|TRY|USD|EUR|AU1)\b"
+)
+
 
 _OCR_EQUITY_CODE_RE = re.compile(
     r"(?<![A-Za-z0-9])([A-Za-z0-9ÇçĞğİıÖöŞşÜü]{2,8}\.E)(?![A-Za-z0-9])"
@@ -1288,6 +1299,25 @@ def _parse_ticker_row(
     ticker = match.group(1)
     ccy = match.group(2)
     isins = _isin_tokens(text)
+
+    # Official KAP rows may use:
+    #
+    #   TICKER - DISPLAY/ISSUER ... CURRENCY ...
+    #
+    # Without an authoritative ISIN, the generic ticker regex may select
+    # the display/issuer token immediately before the currency instead of
+    # the official first ticker. Repair identity only; economic fields are
+    # still parsed from the exact same official row.
+    if not isins:
+        hyphen_identity = _HYPHEN_DISPLAY_TICKER_RE.search(text)
+
+        if hyphen_identity is not None:
+            first_ticker = hyphen_identity.group("ticker")
+            first_ccy = hyphen_identity.group("ccy")
+
+            if first_ccy.upper() == ccy.upper():
+                ticker = first_ticker
+
     nums = [parse_tr_number(tok) for tok in _numbers_without_isins(text)]
     values = [item for item in nums if item is not None]
     weight = values[-1] if len(values) >= 3 and all(abs(item) <= 100.5 for item in values[-3:]) else None
@@ -1300,11 +1330,23 @@ def _parse_ticker_row(
         if len(head) > 1:
             rest = re.split(r"\d", head[1], maxsplit=1)[0]
             issuer = _plain(rest) or None
+    asset_group_raw = section
+    if (
+        not isins
+        and ticker.upper() in {"USD", "EUR"}
+        and ccy.upper() == ticker.upper()
+    ):
+        # KAP foreign-currency cash detail can remain physically under the
+        # preceding investment section in PDF text extraction.  A row whose
+        # security code and currency are both the same bare currency token is
+        # cash detail, not an investment holding in that preceding section.
+        asset_group_raw = "HAZIR DEĞERLER"
+
     return _holding(
         fund_code=fund_code,
         report_period=report_period,
         report_date=report_date,
-        asset_group_raw=section,
+        asset_group_raw=asset_group_raw,
         security_name_raw=ticker,
         issuer_raw=issuer,
         isin=isins[0] if isins else None,
@@ -1717,6 +1759,65 @@ def _prepare_pdr_chunks(body: str) -> list[tuple[Optional[str], str]]:
             buf = line
             continue
 
+        # Complete physical rows must remain atomic even when surrounding
+        # issuer/name text makes the generic wrap heuristic look plausible.
+        #
+        # Covered official KAP shapes:
+        #   1) ISIN + CURRENCY + ... + explicit GRUP/FPD/FTD tail
+        #   2) TICKER + ISIN + CURRENCY + ... + explicit GRUP/FPD/FTD tail
+        #
+        # A completed row may already have trailing issuer/identity wrap text
+        # appended to its buffer. In that case _has_ftd_tail(buf) becomes false
+        # even though an explicit FTD segment still exists inside the buffer.
+        # Treat that embedded structural FTD match as completion evidence only;
+        # never infer a residual and never renormalize printed weights.
+        plain_line = _plain(line)
+        plain_buf = _plain(buf)
+        physical_tokens = plain_line.split()
+        physical_isins = _isin_tokens(plain_line)
+
+        previous_row_completed = bool(
+            buf
+            and (
+                _has_ftd_tail(buf)
+                or _FTD_ROW_RE.search(plain_buf) is not None
+                or _buffer_has_completed_percent_tail(buf)
+            )
+        )
+
+        first_token_isin = bool(
+            physical_tokens
+            and is_valid_isin(
+                physical_tokens[0].rstrip(".,;:")
+            )
+        )
+
+        ticker_isin_currency = bool(
+            len(physical_tokens) >= 3
+            and not is_valid_isin(
+                physical_tokens[0].rstrip(".,;:")
+            )
+            and is_valid_isin(
+                physical_tokens[1].rstrip(".,;:")
+            )
+            and physical_tokens[1].rstrip(".,;:") in physical_isins
+            and physical_tokens[2].upper()
+            in {"TL", "TRY", "USD", "EUR", "AU1"}
+        )
+
+        complete_physical_row_start = bool(
+            _has_ftd_tail(plain_line)
+            and (
+                first_token_isin
+                or ticker_isin_currency
+            )
+        )
+
+        if previous_row_completed and complete_physical_row_start:
+            flush()
+            buf = line
+            continue
+
         # Repeated complete ISIN lots are distinct official rows, not wraps.
         if buf:
             buf_first = _plain(buf).split()[0].rstrip(".,;:") if _plain(buf).split() else ""
@@ -1792,18 +1893,43 @@ def _cut_holdings_body(text: str) -> str:
     """Return only the official portfolio-holdings table when boundaries exist.
 
     Prefer the Section III portfolio-value table over earlier monthly
-    composition summaries.  Earlier summaries may contain asset-class names
+    composition summaries. Earlier summaries may contain asset-class names
     such as "Kira Sertifikaları" and must not leak section state into the
     actual security rows.
+
+    Holdings also stop before later transaction-only sections. Those sections
+    describe sales, redemptions, or purchases rather than period-end holdings
+    and must not feed holding reconciliation.
     """
     source = text
 
-    # Stop before Section IV / fund-total summary.
-    end_match = re.search(
-        r"(?im)^\s*(?:IV|4)[.\-–—]?\s*FON\s+TOPLAM",
-        source,
+    # Stop at the earliest explicit boundary following the holdings table.
+    #
+    # IV       fund-total summary
+    # VII      portfolio sales
+    # VIII     redemptions
+    # IX       portfolio purchases
+    #
+    # KAP layouts have used both "PORTFÖYE SATIŞLAR" and
+    # "PORTFÖYDEN SATIŞLAR", so VII accepts both forms.
+    end_patterns = (
+        r"(?im)^\s*(?:IV|4)[.\-–—)]?\s*FON\s+TOPLAM",
+        r"(?im)^\s*(?:VII|7)[.\-–—)]?\s*PORTF[ÖO]Y(?:E|DEN)\s+SATI[SŞ]LAR",
+        r"(?im)^\s*(?:VIII|8)[.\-–—)]?\s*[İI]TFALAR",
+        r"(?im)^\s*(?:IX|9)[.\-–—)]?\s*PORTF[ÖO]YE\s+ALI[SŞ]LAR",
     )
-    if end_match:
+
+    end_matches = [
+        match
+        for pattern in end_patterns
+        if (match := re.search(pattern, source)) is not None
+    ]
+
+    if end_matches:
+        end_match = min(
+            end_matches,
+            key=lambda item: item.start(),
+        )
         source = source[:end_match.start()]
 
     # Prefer the real Section III holdings table whenever it is present.
@@ -2144,6 +2270,26 @@ def parse_kap_pdr_text(
     body = _GLUED_ISIN.sub(r" \1", str(text or ""))
     if not body.strip():
         raise KapPdrError("empty PDR text")
+
+    transaction_section_at_start = re.match(
+        r"(?is)^\s*(?:"
+        r"(?:VII|7)[.\-–—]?\s*PORTF"
+        r"|(?:VIII|8)[.\-–—]?\s*[İI]TFALAR"
+        r"|(?:IX|9)[.\-–—]?\s*PORTF"
+        r")",
+        body,
+    )
+
+    holdings_section = re.search(
+        r"(?im)^\s*(?:III|3)[.\-–—]?\s*FON\s+PORTF[ÖO]Y",
+        body,
+    )
+
+    if transaction_section_at_start and holdings_section is None:
+        raise KapPdrError(
+            "transaction-only PDR capture has no holdings table"
+        )
+
     fund_total = _fund_total_from_text(body)
     holdings_body = _cut_holdings_body(body)
     holdings: list[KapPdrHolding] = []
@@ -2355,12 +2501,7 @@ def parse_kap_pdr_text(
             )
             if other:
                 holdings.append(other)
-    seen_overlay = {
-        _fold(row.security_name_raw)
-        for row in holdings
-        if row.security_name_raw
-    }
-    for extra in _parse_ftd_overlay(
+    overlay_rows = _parse_ftd_overlay(
         body,
         fund_code=code,
         report_period=report_period,
@@ -2368,7 +2509,43 @@ def parse_kap_pdr_text(
         fund_total_value=fund_total,
         source_notification_id=source_notification_id,
         source_attachment=source_attachment,
-    ):
+    )
+
+    has_hazir_degerler = any(
+        _fold(extra.security_name_raw) == _fold("HAZIR DEĞERLER")
+        for extra in overlay_rows
+    )
+
+    if has_hazir_degerler:
+        # The FTD HAZIR DEĞERLER row is the authoritative aggregate cash
+        # accounting line.  Explicit USD/EUR cash detail rows are components
+        # of that aggregate and must not also enter portfolio-weight
+        # reconciliation.  Remove only evidence-backed currency components;
+        # all investment holdings and ALACAKLAR/BORÇLAR accounting rows remain.
+        holdings = [
+            row
+            for row in holdings
+            if not (
+                row.isin is None
+                and row.asset_group == ASSET_GROUP_CASH
+                and (row.official_code or row.security_name_raw or "")
+                .strip()
+                .upper()
+                in {"USD", "EUR"}
+                and (row.currency or "").strip().upper()
+                == (row.official_code or row.security_name_raw or "")
+                .strip()
+                .upper()
+                and row.portfolio_weight is not None
+            )
+        ]
+
+    seen_overlay = {
+        _fold(row.security_name_raw)
+        for row in holdings
+        if row.security_name_raw
+    }
+    for extra in overlay_rows:
         if _fold(extra.security_name_raw) in seen_overlay:
             continue
         holdings.append(extra)
@@ -2386,7 +2563,13 @@ def parse_kap_pdr_text(
     if not holdings:
         raise KapPdrError(f"PDR produced no holdings for {code}")
 
-    weights = reconcile_pdr_weights(holdings)
+    reconciliation_rows = (
+        _reconciliation_rows_for_verified_section_iv_accounting(
+            body,
+            holdings,
+        )
+    )
+    weights = reconcile_pdr_weights(reconciliation_rows)
     return KapPdrHoldingsFile(
         fund_code=code,
         report_period=report_period,
@@ -2400,6 +2583,123 @@ def parse_kap_pdr_text(
         source_url=source_url or PDR_DISCOVERY_URL,
         limitations=("RAW_OFFICIAL_FIELDS_ONLY", "NO_WEIGHT_RENORMALIZATION"),
     )
+
+
+
+def _reconciliation_rows_for_verified_section_iv_accounting(
+    text: str,
+    rows: Sequence[KapPdrHolding],
+) -> list[KapPdrHolding]:
+    """Select reconciliation rows only when denominator separation is proven.
+
+    Some official KAP PDRs expose two different percentage bases:
+
+    - Section III holding weights describe the composition of
+      A. FON PORTFÖY DEĞERİ.
+    - Section IV B/C/D/E rows are accounting items expressed relative to
+      FON TOPLAM DEĞERİ.
+
+    Those percentages must not be added together.
+
+    Fail-closed evidence requirements:
+    1) accounting overlay rows are explicitly present;
+    2) the current combined weight total does not reconcile;
+    3) economic Section III weights already reconcile without overlays;
+    4) every economic row has an explicit market value;
+    5) their market-value sum matches the official Section IV
+       A. FON PORTFÖY DEĞERİ value within a 1 ppm / 1 TL tolerance.
+
+    No residual is inferred and no weight is renormalized or rescaled.
+    Accounting rows remain in KapPdrHoldingsFile.holdings as official evidence;
+    they are excluded only from the weight-reconciliation denominator.
+    """
+    current = list(rows)
+
+    accounting_names = {
+        _fold("HAZIR DEĞERLER"),
+        _fold("ALACAKLAR"),
+        _fold("BORÇLAR"),
+        _fold("DİĞER VARLIKLAR"),
+    }
+
+    accounting = [
+        row
+        for row in current
+        if _fold(row.security_name_raw or "") in accounting_names
+    ]
+
+    if not accounting:
+        return current
+
+    economic = [
+        row
+        for row in current
+        if _fold(row.security_name_raw or "") not in accounting_names
+    ]
+
+    if not economic:
+        return current
+
+    current_reported = round(
+        sum(
+            float(row.portfolio_weight)
+            for row in current
+            if row.portfolio_weight is not None
+        ),
+        4,
+    )
+
+    if MATERIAL_WEIGHT_MIN_PCT <= current_reported <= MATERIAL_WEIGHT_MAX_PCT:
+        return current
+
+    economic_reported = round(
+        sum(
+            float(row.portfolio_weight)
+            for row in economic
+            if row.portfolio_weight is not None
+        ),
+        4,
+    )
+
+    if not (
+        MATERIAL_WEIGHT_MIN_PCT
+        <= economic_reported
+        <= MATERIAL_WEIGHT_MAX_PCT
+    ):
+        return current
+
+    if any(row.market_value is None for row in economic):
+        return current
+
+    a_match = re.search(
+        r"(?im)^\s*A[\s.\-)]*"
+        r"FON\s+PORTF[ÖO]Y\s+DE[ĞG]ER[İI]"
+        r"\s+([\d.]+,\d+)",
+        text,
+    )
+
+    if a_match is None:
+        return current
+
+    a_value = parse_tr_number(a_match.group(1))
+
+    if a_value is None or a_value <= 0:
+        return current
+
+    economic_market_value = sum(
+        float(row.market_value)
+        for row in economic
+    )
+
+    tolerance = max(
+        1.0,
+        abs(float(a_value)) * 1e-6,
+    )
+
+    if abs(economic_market_value - float(a_value)) > tolerance:
+        return current
+
+    return economic
 
 
 def reconcile_pdr_weights(rows: Sequence[KapPdrHolding]) -> KapPdrWeightReconciliation:

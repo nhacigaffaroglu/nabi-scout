@@ -202,9 +202,19 @@ class TurkiyeFundScannerTests(unittest.TestCase):
         )
 
     def test_generalized_pdr_and_reconciliation_fail_closed(self) -> None:
-        missing = try_load_captured_pdr_holdings("APGLD")
+        missing = try_load_captured_pdr_holdings("ZZZZZ")
         self.assertIsNone(missing)
-        self.assertEqual(normalize_pdr_asset_group("Kıymetli Madenler"), ASSET_GROUP_PRECIOUS_METALS)
+
+        apgld = try_load_captured_pdr_holdings("APGLD")
+        self.assertIsNotNone(apgld)
+        self.assertTrue(apgld.weights.weight_reconciled)
+        self.assertFalse(apgld.weights.renormalized)
+
+        self.assertEqual(
+            normalize_pdr_asset_group("Kıymetli Madenler"),
+            ASSET_GROUP_PRECIOUS_METALS,
+        )
+
         ais = try_load_captured_pdr_holdings("AIS")
         self.assertIsNotNone(ais)
         self.assertFalse(ais.weights.renormalized)

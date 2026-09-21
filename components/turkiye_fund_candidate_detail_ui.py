@@ -25,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from services.turkiye_fund_candidate_detail import TurkiyeFundCandidateDetail
+from services.turkiye_fund_review_reason_presentation import primary_review_reason
 
 
 def _pct(value: float | None, *, digits: int = 2) -> str:
@@ -238,6 +239,27 @@ def _humanize_reason(reason: str | None) -> str:
     return _humanize_evidence_code(raw)
 
 
+
+def _render_review_intelligence(detail) -> None:
+    # Diagnostics only; never changes candidate gates or rank.
+    status = str(getattr(detail, 'scanner_status', '') or '').strip().upper()
+    if status == 'READY':
+        return
+
+    row = {
+        'scanner_status': getattr(detail, 'scanner_status', None),
+        'reason': getattr(detail, 'reason', None),
+        'missing_evidence': getattr(detail, 'missing_evidence', ()),
+    }
+    primary = primary_review_reason(row)
+    if primary is None:
+        return
+
+    st.markdown('#### İnceleme kök nedeni')
+    st.write(f'**{primary.family_label}**')
+    st.caption(primary.action)
+
+
 def render_turkiye_fund_candidate_detail(
     detail: TurkiyeFundCandidateDetail,
 ) -> None:
@@ -292,6 +314,7 @@ def render_turkiye_fund_candidate_detail(
 
     st.markdown("### Neden bu durumda?")
     st.write(_humanize_reason(detail.reason))
+    _render_review_intelligence(detail)
 
     with st.expander("Teknik açıklama"):
         st.code(detail.reason or "—")
