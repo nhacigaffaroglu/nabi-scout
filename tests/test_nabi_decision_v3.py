@@ -51,6 +51,9 @@ from services.participation_intelligence_contract import (
     PARTICIPATION_STATUS_KONTROL_ET,
     PARTICIPATION_STATUS_UYGUN,
 )
+from services.portfolio_security_decision_contract import (
+    PortfolioSecurityDecision,
+)
 from services.portfolio_decision_intelligence import (
     DecisionAction,
     DecisionActionStatus,
@@ -209,6 +212,23 @@ def _plan(*rows: AllocationRecommendation) -> AllocationPlan:
     )
 
 
+def _psd(
+    symbol: str,
+    decision: str,
+    *,
+    increase: bool = True,
+) -> PortfolioSecurityDecision:
+    return PortfolioSecurityDecision(
+        symbol=symbol,
+        decision=decision,
+        confidence="HIGH",
+        exposure_increase_allowed=increase,
+        participation_status=PARTICIPATION_STATUS_UYGUN,
+        research_allowed=True,
+        security_intelligence_state="ATTRACTIVE",
+    )
+
+
 def _monitor_decision() -> PortfolioDecisionView:
     action = DecisionAction(
         id="continue_observation",
@@ -267,6 +287,7 @@ class PrecedenceAndTimingTests(unittest.TestCase):
                 "COMPANY_ATTRACTIVENESS",
                 "TIMING",
                 "PORTFOLIO_FIT",
+                "PORTFOLIO_SECURITY_8E",
                 "WEALTH_NEW_MONEY",
                 "FINAL_RECOMMENDATION",
             ),
@@ -366,6 +387,7 @@ class AdversarialAcceptanceTests(unittest.TestCase):
             _candidate("CRM"),
             thesis=_thesis("CRM"),
             allocation=_plan(_rec("CRM", reason=REASON_STRONG_CANDIDATE, existing_or_new="new")),
+            security_decision=_psd("CRM", ACTION_CONSIDER_NEW_POSITION),
             now=NOW,
         )
         self.assertEqual(item.final_action, ACTION_CONSIDER_NEW_POSITION)
@@ -383,6 +405,7 @@ class AdversarialAcceptanceTests(unittest.TestCase):
             allocation=_plan(
                 _rec("MU", reason=REASON_EXISTING_HOLDING_TOPUP, existing_or_new="existing")
             ),
+            security_decision=_psd("MU", ACTION_CONSIDER_TOP_UP),
             now=NOW,
         )
         self.assertEqual(item.final_action, ACTION_CONSIDER_TOP_UP)
@@ -402,6 +425,10 @@ class AdversarialAcceptanceTests(unittest.TestCase):
             allocation=plan,
             decision=_monitor_decision(),
             valuation_complete=True,
+            security_decisions=(
+                _psd("MU", "WATCH", increase=False),
+                _psd("CRM", ACTION_CONSIDER_NEW_POSITION),
+            ),
             now=NOW,
         )
         self.assertEqual(view.opportunity_ranking[0], "MU")
@@ -426,6 +453,9 @@ class AdversarialAcceptanceTests(unittest.TestCase):
             presented_actions=_plan_gap_presented(),
             decision=_monitor_decision(),
             valuation_complete=True,
+            security_decisions=(
+                _psd("CRM", ACTION_CONSIDER_NEW_POSITION),
+            ),
             now=NOW,
         )
         self.assertEqual(view.dashboard_primary, ACTION_REVIEW_GOAL_PLAN)

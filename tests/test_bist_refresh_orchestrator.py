@@ -688,5 +688,33 @@ class ParticipationAutomationTests(unittest.TestCase):
         self.assertTrue(repo.get_latest("BIMAS")["research_allowed"])
 
 
+class BistParityFailClosedTests(unittest.TestCase):
+    def test_orchestrator_does_not_default_missing_participation_to_uygun(self) -> None:
+        source = Path("services/bist_refresh_orchestrator.py").read_text(encoding="utf-8")
+        self.assertIn(
+            """participation=participation_status.get(
+                    symbol,
+                    PARTICIPATION_STATUS_KONTROL_ET,
+                ),""",
+            source,
+        )
+
+    def test_missing_research_allowed_is_not_promoted_to_true(self) -> None:
+        source = Path("services/bist_refresh_orchestrator.py").read_text(encoding="utf-8")
+        self.assertEqual(
+            source.count("si_research = research_allowed is True"),
+            1,
+        )
+
+    def test_business_bridge_remains_non_authoritative(self) -> None:
+        bridge = Path("services/bist_business_bridge.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'FINAL_PARTICIPATION_DISABLED = "FINAL_PARTICIPATION_DISABLED"',
+            bridge,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

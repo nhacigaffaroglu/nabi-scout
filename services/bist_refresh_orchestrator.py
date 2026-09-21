@@ -76,7 +76,10 @@ from services.participation_assessment_persistence_service import (
     official_participation_source_unavailable,
     publish_official_bist_participation,
 )
-from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.participation_intelligence_contract import (
+    PARTICIPATION_STATUS_KONTROL_ET,
+    PARTICIPATION_STATUS_UYGUN,
+)
 from services.security_facts_service import SecurityFactsService
 from services.security_intelligence_contract import SecurityParticipationContext
 from services.security_intelligence_publish import publish_canonical_security_intelligence
@@ -332,7 +335,10 @@ def run_bist_refresh(
                 discoveries=tuple(kap_discoveries.get(symbol, ()) or ()),
                 documents=tuple(kap_documents.get(symbol, ()) or ()),
                 kafif_rows=tuple(kafif_discoveries.get(symbol, ()) or ()),
-                participation=participation_status.get(symbol, PARTICIPATION_STATUS_UYGUN),
+                participation=participation_status.get(
+                    symbol,
+                    PARTICIPATION_STATUS_KONTROL_ET,
+                ),
                 evidence=participation_evidence.get(symbol),
                 capital=capital_html.get(symbol, ""),
                 capital_version=capital_versions.get(symbol, ""),
@@ -677,7 +683,9 @@ def _refresh_symbol(
     )
     effective_dry = dry_run or not persist_si or snapshot_repo is None
     si_status_ctx = new_part or participation
-    si_research = True if research_allowed is None else bool(research_allowed)
+    # Persisted/official boolean only. Never infer research permission from
+    # Participation status or from missing evidence.
+    si_research = research_allowed is True
     publish = publish_canonical_security_intelligence(
         facts,
         SecurityParticipationContext(status=si_status_ctx, research_allowed=si_research),

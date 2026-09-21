@@ -34,6 +34,10 @@ from services.nabi_decision_contract import (
     REASON_EVIDENCE_MEDIUM,
     REASON_EXTERNAL_SIGNAL_NOT_AUTHORITY,
     REASON_FIT_POOR,
+    REASON_8E_AUTHORITY_MISSING,
+    REASON_8E_DECISION_MISMATCH,
+    REASON_8E_EXPOSURE_BLOCKED,
+    REASON_8E_INCREASE_AUTHORIZED,
     REASON_NO_DEPLOYMENT_SUPPORT,
     REASON_PARTICIPATION_BLOCKED,
     REASON_TIMING_FAVORABLE,
@@ -61,6 +65,10 @@ from services.nabi_recommendation import (
 )
 from services.participation_authority import resolve_authoritative_participation
 from services.participation_intelligence_contract import PARTICIPATION_STATUS_UYGUN
+from services.portfolio_security_decision_contract import (
+    INCREASE_DECISIONS,
+    PortfolioSecurityDecision,
+)
 from services.research_intelligence_contract import (
     COMPLETENESS_HIGH,
     COMPLETENESS_LOW,
@@ -97,6 +105,16 @@ def _symbol(row: Mapping[str, Any]) -> str:
 
 def _decision_class(row: Mapping[str, Any]) -> str:
     return _text(row.get("decision") or row.get("decision_label"))
+
+
+def _index_security_decisions(
+    decisions: Sequence[PortfolioSecurityDecision],
+) -> dict[str, PortfolioSecurityDecision]:
+    return {
+        _text(item.symbol).upper(): item
+        for item in decisions
+        if _text(item.symbol)
+    }
 
 
 def _is_catalog_etf(row: Mapping[str, Any], symbol: str) -> bool:
@@ -164,6 +182,7 @@ def evaluate_candidate_investment(
     extra_evidence: Sequence[ResearchEvidenceRef] = (),
     allocation: Optional[AllocationPlan] = None,
     portfolio_view: Any = None,
+    security_decision: Optional[PortfolioSecurityDecision] = None,
     now: Optional[datetime] = None,
 ) -> CandidateInvestmentDecision:
     symbol = _symbol(candidate)
@@ -225,18 +244,70 @@ def evaluate_candidate_investment(
             reasons.append(REASON_EVIDENCE_MEDIUM)
         reasons.append(_timing_reason(timing))
         deploy = _allocation_support(symbol, allocation)
-        if deploy == ACTION_CONSIDER_TOP_UP:
-            reasons.append(REASON_DEPLOY_TOP_UP)
+
+        if security_decision is None:
+            reasons.append(REASON_8E_AUTHORITY_MISSING)
+            action = ACTION_NO_ACTION
+            why = (
+                "Canonical 8E decision is missing; v3 cannot authorize "
+                "an exposure increase."
+            )
+        elif (
+            not security_decision.exposure_increase_allowed
+            or security_decision.decision not in INCREASE_DECISIONS
+        ):
+            reasons.append(REASON_8E_EXPOSURE_BLOCKED)
+            action = ACTION_NO_ACTION
+            why = (
+                f"Canonical 8E decision {security_decision.decision} "
+                "does not authorize an exposure increase."
+            )
+        elif deploy is None:
+            reasons.extend(
+                (
+                    REASON_8E_INCREASE_AUTHORIZED,
+                    REASON_NO_DEPLOYMENT_SUPPORT,
+                )
+            )
+            action = ACTION_NO_ACTION
+            why = (
+                "8E allows exposure increase, but canonical New Money / "
+                "allocation provides no deployment support."
+            )
+        elif deploy != security_decision.decision:
+            reasons.extend(
+                (
+                    REASON_8E_INCREASE_AUTHORIZED,
+                    REASON_8E_DECISION_MISMATCH,
+                )
+            )
+            action = ACTION_NO_ACTION
+            why = (
+                f"8E says {security_decision.decision}, while allocation "
+                f"supports {deploy}; v3 refuses to reinterpret the conflict."
+            )
+        elif deploy == ACTION_CONSIDER_TOP_UP:
+            reasons.extend(
+                (REASON_8E_INCREASE_AUTHORIZED, REASON_DEPLOY_TOP_UP)
+            )
             action = ACTION_CONSIDER_TOP_UP
-            why = f"{symbol} has canonical top-up support."
+            why = (
+                f"{symbol} has matching canonical 8E top-up authority "
+                "and New Money support."
+            )
         elif deploy == ACTION_CONSIDER_NEW_POSITION:
-            reasons.append(REASON_DEPLOY_NEW)
+            reasons.extend(
+                (REASON_8E_INCREASE_AUTHORIZED, REASON_DEPLOY_NEW)
+            )
             action = ACTION_CONSIDER_NEW_POSITION
-            why = f"{symbol} has canonical new-position support."
+            why = (
+                f"{symbol} has matching canonical 8E new-position authority "
+                "and New Money support."
+            )
         else:
             reasons.append(REASON_NO_DEPLOYMENT_SUPPORT)
             action = ACTION_NO_ACTION
-            why = "No canonical New Money / allocation path supports deployment."
+            why = "No canonical deployment path supports exposure increase."
 
     return CandidateInvestmentDecision(
         symbol=symbol,
@@ -306,6 +377,7 @@ def build_nabi_decision_v3(
     valuation_complete: Optional[bool] = None,
     now: Optional[datetime] = None,
     recommendation: Optional[NABIRecommendation] = None,
+    security_decisions: Sequence[PortfolioSecurityDecision] = (),
 ) -> NabiDecisionV3:
     generated_at = (now or datetime.now(timezone.utc)).isoformat()
     rec = recommendation or build_nabi_recommendation(
@@ -322,6 +394,7 @@ def build_nabi_decision_v3(
     snapshots = snapshots or {}
     theses = theses or {}
     extra_evidence = extra_evidence or {}
+    security_by_symbol = _index_security_decisions(security_decisions)
     evaluated = tuple(
         evaluate_candidate_investment(
             row,
@@ -330,6 +403,7 @@ def build_nabi_decision_v3(
             extra_evidence=extra_evidence.get(_symbol(row), ()),
             allocation=allocation,
             portfolio_view=portfolio_view,
+            security_decision=security_by_symbol.get(_symbol(row)),
             now=now,
         )
         for row in candidates
@@ -366,6 +440,7 @@ def build_nabi_decision_v3(
         selected = _fallback_selected(evaluated)
 
     if selected is None:
+        deployment_symbol = None
         final_action = ACTION_NO_ACTION
         timing = TIMING_UNKNOWN
         fit = "UNKNOWN"
@@ -391,6 +466,8 @@ def build_nabi_decision_v3(
         refs = selected.evidence_references
         if selected.final_action in {ACTION_CONSIDER_NEW_POSITION, ACTION_CONSIDER_TOP_UP}:
             deployment_symbol = selected.symbol
+        else:
+            deployment_symbol = None
 
     wealth_action = rec.action_code
     dashboard_primary = wealth_action

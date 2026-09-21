@@ -1198,6 +1198,22 @@ def build_nabi_adviser_context(
         portfolio_view=portfolio_view,
         new_money_brief=new_money_brief,
     )
+
+    v3_symbols = [
+        _text(row.get("symbol")).upper()
+        for row in candidates
+        if isinstance(row, Mapping) and _text(row.get("symbol"))
+    ]
+    if rec.symbol:
+        v3_symbols.append(_text(rec.symbol).upper())
+
+    v3_security_decisions = resolve_adviser_security_decisions(
+        v3_symbols,
+        provided=security_decisions,
+        client=portfolio_security_client,
+        user_id=user_id,
+    )
+
     view = build_nabi_decision_v3(
         candidates=candidates,
         snapshots=snapshots,
@@ -1209,6 +1225,7 @@ def build_nabi_adviser_context(
         new_money_brief=new_money_brief,
         decision=decision,
         recommendation=rec,
+        security_decisions=v3_security_decisions,
     )
     compare_symbols = parsed.compare_symbols or (
         parsed.inherited_symbols

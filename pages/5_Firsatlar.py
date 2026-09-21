@@ -103,29 +103,28 @@ recommendation = build_nabi_recommendation(
     portfolio_view=portfolio_view,
     allocation=allocation,
 )
+
+gate_symbols: list[str] = []
+if recommendation.symbol:
+    gate_symbols.append(str(recommendation.symbol))
+for row in overlaid:
+    symbol = row.get("symbol") if isinstance(row, dict) else None
+    if symbol:
+        gate_symbols.append(str(symbol))
+
+security_decisions = resolve_adviser_security_decisions(
+    gate_symbols,
+    client=client,
+    user_id=user_id,
+)
+
 decision_v3 = build_nabi_decision_v3(
     candidates=overlaid,
     snapshots=snapshots,
     portfolio_view=portfolio_view,
     allocation=allocation,
     recommendation=recommendation,
-)
-gate_symbols: list[str] = []
-for value in (
-    recommendation.symbol,
-    decision_v3.deployment_symbol,
-    decision_v3.opportunity_leader,
-):
-    if value:
-        gate_symbols.append(str(value))
-for row in overlaid:
-    symbol = row.get("symbol") if isinstance(row, dict) else None
-    if symbol:
-        gate_symbols.append(str(symbol))
-security_decisions = resolve_adviser_security_decisions(
-    gate_symbols,
-    client=client,
-    user_id=user_id,
+    security_decisions=security_decisions,
 )
 
 view = build_opportunity_center(
