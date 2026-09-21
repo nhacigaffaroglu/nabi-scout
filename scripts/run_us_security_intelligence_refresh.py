@@ -28,6 +28,7 @@ class SiWriteGuard:
     def __init__(self, client: Any) -> None:
         self._client = client
         self.blocked: list[str] = []
+        self.allowed_write_attempts: list[str] = []
 
     def table(self, name: str):
         return _GuardedTable(self, self._client.table(name), name)
@@ -50,6 +51,17 @@ class _GuardedTable:
                     self._guard.blocked.append(f"{self._name}.{name}")
                     raise RuntimeError(f"blocked write {self._name}.{name}")
                 return blocked
+
+            inner_method = getattr(self._inner, name)
+
+            def permitted(*args: Any, **kwargs: Any):
+                self._guard.allowed_write_attempts.append(
+                    f"{self._name}.{name}"
+                )
+                return inner_method(*args, **kwargs)
+
+            return permitted
+
         return getattr(self._inner, name)
 
 
@@ -104,6 +116,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     payload = run.to_dict()
     payload["blocked_writes"] = list(guarded.blocked)
+    payload["allowed_write_attempts"] = list(
+        guarded.allowed_write_attempts
+    )
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
     if guarded.blocked:

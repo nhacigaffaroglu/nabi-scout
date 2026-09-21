@@ -1,0 +1,206 @@
+name: US SI Controlled Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Exactly one explicit US symbol"
+        required: true
+        type: string
+        default: "CRM"
+      confirmation:
+        description: "Type PUBLISH_SI_SNAPSHOT to authorize the single-symbol publish"
+        required: true
+        type: string
+        default: "NO"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-us-si-controlled-publish
+  cancel-in-progress: false
+
+jobs:
+  controlled-si-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SEC Company Facts evidence cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-publish-${{ github.run_id }}
+          restore-keys: |
+            sec-company-facts-${{ github.ref_name }}-
+            sec-company-facts-
+
+      - name: Validate publish authorization
+        env:
+          SYMBOL: ${{ inputs.symbol }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          test "$CONFIRMATION" = "PUBLISH_SI_SNAPSHOT" || {
+            echo "Controlled publish confirmation token is invalid."
+            exit 1
+          }
+
+          test -n "$SUPABASE_URL" || {
+            echo "Missing SUPABASE_URL"
+            exit 1
+          }
+
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY)"
+            exit 1
+          fi
+
+          test -n "$FMP_API_KEY" || {
+            echo "Missing FMP_API_KEY"
+            exit 1
+          }
+
+          python - <<'PY2'
+          import os
+          import re
+
+          raw = os.environ.get("SYMBOL", "")
+          symbols = [
+              item.strip().upper()
+              for item in raw.split(",")
+              if item.strip()
+          ]
+
+          if len(symbols) != 1:
+              raise SystemExit(
+                  f"Controlled publish requires exactly one symbol; got {len(symbols)}."
+              )
+
+          symbol = symbols[0]
+
+          if not re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,11}", symbol):
+              raise SystemExit(f"Invalid symbol format: {symbol}")
+
+          print("SYMBOL_SCOPE_OK=" + symbol)
+          print("PUBLISH_AUTHORIZATION=PASS")
+          PY2
+
+      - name: Run controlled SI publish
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          SYMBOL: ${{ inputs.symbol }}
+        run: |
+          set -euo pipefail
+
+          REPORT="$RUNNER_TEMP/us_si_controlled_publish_report.json"
+
+          python scripts/run_us_security_intelligence_refresh.py \
+            --symbols "$SYMBOL" \
+            --max-symbols 1 \
+            --execute \
+            --live \
+            --persist-si \
+            --allow-live \
+            > "$REPORT"
+
+          cat "$REPORT"
+
+          python - "$REPORT" <<'PY2'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(
+              Path(sys.argv[1]).read_text(encoding="utf-8")
+          )
+
+          assert payload["dry_run"] is False, payload
+          assert payload["execute_providers"] is True, payload
+          assert payload["persist_si"] is True, payload
+          assert payload["allow_live"] is True, payload
+
+          assert int(payload["symbols_checked"]) == 1, payload
+          assert int(payload["provider_calls"]) > 0, payload
+          assert int(payload["errors"]) == 0, payload
+          assert int(payload["blocked"]) == 0, payload
+
+          assert payload.get("blocked_writes") == [], payload
+
+          items = payload.get("items") or []
+          assert len(items) == 1, payload
+
+          item = items[0]
+          status = str(item.get("status") or "")
+
+          assert status in {"PUBLISHED", "NO_CHANGE"}, payload
+
+          writes = int(payload["writes"])
+          published = int(payload["published"])
+
+          assert writes in {0, 1}, payload
+          assert published in {0, 1}, payload
+          assert writes == published, payload
+
+          attempts = payload.get("allowed_write_attempts") or []
+
+          if status == "PUBLISHED":
+              assert writes == 1, payload
+              assert published == 1, payload
+              assert attempts == [
+                  "security_intelligence_snapshots.upsert"
+              ], payload
+          else:
+              assert status == "NO_CHANGE", payload
+              assert writes == 0, payload
+              assert published == 0, payload
+              assert attempts == [], payload
+
+          print("CONTROLLED_PUBLISH_GATE=PASS")
+          print(f"STATUS={status}")
+          print(f"SYMBOL={item['symbol']}")
+          print(f"PROVIDER_CALLS={payload['provider_calls']}")
+          print(f"WRITES={writes}")
+          print(f"PUBLISHED={published}")
+          print(
+              "ALLOWED_WRITE_ATTEMPTS="
+              + ",".join(attempts)
+          )
+          print(
+              "SI_SCORE="
+              + str(item.get("si_score"))
+          )
+          print(
+              "SI_STATE="
+              + str(item.get("si_state"))
+          )
+          PY2
+
+      - name: Upload controlled publish evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-si-controlled-publish-${{ github.run_id }}
+          path: ${{ runner.temp }}/us_si_controlled_publish_report.json
+          if-no-files-found: warn
+          retention-days: 14
