@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from services.nabi_adviser_context import build_nabi_adviser_context
 from services.nabi_decision_contract import ACTION_CONSIDER_NEW_POSITION
@@ -146,6 +147,22 @@ class TodayEightEAuthorityTests(unittest.TestCase):
         self.assertNotEqual(today.recommendation.action_code, ACTION_CONSIDER_NEW_POSITION)
         self.assertFalse(
             any(item.exposure_increase_allowed for item in today.security_decisions)
+        )
+
+    def test_v3_receives_8e_before_decision_construction(self) -> None:
+        source = Path("services/nabi_today_presentation.py").read_text(
+            encoding="utf-8"
+        )
+        resolve_at = source.index(
+            "resolved = resolve_adviser_security_decisions("
+        )
+        v3_at = source.index(
+            "decision_v3 = build_nabi_decision_v3("
+        )
+        self.assertLess(resolve_at, v3_at)
+        self.assertIn(
+            "security_decisions=resolved",
+            source,
         )
 
     def test_legacy_recommendation_cannot_override_8e(self) -> None:

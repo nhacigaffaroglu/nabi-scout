@@ -491,6 +491,27 @@ def build_nabi_today_executive(
         new_money_brief=new_money,
         valuation_complete=wealth.valuation_complete,
     )
+
+    symbols: list[str] = []
+    if recommendation.symbol:
+        symbols.append(str(recommendation.symbol))
+    for item in recommendation.comparisons:
+        if item.symbol:
+            symbols.append(item.symbol)
+    for row in candidates:
+        symbol = row.get("symbol") if isinstance(row, Mapping) else None
+        if symbol:
+            symbols.append(str(symbol))
+    if allocation is not None:
+        symbols.extend(item.symbol for item in allocation.recommendations)
+
+    resolved = resolve_adviser_security_decisions(
+        symbols,
+        provided=security_decisions,
+        client=portfolio_security_client,
+        user_id=user_id,
+    )
+
     decision_v3 = build_nabi_decision_v3(
         candidates=candidates,
         decision=decision,
@@ -501,31 +522,13 @@ def build_nabi_today_executive(
         new_money_brief=new_money,
         valuation_complete=wealth.valuation_complete,
         recommendation=recommendation,
+        security_decisions=resolved,
     )
-    symbols: list[str] = []
-    for value in (
-        recommendation.symbol,
-        decision_v3.deployment_symbol,
-        decision_v3.opportunity_leader,
-    ):
-        if value:
-            symbols.append(str(value))
-    for item in recommendation.comparisons:
-        if item.symbol:
-            symbols.append(item.symbol)
-    for row in candidates:
-        symbol = row.get("symbol") if isinstance(row, Mapping) else None
-        if symbol:
-            symbols.append(str(symbol))
-    if allocation is not None:
-        symbols.extend(item.symbol for item in allocation.recommendations)
-    resolved = resolve_adviser_security_decisions(
-        symbols,
-        provided=security_decisions,
-        client=portfolio_security_client,
-        user_id=user_id,
+
+    recommendation = overlay_recommendation_with_8e(
+        recommendation,
+        resolved,
     )
-    recommendation = overlay_recommendation_with_8e(recommendation, resolved)
     details = tuple(
         item
         for item in (
