@@ -20,12 +20,14 @@ from services.fmp_client import FMPClient, FMPError
 from services.free_universe_client import FreeUniverseClient
 from services.scan_run_health_service import build_in_memory_scan_run_health
 from services.scan_runner_service import ScanRunResult, run_scan
+from services.scanner_v8_engine import ScannerV8Engine
 from services.scan_universe_service import (
     build_daily_universe_rows,
     filter_scanner_eligible_rows,
     scheduled_universe_name,
 )
 from services.scheduled_scan_service import evaluate_scheduled_run, stale_running_cutoff
+from repositories.sec_company_facts_cache import SecCompanyFactsCache
 from services.sec_financial_client import SECFinancialClient
 from services.supabase_client_factory import SupabaseConfigError, create_supabase_client
 
@@ -156,6 +158,12 @@ def main() -> int:
         return 0
 
     sec_client = SECFinancialClient(contact_email=sec_email)
+    sec_cache = SecCompanyFactsCache()
+    scanner = ScannerV8Engine(
+        fmp_client,
+        sec_client,
+        sec_company_facts_cache=sec_cache,
+    )
     result = run_scan(
         symbols=symbols,
         universe_name=universe_name,
@@ -164,6 +172,7 @@ def main() -> int:
         candidate_repo=candidate_repo,
         fmp_client=fmp_client,
         sec_client=sec_client,
+        engine=scanner,
         participation_defaults=PARTICIPATION_DEFAULTS,
         participation_snapshots=snapshots,
         existing_candidates=existing,

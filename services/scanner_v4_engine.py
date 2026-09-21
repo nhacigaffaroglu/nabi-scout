@@ -22,9 +22,40 @@ def completeness(fields):
 
 
 class ScannerV4Engine:
-    def __init__(self, fmp_client, sec_client) -> None:
+    def __init__(
+        self,
+        fmp_client,
+        sec_client,
+        *,
+        sec_company_facts_cache=None,
+    ) -> None:
         self.fmp = fmp_client
         self.sec = sec_client
+        self.sec_company_facts_cache = sec_company_facts_cache
+
+    def _cache_sec_company_facts(
+        self,
+        *,
+        symbol: str,
+        cik,
+        payload,
+    ):
+        """Persist already-fetched raw SEC evidence without another provider call."""
+        cache = self.sec_company_facts_cache
+        if cache is None or not payload:
+            return None, None
+        try:
+            cache.store_if_new(
+                symbol=str(symbol or "").strip().upper(),
+                cik=str(cik or "").strip(),
+                raw_payload=dict(payload),
+            )
+            return "OK", None
+        except Exception as exc:
+            return (
+                "ERİŞİLEMEDİ",
+                f"SEC Company Facts cache: {exc}",
+            )
 
     def _endpoint_status_from_error(self, exc: Exception) -> str:
         if isinstance(exc, FMPError):
@@ -122,6 +153,15 @@ class ScannerV4Engine:
             if error:
                 errors.append(error)
             elif payload:
+                cache_status, cache_error = self._cache_sec_company_facts(
+                    symbol=symbol,
+                    cik=cik,
+                    payload=payload,
+                )
+                if cache_status is not None:
+                    endpoint_status["sec_companyfacts_cache"] = cache_status
+                if cache_error:
+                    errors.append(cache_error)
                 financials = self.sec.extract_financials(payload)
         else:
             endpoint_status["sec_companyfacts"] = "CIK YOK"

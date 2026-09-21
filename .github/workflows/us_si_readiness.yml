@@ -1,0 +1,191 @@
+name: US SI Cloud Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Explicit US symbols, comma separated (max 3)"
+        required: true
+        type: string
+        default: "CRM"
+      execute_providers:
+        description: "Run Company Intelligence providers in dry-run mode"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-us-si-cloud-readiness
+  cancel-in-progress: false
+
+jobs:
+  us-si-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SEC Company Facts evidence cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-readiness-${{ github.run_id }}
+          restore-keys: |
+            sec-company-facts-${{ github.ref_name }}-
+            sec-company-facts-
+
+      - name: Validate readiness inputs and secrets
+        env:
+          SYMBOLS: ${{ inputs.symbols }}
+          EXECUTE_PROVIDERS: ${{ inputs.execute_providers }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          test -n "$SUPABASE_URL" || {
+            echo "Missing SUPABASE_URL"
+            exit 1
+          }
+
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY)"
+            exit 1
+          fi
+
+          python - <<'PY2'
+          import os
+
+          symbols = [
+              item.strip().upper()
+              for item in os.environ.get("SYMBOLS", "").split(",")
+              if item.strip()
+          ]
+
+          if not symbols:
+              raise SystemExit("At least one explicit symbol is required.")
+
+          if len(symbols) > 3:
+              raise SystemExit(
+                  f"Readiness gate allows at most 3 symbols; got {len(symbols)}."
+              )
+
+          if len(set(symbols)) != len(symbols):
+              raise SystemExit("Duplicate symbols are not allowed.")
+
+          print("SYMBOL_SCOPE_OK=" + ",".join(symbols))
+          PY2
+
+          if [ "$EXECUTE_PROVIDERS" = "true" ]; then
+            test -n "$FMP_API_KEY" || {
+              echo "Missing FMP_API_KEY for provider dry-run"
+              exit 1
+            }
+          fi
+
+      - name: Run US SI readiness
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          SYMBOLS: ${{ inputs.symbols }}
+          EXECUTE_PROVIDERS: ${{ inputs.execute_providers }}
+        run: |
+          set -euo pipefail
+
+          REPORT="$RUNNER_TEMP/us_si_readiness_report.json"
+
+          args=(
+            --symbols "$SYMBOLS"
+            --max-symbols 3
+          )
+
+          if [ "$EXECUTE_PROVIDERS" = "true" ]; then
+            args+=(--execute)
+          fi
+
+          # Deliberately absent:
+          # --live
+          # --persist-si
+          # --allow-live
+          python scripts/run_us_security_intelligence_refresh.py \
+            "${args[@]}" > "$REPORT"
+
+          cat "$REPORT"
+
+          python - "$REPORT" "$EXECUTE_PROVIDERS" <<'PY2'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path(sys.argv[1])
+          execute = sys.argv[2].strip().lower() == "true"
+
+          payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+          assert payload["dry_run"] is True, payload
+          assert payload["persist_si"] is False, payload
+          assert payload["allow_live"] is False, payload
+          assert payload["writes"] == 0, payload
+          assert payload["published"] == 0, payload
+          assert payload.get("blocked_writes") == [], payload
+          assert 1 <= int(payload["symbols_checked"]) <= 3, payload
+
+          items = payload.get("items") or []
+          assert len(items) == int(payload["symbols_checked"]), payload
+
+          statuses = {
+              str(item.get("status") or "")
+              for item in items
+          }
+
+          if execute:
+              assert payload["execute_providers"] is True, payload
+              assert int(payload["provider_calls"]) > 0, payload
+              assert int(payload["errors"]) == 0, payload
+
+              unsafe = statuses - {"WOULD_PUBLISH", "NO_CHANGE"}
+              assert not unsafe, (
+                  "Provider dry-run did not reach canonical publish readiness: "
+                  f"{sorted(unsafe)}"
+              )
+          else:
+              assert payload["execute_providers"] is False, payload
+              assert int(payload["provider_calls"]) == 0, payload
+              assert statuses == {"PLANNED"}, (
+                  "Plan readiness prerequisites are not clean: "
+                  f"{sorted(statuses)}"
+              )
+
+          print("READINESS_GATE=PASS")
+          print(f"EXECUTE_PROVIDERS={execute}")
+          print(f"SYMBOLS_CHECKED={payload['symbols_checked']}")
+          print(f"PROVIDER_CALLS={payload['provider_calls']}")
+          print("WRITES=0")
+          print("PUBLISHED=0")
+          PY2
+
+      - name: Upload readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-si-cloud-readiness-${{ github.run_id }}
+          path: ${{ runner.temp }}/us_si_readiness_report.json
+          if-no-files-found: warn
+          retention-days: 14
