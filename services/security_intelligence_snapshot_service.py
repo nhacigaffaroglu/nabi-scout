@@ -319,6 +319,7 @@ def save_security_intelligence_snapshot(
     dry_run: bool = False,
     completeness_pct: Optional[float] = None,
     require_sufficient: bool = False,
+    data_quality_metadata: Optional[Mapping[str, Any]] = None,
 ) -> SaveSecurityIntelligenceResult:
     if require_sufficient and not may_persist_view(view, completeness_pct=completeness_pct):
         return SaveSecurityIntelligenceResult(
@@ -327,6 +328,24 @@ def save_security_intelligence_snapshot(
             message="SecurityFacts too sparse to persist a snapshot.",
         )
     payload = snapshot_row_from_view(view, as_of=as_of)
+
+    if data_quality_metadata:
+        quality = dict(payload.get("data_quality") or {})
+        existing = quality.get("provenance")
+        provenance = (
+            dict(existing)
+            if isinstance(existing, Mapping)
+            else {}
+        )
+
+        for key, value in data_quality_metadata.items():
+            if value is None or value == "":
+                continue
+            provenance[str(key)] = value
+
+        if provenance:
+            quality["provenance"] = provenance
+            payload["data_quality"] = quality
     if dry_run:
         return SaveSecurityIntelligenceResult(
             saved=False,

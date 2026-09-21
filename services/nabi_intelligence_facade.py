@@ -51,6 +51,11 @@ class InvestmentIntelligenceView:
     security_intelligence_snapshot_id: Optional[str] = None
     security_intelligence_snapshot_as_of: Optional[str] = None
     has_persisted_security_intelligence: bool = False
+    live_security_intelligence_overall: Optional[float] = None
+    live_security_intelligence_status: Optional[str] = None
+    live_security_intelligence_state: Optional[str] = None
+    live_security_intelligence_confidence: Optional[float] = None
+    has_live_security_intelligence: bool = False
     signal_context: Optional[SignalIntelligenceContext] = None
     portfolio_security_decision: Optional[PortfolioSecurityDecision] = None
 
@@ -207,14 +212,19 @@ def get_investment_intelligence(
         candidate_id=(candidate or {}).get("id"),
         has_candidate=candidate is not None,
         has_participation_snapshot=participation is not None,
-        security_intelligence_overall=si_overall,
-        security_intelligence_status=si_status,
-        security_intelligence_state=si_state,
-        security_intelligence_confidence=si_confidence,
-        has_security_intelligence=has_si,
+        security_intelligence_overall=(persisted or {}).get("overall_score"),
+        security_intelligence_status=(persisted or {}).get("overall_status"),
+        security_intelligence_state=(persisted or {}).get("investment_state"),
+        security_intelligence_confidence=(persisted or {}).get("overall_confidence"),
+        has_security_intelligence=persisted is not None,
         security_intelligence_snapshot_id=(persisted or {}).get("id"),
         security_intelligence_snapshot_as_of=(persisted or {}).get("as_of"),
         has_persisted_security_intelligence=persisted is not None,
+        live_security_intelligence_overall=si_overall,
+        live_security_intelligence_status=si_status,
+        live_security_intelligence_state=si_state,
+        live_security_intelligence_confidence=si_confidence,
+        has_live_security_intelligence=has_si,
         signal_context=SignalIntelligenceService().context_for(normalized_symbol),
         portfolio_security_decision=portfolio_security_decision,
     )
@@ -244,6 +254,11 @@ def investment_intelligence_to_dict(view: InvestmentIntelligenceView) -> Dict[st
         "security_intelligence_snapshot_id": view.security_intelligence_snapshot_id,
         "security_intelligence_snapshot_as_of": view.security_intelligence_snapshot_as_of,
         "has_persisted_security_intelligence": view.has_persisted_security_intelligence,
+        "live_security_intelligence_overall": view.live_security_intelligence_overall,
+        "live_security_intelligence_status": view.live_security_intelligence_status,
+        "live_security_intelligence_state": view.live_security_intelligence_state,
+        "live_security_intelligence_confidence": view.live_security_intelligence_confidence,
+        "has_live_security_intelligence": view.has_live_security_intelligence,
         "signal_context": (
             view.signal_context.to_dict()
             if view.signal_context is not None

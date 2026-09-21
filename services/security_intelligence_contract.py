@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from services.signal_intelligence_contract import SignalIntelligenceContext
 
 ENGINE_VERSION = "security_intelligence_8b.2"
-FACTS_VERSION = "security_facts_8c.2"
+FACTS_VERSION = "security_facts_8c.3"
 
 DIM_QUALITY = "QUALITY"
 DIM_GROWTH = "GROWTH"
@@ -129,6 +129,7 @@ PERIOD_UNKNOWN = "UNKNOWN"
 PERIOD_INCOMPATIBLE = "INCOMPATIBLE"
 
 FRESHNESS_FRESH = "FRESH"
+FRESHNESS_AGING = "AGING"
 FRESHNESS_STALE = "STALE"
 FRESHNESS_UNKNOWN = "UNKNOWN"
 STALE_DATA = "STALE_DATA"

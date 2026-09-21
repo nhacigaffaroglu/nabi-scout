@@ -56,6 +56,7 @@ def build_canonical_security_intelligence_inputs(
     queue_row: Optional[Mapping[str, Any]] = None,
     security_resolution: Any = None,
     company_intelligence: Any = None,
+    sec_financials: Optional[Mapping[str, Any]] = None,
     client: Any = None,
     facts_service: Optional[SecurityFactsService] = None,
 ) -> tuple[SecurityFacts, SecurityParticipationContext]:
@@ -66,6 +67,7 @@ def build_canonical_security_intelligence_inputs(
         participation_snapshot=participation_snapshot,
         security_resolution=security_resolution,
         company_intelligence=company_intelligence,
+        sec_financials=sec_financials,
         stale=str((candidate or {}).get("freshness_status") or "").upper() == "STALE",
         allow_sec_cache_replay=True,
         client=client,

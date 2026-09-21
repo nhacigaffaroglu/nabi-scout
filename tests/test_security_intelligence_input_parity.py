@@ -136,7 +136,7 @@ class CompanyReportFacadeInputParityTests(unittest.TestCase):
             side_effect=RuntimeError("no sm"),
         ), patch(
             "services.nabi_intelligence_facade.SecurityIntelligenceSnapshotRepository"
-        ):
+        ) as si_repo_cls:
             candidate_cls.return_value.get_by_symbol.return_value = {
                 "id": "crm-1",
                 "symbol": "CRM",
@@ -147,6 +147,15 @@ class CompanyReportFacadeInputParityTests(unittest.TestCase):
                 "participation_status": PARTICIPATION_STATUS_UYGUN,
             }
             queue_cls.return_value.get_by_symbol.return_value = {"research_allowed": True}
+            si_repo_cls.return_value.get_latest.return_value = {
+                "id": "si-crm-1",
+                "symbol": "CRM",
+                "as_of": "2026-09-20",
+                "overall_score": 61.0,
+                "overall_status": "NEUTRAL",
+                "investment_state": "WATCH",
+                "overall_confidence": 77.0,
+            }
             view = get_investment_intelligence(client, "CRM")
             cr_facts, cr_part, cr_view = _company_report_si(
                 "CRM",
@@ -154,8 +163,18 @@ class CompanyReportFacadeInputParityTests(unittest.TestCase):
                 snapshot=participation_cls.return_value.get_latest.return_value,
                 queue_row={"research_allowed": True},
             )
-        self.assertEqual(view.security_intelligence_state, cr_view.investment_state)
-        self.assertEqual(view.security_intelligence_overall, cr_view.overall_score)
+        self.assertEqual(view.security_intelligence_state, "WATCH")
+        self.assertEqual(view.security_intelligence_overall, 61.0)
+        self.assertEqual(
+            view.live_security_intelligence_state,
+            cr_view.investment_state,
+        )
+        self.assertEqual(
+            view.live_security_intelligence_overall,
+            cr_view.overall_score,
+        )
+        self.assertTrue(view.has_persisted_security_intelligence)
+        self.assertTrue(view.has_live_security_intelligence)
         self.assertEqual(cr_part.research_allowed, True)
         self.assertEqual(cr_view.research_allowed, True)
         self.assertIsNotNone(cr_facts.completeness_pct)

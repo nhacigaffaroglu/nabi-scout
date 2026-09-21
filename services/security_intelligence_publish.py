@@ -71,6 +71,86 @@ def _as_of_instant(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _snapshot_data_quality_provenance(
+    facts: SecurityFacts,
+) -> dict[str, Any]:
+    """Stable evidence identity for persisted SI audit.
+
+    This metadata does not participate in scoring. Runtime timestamps are not
+    invented here; only evidence dates already present on canonical facts are
+    persisted.
+    """
+    metadata: dict[str, Any] = {
+        "facts_as_of": facts.as_of,
+        "facts_freshness_status": facts.freshness_status,
+        "facts_authority_status": facts.authority_status,
+        "facts_period_compatibility": facts.period_compatibility,
+        "facts_period_kind": facts.period_kind,
+    }
+
+    sec_retrieved = sorted(
+        {
+            str(item.retrieved_at).strip()
+            for item in tuple(facts.provenance or ())
+            if str(getattr(item, "authority", "") or "").strip().upper()
+            == "SEC"
+            and str(getattr(item, "retrieved_at", "") or "").strip()
+        }
+    )
+    if sec_retrieved:
+        metadata["sec_evidence_retrieved_at"] = sec_retrieved[-1]
+
+    valuation = facts.valuation_context
+    if valuation is not None:
+        metrics = tuple(valuation.metrics or ())
+
+        fundamental_periods = sorted(
+            {
+                str(item.fundamental_period_end).strip()
+                for item in metrics
+                if str(item.fundamental_period_end or "").strip()
+            }
+        )
+        market_dates = sorted(
+            {
+                str(item.market_data_as_of).strip()
+                for item in metrics
+                if str(item.market_data_as_of or "").strip()
+            }
+        )
+        providers = sorted(
+            {
+                str(item.source_provider).strip()
+                for item in metrics
+                if str(item.source_provider or "").strip()
+            }
+        )
+        families = sorted(
+            {
+                str(item.data_family).strip()
+                for item in metrics
+                if str(item.data_family or "").strip()
+            }
+        )
+
+        metadata["valuation_as_of"] = valuation.as_of
+        metadata["valuation_authority"] = valuation.authority
+        metadata["valuation_source"] = valuation.source
+
+        if fundamental_periods:
+            metadata["valuation_fundamental_period_end"] = (
+                fundamental_periods[-1]
+            )
+        if market_dates:
+            metadata["valuation_market_data_as_of"] = market_dates[-1]
+        if providers:
+            metadata["valuation_source_providers"] = providers
+        if families:
+            metadata["valuation_data_families"] = families
+
+    return metadata
+
+
 def bist_readiness_applies(facts: SecurityFacts) -> bool:
     """Generic BIST/TRY equity readiness, not a symbol allowlist."""
     exchange = str(facts.exchange or "").strip().upper()
@@ -271,6 +351,7 @@ def publish_canonical_security_intelligence(
         dry_run=dry_run,
         completeness_pct=facts.completeness_pct,
         require_sufficient=require_sufficient,
+        data_quality_metadata=_snapshot_data_quality_provenance(facts),
     )
     return PublishSecurityIntelligenceResult(
         published=bool(save.saved),

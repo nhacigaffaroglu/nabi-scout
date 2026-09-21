@@ -59,6 +59,7 @@ from services.security_intelligence_contract import (
     CRITICAL_FACT_FIELDS,
     FACTS_VERSION,
     FRESHNESS_FRESH,
+    FRESHNESS_AGING,
     FRESHNESS_STALE,
     FRESHNESS_UNKNOWN,
     FactProvenance,
@@ -358,7 +359,12 @@ def _sec_financials(explicit: Optional[Mapping[str, Any]], result: Any) -> dict[
     return {}
 
 
-def _replay_sec_cache(symbol: str) -> tuple[dict[str, Any], bool]:
+def _replay_sec_cache(
+    symbol: str,
+    *,
+    minimum_financial_period: Optional[str] = None,
+) -> tuple[dict[str, Any], bool]:
+    """Replay SEC cache only when it is not older than caller evidence."""
     try:
         from repositories.sec_company_facts_cache import SecCompanyFactsCache
     except Exception:
@@ -368,8 +374,24 @@ def _replay_sec_cache(symbol: str) -> tuple[dict[str, Any], bool]:
         evidence = cache.get_latest(symbol=symbol)
         if evidence is None:
             return {}, False
-        extracted = cache.replay(evidence)
-        return dict(extracted or {}), True
+        extracted = dict(cache.replay(evidence) or {})
+
+        evidence_retrieved_at = _text(
+            getattr(evidence, "retrieved_at", "")
+        )
+        if evidence_retrieved_at:
+            extracted["_evidence_retrieved_at"] = evidence_retrieved_at
+
+        minimum = _text(minimum_financial_period)[:10]
+        if minimum:
+            cached_period = _text(
+                extracted.get("financial_period_end")
+                or extracted.get("balance_sheet_period_end")
+            )[:10]
+            if not cached_period or cached_period < minimum:
+                return {}, False
+
+        return extracted, True
     except Exception:
         return {}, False
 
@@ -493,6 +515,10 @@ def _ingest_sec(slots: _FactSlots, payload: Mapping[str, Any], *, source: str) -
         return
     currency = _text(payload.get("financial_currency") or payload.get("currency"))
     as_of = _as_of(payload.get("financial_period_end"), payload.get("balance_sheet_period_end"))
+    retrieved_at = _as_of(
+        payload.get("_evidence_retrieved_at"),
+        payload.get("retrieved_at"),
+    )
     for dest, src in SEC_FIELD_MAP.items():
         slots.set(
             dest,
@@ -500,6 +526,7 @@ def _ingest_sec(slots: _FactSlots, payload: Mapping[str, Any], *, source: str) -
             source=source,
             authority=AUTHORITY_SEC,
             source_as_of=as_of,
+            retrieved_at=retrieved_at,
             currency=currency,
             period_kind=PERIOD_FY,
             confidence="HIGH",
@@ -946,17 +973,30 @@ def _derive_comparable(slots: _FactSlots, currency: str, as_of: Optional[str]) -
         )
 
 
-def _quality_summary(slots: _FactSlots, *, stale: bool) -> dict[str, Any]:
+def _quality_summary(
+    slots: _FactSlots,
+    *,
+    stale: bool,
+    freshness_status: str = "",
+) -> dict[str, Any]:
     present = [name for name in CRITICAL_FACT_FIELDS if slots.values.get(name) is not None]
     missing = [name for name in CRITICAL_FACT_FIELDS if slots.values.get(name) is None]
     completeness = round(100.0 * len(present) / len(CRITICAL_FACT_FIELDS), 1)
     authorities = {
         item.authority for item in slots.provenance.values() if item.authority != AUTHORITY_DERIVED
     }
-    if stale:
+    explicit_freshness = _text(freshness_status).upper()
+
+    if stale or explicit_freshness == FRESHNESS_STALE:
         freshness = FRESHNESS_STALE
     elif any(item.stale for item in slots.provenance.values()):
         freshness = FRESHNESS_STALE
+    elif explicit_freshness == FRESHNESS_AGING:
+        freshness = FRESHNESS_AGING
+    elif explicit_freshness == FRESHNESS_UNKNOWN:
+        freshness = FRESHNESS_UNKNOWN
+    elif explicit_freshness == FRESHNESS_FRESH and slots.provenance:
+        freshness = FRESHNESS_FRESH
     elif slots.provenance:
         freshness = FRESHNESS_FRESH
     else:
@@ -1118,12 +1158,22 @@ class SecurityFactsService:
             extracted = _sec_financials(sec_financials, participation_result)
             sec_source = "sec_extract_financials"
             if not extracted and allow_sec_cache_replay:
-                extracted, cache_replayed = _replay_sec_cache(ticker)
+                extracted, cache_replayed = _replay_sec_cache(
+                    ticker,
+                    minimum_financial_period=_text(
+                        cand.get("financial_period_end")
+                    ),
+                )
                 if extracted:
                     sec_source = "sec_company_facts_cache"
             _ingest_sec(slots, extracted, source=sec_source)
         official_stale = bool(getattr(bist_market_facts, "stale", False)) if bist_market_facts is not None else False
-        candidate_stale = stale or _text(cand.get("freshness_status")).upper() == "STALE" or official_stale
+        candidate_freshness = _text(cand.get("freshness_status")).upper()
+        candidate_stale = (
+            stale
+            or candidate_freshness == FRESHNESS_STALE
+            or official_stale
+        )
         skip_unofficial_market = is_bist and bist_market_facts is not None
         valuation_context = (
             None
@@ -1193,7 +1243,11 @@ class SecurityFactsService:
         resolved_type = resolved_type or _text(cand.get("security_type"))
         _derive_comparable(slots, currency, as_of)
 
-        quality = _quality_summary(slots, stale=candidate_stale)
+        quality = _quality_summary(
+            slots,
+            stale=candidate_stale,
+            freshness_status=candidate_freshness,
+        )
         missing = tuple(name for name, value in slots.values.items() if value is None)
         source_label = "+".join(slots.sources) if slots.sources else "unavailable"
         facts = SecurityFacts(
