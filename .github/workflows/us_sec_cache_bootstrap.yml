@@ -1,0 +1,168 @@
+name: US SEC Cache Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Explicit US symbols to seed into SEC cache (max 3)"
+        required: true
+        type: string
+        default: "CRM"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-us-sec-cache-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  us-sec-cache-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SEC Company Facts evidence cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-bootstrap-${{ github.run_id }}
+          restore-keys: |
+            sec-company-facts-${{ github.ref_name }}-
+            sec-company-facts-
+
+      - name: Validate bootstrap inputs and secrets
+        env:
+          SYMBOLS: ${{ inputs.symbols }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+        run: |
+          set -euo pipefail
+
+          test -n "$SUPABASE_URL" || {
+            echo "Missing SUPABASE_URL"
+            exit 1
+          }
+
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing SUPABASE_SERVICE_ROLE_KEY (or legacy SUPABASE_KEY)"
+            exit 1
+          fi
+
+          test -n "$SEC_CONTACT_EMAIL" || {
+            echo "Missing SEC_CONTACT_EMAIL"
+            exit 1
+          }
+
+          python - <<'PY2'
+          import os
+
+          symbols = [
+              item.strip().upper()
+              for item in os.environ.get("SYMBOLS", "").split(",")
+              if item.strip()
+          ]
+          symbols = list(dict.fromkeys(symbols))
+
+          if not symbols:
+              raise SystemExit("At least one explicit symbol is required.")
+
+          if len(symbols) > 3:
+              raise SystemExit(
+                  f"Bootstrap allows at most 3 symbols; got {len(symbols)}."
+              )
+
+          print("SYMBOL_SCOPE_OK=" + ",".join(symbols))
+          PY2
+
+      - name: Fetch SEC cache only
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SEC_CONTACT_EMAIL: ${{ secrets.SEC_CONTACT_EMAIL }}
+          SYMBOLS: ${{ inputs.symbols }}
+        run: |
+          set -euo pipefail
+
+          REPORT="$RUNNER_TEMP/us_sec_cache_bootstrap_report.json"
+
+          python scripts/refresh_sec_participation_evidence.py \
+            --fetch \
+            --symbols "$SYMBOLS" \
+            --max-symbols 3 \
+            > "$REPORT"
+
+          cat "$REPORT"
+
+          python - "$REPORT" "$SYMBOLS" <<'PY2'
+          import json
+          import sys
+          from pathlib import Path
+
+          report = json.loads(
+              Path(sys.argv[1]).read_text(encoding="utf-8")
+          )
+          requested = {
+              item.strip().upper()
+              for item in sys.argv[2].split(",")
+              if item.strip()
+          }
+
+          assert report["mode"] == "fetch", report
+          assert report["status"] == "fetched", report
+          assert report["participation_snapshot_writes"] == 0, report
+          assert report["candidate_writes"] == 0, report
+          assert report["queue_writes"] == 0, report
+          assert report.get("identity_blocked") == [], report
+
+          fetch = report.get("fetch") or {}
+          assert fetch.get("failed") == [], report
+
+          available = set(report.get("cache_hits") or [])
+          available.update(fetch.get("stored") or [])
+          available.update(fetch.get("reused") or [])
+
+          assert requested <= available, (
+              f"Requested symbols not materialized: "
+              f"{sorted(requested - available)}"
+          )
+
+          calls = int(report.get("sec_provider_calls_executed") or 0)
+          assert 0 <= calls <= 3, report
+
+          print("SEC_CACHE_BOOTSTRAP=PASS")
+          print("REQUESTED=" + ",".join(sorted(requested)))
+          print(f"SEC_PROVIDER_CALLS={calls}")
+          print("PARTICIPATION_WRITES=0")
+          print("CANDIDATE_WRITES=0")
+          print("QUEUE_WRITES=0")
+          PY2
+
+      - name: Save SEC Company Facts evidence cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Upload bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-sec-cache-bootstrap-${{ github.run_id }}
+          path: ${{ runner.temp }}/us_sec_cache_bootstrap_report.json
+          if-no-files-found: warn
+          retention-days: 14

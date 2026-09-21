@@ -11,6 +11,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -37,7 +38,11 @@ from services.supabase_admin_client import (
 )
 
 
-def _build_plan(cache: SecCompanyFactsCache):
+def _build_plan(
+    cache: SecCompanyFactsCache,
+    *,
+    symbols: Optional[list[str]] = None,
+):
     apply_local_secrets_to_env()
     client = create_admin_supabase_client()
     queue_rows = UniverseExpansionRepository(client).list_all()
@@ -53,10 +58,11 @@ def _build_plan(cache: SecCompanyFactsCache):
         snapshots_by_symbol=snapshots,
         candidates_by_symbol=candidates_by_symbol,
         cache=cache,
+        symbols=symbols,
     )
 
 
-def main() -> int:
+def parse_args(argv: Optional[list[str]] = None):
     parser = argparse.ArgumentParser(
         description="Plan or cache SEC Company Facts for assessed equities."
     )
@@ -70,9 +76,40 @@ def main() -> int:
         default=str(default_sec_company_facts_cache_root()),
         help="Evidence cache directory.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--symbols",
+        default="",
+        help="Optional explicit comma-separated symbol scope.",
+    )
+    parser.add_argument(
+        "--max-symbols",
+        type=int,
+        default=3,
+        help="Maximum explicit symbol scope.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv)
+
+    symbols = [
+        item.strip().upper()
+        for item in str(args.symbols or "").split(",")
+        if item.strip()
+    ]
+    symbols = list(dict.fromkeys(symbols))
+
+    if symbols and len(symbols) > max(1, int(args.max_symbols)):
+        raise SystemExit(
+            f"Explicit SEC cache scope exceeds max-symbols={args.max_symbols}."
+        )
+
     cache = SecCompanyFactsCache(root=Path(args.cache_dir))
-    plan = _build_plan(cache)
+    plan = _build_plan(
+        cache,
+        symbols=symbols or None,
+    )
     payload = {
         "mode": "fetch" if args.fetch else "plan",
         "cache_root": str(cache.root),

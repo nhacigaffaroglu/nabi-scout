@@ -70,17 +70,79 @@ def plan_sec_evidence_refresh(
     snapshots_by_symbol: Mapping[str, Mapping[str, Any]],
     candidates_by_symbol: Optional[Mapping[str, Mapping[str, Any]]] = None,
     cache: Optional[SecCompanyFactsCache] = None,
+    symbols: Optional[Sequence[str]] = None,
 ) -> SecEvidenceRefreshPlan:
     population = resolve_assessed_equity_population(
         queue_rows=queue_rows,
         snapshots_by_symbol=snapshots_by_symbol,
         candidates_by_symbol=candidates_by_symbol,
     )
+
+    requested = tuple(
+        dict.fromkeys(
+            str(symbol or "").strip().upper()
+            for symbol in (symbols or ())
+            if str(symbol or "").strip()
+        )
+    )
+
+    requested_missing: tuple[str, ...] = ()
+    if requested:
+        from services.sec_participation_evidence_population import (
+            AssessedEquityPopulation,
+        )
+
+        requested_set = set(requested)
+        assessed = tuple(
+            item
+            for item in population.assessed
+            if item.symbol in requested_set
+        )
+        assessed_symbols = {item.symbol for item in assessed}
+        requested_missing = tuple(
+            symbol
+            for symbol in requested
+            if symbol not in assessed_symbols
+        )
+        selected_ciks = {
+            item.cik
+            for item in assessed
+            if item.cik
+        }
+
+        population = AssessedEquityPopulation(
+            assessed=assessed,
+            catalog_excluded=tuple(
+                symbol
+                for symbol in population.catalog_excluded
+                if symbol in requested_set
+            ),
+            pending_excluded=tuple(
+                symbol
+                for symbol in population.pending_excluded
+                if symbol in requested_set
+            ),
+            missing_cik=tuple(
+                symbol
+                for symbol in population.missing_cik
+                if symbol in requested_set
+            ),
+            cik_conflicts=tuple(
+                symbol
+                for symbol in population.cik_conflicts
+                if symbol in requested_set
+            ),
+            duplicate_ciks=tuple(
+                cik
+                for cik in population.duplicate_ciks
+                if cik in selected_ciks
+            ),
+        )
     cache = cache or SecCompanyFactsCache()
     hits: list[str] = []
     misses: list[str] = []
     refresh: list[AssessedEquityIdentity] = []
-    identity_blocked: list[str] = []
+    identity_blocked: list[str] = list(requested_missing)
     miss_ciks: list[str] = []
 
     for item in population.assessed:
