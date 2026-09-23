@@ -2,6 +2,8 @@ name: US SI 3-Symbol Canary
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "30 22 * * 1-5"
 
 permissions:
   contents: read
