@@ -21,18 +21,20 @@ def test_approved_cohort_contains_verified_expansion_symbols():
         "ADBE",
         "MU",
         "BIIB",
+        "JNJ",
     )
     assert approved_us_si_refresh_symbols() == (
         "CRM",
         "ADBE",
         "MU",
         "BIIB",
+        "JNJ",
     )
 
 
 def test_cohort_is_bounded_for_next_rollout_stage():
     assert MAX_APPROVED_US_SI_REFRESH_COHORT == 10
-    assert len(validate_approved_us_si_refresh_cohort()) == 4
+    assert len(validate_approved_us_si_refresh_cohort()) == 5
 
 
 def test_validation_normalizes_symbols():

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Iterable
 
 
-APPROVED_US_SI_REFRESH_COHORT: tuple[str, ...] = ("CRM", "ADBE", "MU", "BIIB")
+APPROVED_US_SI_REFRESH_COHORT: tuple[str, ...] = ("CRM", "ADBE", "MU", "BIIB", "JNJ")
 
 MAX_APPROVED_US_SI_REFRESH_COHORT = 10
 
