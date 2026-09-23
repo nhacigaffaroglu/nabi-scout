@@ -15,22 +15,24 @@ from services.us_si_approved_cohort import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_initial_approved_cohort_is_exactly_verified_three_symbols():
+def test_approved_cohort_contains_verified_expansion_symbols():
     assert APPROVED_US_SI_REFRESH_COHORT == (
         "CRM",
         "ADBE",
         "MU",
+        "BIIB",
     )
     assert approved_us_si_refresh_symbols() == (
         "CRM",
         "ADBE",
         "MU",
+        "BIIB",
     )
 
 
 def test_cohort_is_bounded_for_next_rollout_stage():
     assert MAX_APPROVED_US_SI_REFRESH_COHORT == 10
-    assert len(validate_approved_us_si_refresh_cohort()) == 3
+    assert len(validate_approved_us_si_refresh_cohort()) == 4
 
 
 def test_validation_normalizes_symbols():
