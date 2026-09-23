@@ -159,6 +159,64 @@ def _safe_identity(resolution: Any) -> bool:
     return True
 
 
+def _degradable_provider_warnings(
+    endpoint_status: dict[str, Any],
+    errors: list[Any],
+) -> tuple[bool, list[str]]:
+    """
+    Candidate refresh may continue only for the narrowly approved
+    FMP degradation path:
+
+    - SEC Company Facts succeeded.
+    - FMP profile succeeded.
+    - FMP quote and/or ratios_ttm may be PLAN_RESTRICTED.
+    - No other provider endpoint may have failed.
+    - Every scanner warning must belong to the degraded FMP endpoint(s).
+
+    Candidate critical-data gates are still evaluated afterwards.
+    """
+    status = dict(endpoint_status or {})
+    warnings = [str(value) for value in errors or []]
+
+    if not warnings:
+        return True, []
+
+    if status.get("sec_companyfacts") != "OK":
+        return False, warnings
+
+    if status.get("fmp_profile") != "OK":
+        return False, warnings
+
+    degradable_keys = {
+        "fmp_quote": "FMP quote:",
+        "fmp_ratios_ttm": "FMP ratios_ttm:",
+    }
+
+    degraded_prefixes: list[str] = []
+
+    for key, prefix in degradable_keys.items():
+        value = status.get(key)
+
+        if value == "PLAN_RESTRICTED":
+            degraded_prefixes.append(prefix)
+            continue
+
+        if value not in (None, "OK"):
+            return False, warnings
+
+    if not degraded_prefixes:
+        return False, warnings
+
+    for warning in warnings:
+        if not any(
+            warning.startswith(prefix)
+            for prefix in degraded_prefixes
+        ):
+            return False, warnings
+
+    return True, warnings
+
+
 def _provider_calls_observed(
     endpoint_status: dict[str, Any],
 ) -> int:
@@ -420,7 +478,14 @@ def main(argv: Optional[list[str]] = None) -> int:
 
             errors = list(result.get("errors") or [])
 
-            if errors:
+            provider_warnings_degradable, preserved_warnings = (
+                _degradable_provider_warnings(
+                    endpoint_status,
+                    errors,
+                )
+            )
+
+            if errors and not provider_warnings_degradable:
                 item["status"] = "BLOCKED"
                 item["reason"] = "SCANNER_PROVIDER_WARNINGS"
                 item["error"] = " | ".join(
@@ -428,6 +493,11 @@ def main(argv: Optional[list[str]] = None) -> int:
                 )
                 items.append(item)
                 continue
+
+            if preserved_warnings:
+                item["error"] = " | ".join(
+                    preserved_warnings
+                )
 
             refreshed = dict(
                 result.get("candidate") or {}

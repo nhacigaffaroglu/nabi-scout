@@ -6,6 +6,7 @@ import pytest
 
 from scripts.refresh_us_candidate_subset import (
     CandidateRefreshWriteGuard,
+    _degradable_provider_warnings,
     parse_args,
 )
 
@@ -165,3 +166,95 @@ def test_guard_blocks_other_table_updates():
     assert guard.blocked == [
         "participation_assessment_snapshots.update"
     ]
+
+
+def test_plan_restricted_quote_and_ratios_are_degradable_with_sec():
+    allowed, warnings = _degradable_provider_warnings(
+        {
+            "fmp_profile": "OK",
+            "fmp_quote": "PLAN_RESTRICTED",
+            "fmp_ratios_ttm": "PLAN_RESTRICTED",
+            "sec_companyfacts": "OK",
+        },
+        [
+            "FMP quote: FMP endpoint erişimi reddedildi: quote",
+            "FMP ratios_ttm: FMP endpoint erişimi reddedildi: ratios-ttm",
+        ],
+    )
+
+    assert allowed is True
+    assert len(warnings) == 2
+
+
+def test_plan_restricted_quote_is_degradable_when_ratios_ok():
+    allowed, _ = _degradable_provider_warnings(
+        {
+            "fmp_profile": "OK",
+            "fmp_quote": "PLAN_RESTRICTED",
+            "fmp_ratios_ttm": "OK",
+            "sec_companyfacts": "OK",
+        },
+        [
+            "FMP quote: FMP endpoint erişimi reddedildi: quote",
+        ],
+    )
+
+    assert allowed is True
+
+
+@pytest.mark.parametrize(
+    "endpoint_status,errors",
+    [
+        (
+            {
+                "fmp_profile": "AUTH_ERROR",
+                "fmp_quote": "PLAN_RESTRICTED",
+                "sec_companyfacts": "OK",
+            },
+            [
+                "FMP profile: auth failure",
+                "FMP quote: restricted",
+            ],
+        ),
+        (
+            {
+                "fmp_profile": "OK",
+                "fmp_quote": "RATE_LIMIT",
+                "sec_companyfacts": "OK",
+            },
+            ["FMP quote: rate limited"],
+        ),
+        (
+            {
+                "fmp_profile": "OK",
+                "fmp_quote": "PLAN_RESTRICTED",
+                "sec_companyfacts": "SERVER_ERROR",
+            },
+            [
+                "FMP quote: restricted",
+                "SEC Company Facts: unavailable",
+            ],
+        ),
+        (
+            {
+                "fmp_profile": "OK",
+                "fmp_quote": "PLAN_RESTRICTED",
+                "sec_companyfacts": "OK",
+            },
+            [
+                "FMP quote: restricted",
+                "unexpected provider warning",
+            ],
+        ),
+    ],
+)
+def test_non_approved_provider_failures_remain_fatal(
+    endpoint_status,
+    errors,
+):
+    allowed, _ = _degradable_provider_warnings(
+        endpoint_status,
+        errors,
+    )
+
+    assert allowed is False
