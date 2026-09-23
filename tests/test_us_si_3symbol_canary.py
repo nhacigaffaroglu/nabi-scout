@@ -8,16 +8,18 @@ def text():
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_initial_canary_is_manual_only():
+def test_canary_supports_manual_and_scheduled_execution():
     src = text()
     assert "workflow_dispatch:" in src
-    assert "schedule:" not in src
-    assert "cron:" not in src
+    assert "schedule:" in src
+    assert 'cron: "30 22 * * 1-5"' in src
 
 
-def test_scope_is_fixed_and_symbol_isolated():
+def test_scope_is_approved_cohort_and_symbol_isolated():
     src = text()
-    assert "for SYMBOL in CRM ADBE MU" in src
+    assert 'COHORT="$(python scripts/print_us_si_approved_cohort.py)"' in src
+    assert "for SYMBOL in $COHORT; do" in src
+    assert "for SYMBOL in CRM ADBE MU" not in src
     assert '--symbols "$SYMBOL"' in src
     assert "--max-symbols 1" in src
 

@@ -64,7 +64,10 @@ jobs:
 
           FAILED=0
 
-          for SYMBOL in CRM ADBE MU; do
+          COHORT="$(python scripts/print_us_si_approved_cohort.py)"
+          echo "APPROVED_US_SI_COHORT=$COHORT"
+
+          for SYMBOL in $COHORT; do
             REPORT="$RUNNER_TEMP/us_si_canary_${SYMBOL}.json"
 
             echo "=== $SYMBOL ==="
@@ -144,7 +147,8 @@ jobs:
             fi
           done
 
-          echo "CANARY_SYMBOLS=3"
+          COHORT_COUNT="$(printf '%s\n' "$COHORT" | wc -w | tr -d ' ')"
+          echo "CANARY_SYMBOLS=$COHORT_COUNT"
           echo "CANARY_FAILURES=$FAILED"
 
           if [ "$FAILED" -ne 0 ]; then
