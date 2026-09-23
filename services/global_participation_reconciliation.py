@@ -16,6 +16,17 @@ from services.participation_business_contract import (
     BusinessActivityScreenResult,
 )
 from services.participation_completeness import build_assessment_completeness
+from services.participation_cached_evidence_resolver import (
+    resolve_business_npr_from_cached_company_facts as resolve_cached_business_npr,
+)
+from services.participation_business_engine import evaluate_business_activity
+from services.participation_business_evidence_resolver import (
+    build_business_activity_evidence_from_candidate,
+)
+from services.participation_filing_npr_resolver import (
+    resolve_npr_from_cached_filing,
+)
+from services.sec_filing_evidence import SecFilingEvidence
 from services.participation_financial_engine import evaluate_financial_rules
 from services.participation_intelligence_contract import (
     ASSET_KIND_EQUITY,
@@ -265,6 +276,7 @@ def assess_from_cached_evidence(
     evidence: SecCompanyFactsEvidence,
     snapshot: Mapping[str, Any],
     extracted: Mapping[str, Any],
+    filing_evidence: Optional[SecFilingEvidence] = None,
 ) -> ReconcileReplayItem:
     verify_evidence_digest(evidence)
     symbol = identity.symbol
@@ -280,7 +292,45 @@ def assess_from_cached_evidence(
         cik=identity.cik,
         market_capitalization=old_fin.get("market_capitalization"),
     )
-    npr = old_fin.get("non_permissible_revenue")
+    snapshot_npr = old_fin.get("non_permissible_revenue")
+    snapshot_business = business_screen_from_snapshot(symbol, snapshot)
+
+    # Preserve already-persisted candidate/FMP business evidence.
+    # This is evidence enrichment only; the canonical Business Engine
+    # remains responsible for PASS/FAIL/REVIEW decisions.
+    candidate_business_evidence = (
+        build_business_activity_evidence_from_candidate(snapshot)
+    )
+
+    cached_business = resolve_cached_business_npr(
+        symbol,
+        evidence.raw_payload,
+        sec_financials=extracted,
+        source_identifier=evidence.content_digest,
+        cik=identity.cik or evidence.cik,
+        methodology_id=methodology_id,
+    )
+
+    # Fresh cached SEC evidence wins when it can actually resolve NPR.
+    # Otherwise preserve previously persisted evidence instead of
+    # downgrading an established assessment merely because Company Facts
+    # has no dimensional revenue members.
+    filing_resolution = None
+    if cached_business.npr_amount is None and filing_evidence is not None:
+        filing_resolution = resolve_npr_from_cached_filing(
+            filing_evidence,
+            canonical_period=cached_business.period,
+            canonical_revenue=extracted.get("revenue"),
+            methodology_id=methodology_id,
+        )
+
+    if cached_business.npr_amount is not None:
+        npr = cached_business.npr_amount
+    elif filing_resolution is not None and filing_resolution.npr_amount is not None:
+        npr = filing_resolution.npr_amount
+    else:
+        npr = snapshot_npr
+
     market_values_ok = market_values_share_reporting_currency(
         extracted.get("financial_currency")
     )
@@ -302,7 +352,42 @@ def assess_from_cached_evidence(
         inputs,
         screening_context=screening_context,
     )
-    business = business_screen_from_snapshot(symbol, snapshot)
+    cached_screen = cached_business.business_screen
+    cached_screen_usable = bool(
+        cached_screen
+        and (
+            cached_screen.business_rules_evaluated
+            or cached_business.company_facts_can_answer_sic
+            or cached_business.company_facts_can_answer_npr
+        )
+    )
+    business = cached_screen if cached_screen_usable else snapshot_business
+
+    # Candidate/FMP evidence may fill business-screen gaps, but it must
+    # never replace a usable fresh SEC-derived business screen.
+    if not cached_screen_usable:
+        candidate_screen = evaluate_business_activity(
+            methodology_id,
+            candidate_business_evidence,
+        )
+        candidate_screen_usable = bool(
+            candidate_screen.business_rules_evaluated
+            and candidate_business_evidence.evidence_refs
+        )
+        if candidate_screen_usable:
+            business = candidate_screen
+
+    if (
+        filing_resolution is not None
+        and filing_resolution.npr_amount is not None
+        and filing_resolution.attribution is not None
+    ):
+        business = evaluate_business_activity(
+            methodology_id,
+            cached_business.business_evidence,
+            revenue_attribution=filing_resolution.attribution,
+        )
+
     assessment = build_combined_methodology_assessment(
         financial,
         business,
