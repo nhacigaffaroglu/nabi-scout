@@ -1,0 +1,162 @@
+name: US SI 3-Symbol Canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nabi-us-si-3symbol-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore SEC Company Facts evidence cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/private/sec_company_facts
+          key: sec-company-facts-${{ github.ref_name }}-us-si-canary-${{ github.run_id }}
+          restore-keys: |
+            sec-company-facts-${{ github.ref_name }}-
+            sec-company-facts-
+
+      - name: Validate secrets
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_URL"
+          test -n "$FMP_API_KEY"
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && [ -z "$SUPABASE_KEY" ]; then
+            echo "Missing Supabase service key"
+            exit 1
+          fi
+
+      - name: Run isolated canary
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: |
+          set -uo pipefail
+
+          FAILED=0
+
+          for SYMBOL in CRM ADBE MU; do
+            REPORT="$RUNNER_TEMP/us_si_canary_${SYMBOL}.json"
+
+            echo "=== $SYMBOL ==="
+
+            python scripts/run_us_security_intelligence_refresh.py \
+              --symbols "$SYMBOL" \
+              --max-symbols 1 \
+              --execute \
+              --live \
+              --persist-si \
+              --allow-live \
+              > "$REPORT"
+
+            PROCESS_EXIT=$?
+
+            python - "$REPORT" "$SYMBOL" "$PROCESS_EXIT" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          symbol = sys.argv[2]
+          process_exit = int(sys.argv[3])
+
+          try:
+              payload = json.loads(path.read_text(encoding="utf-8"))
+          except Exception as exc:
+              print(f"CANARY_RESULT={symbol}|INVALID_JSON|{type(exc).__name__}")
+              raise SystemExit(1)
+
+          items = payload.get("items") or []
+          item = items[0] if len(items) == 1 else {}
+          status = item.get("status")
+
+          ok = (
+              process_exit == 0
+              and payload.get("dry_run") is False
+              and payload.get("execute_providers") is True
+              and payload.get("persist_si") is True
+              and payload.get("allow_live") is True
+              and int(payload.get("symbols_checked") or 0) == 1
+              and int(payload.get("errors") or 0) == 0
+              and int(payload.get("blocked") or 0) == 0
+              and payload.get("blocked_writes") == []
+              and len(items) == 1
+              and item.get("symbol") == symbol
+              and status in {"PUBLISHED", "NO_CHANGE"}
+          )
+
+          writes = int(payload.get("writes") or 0)
+          published = int(payload.get("published") or 0)
+          attempts = payload.get("allowed_write_attempts") or []
+
+          if status == "PUBLISHED":
+              ok = ok and writes == 1 and published == 1
+              ok = ok and attempts == [
+                  "security_intelligence_snapshots.upsert"
+              ]
+
+          elif status == "NO_CHANGE":
+              ok = ok and writes == 0 and published == 0
+              ok = ok and attempts == []
+
+          print(
+              f"CANARY_RESULT={symbol}|{status}"
+              f"|provider_calls={payload.get('provider_calls')}"
+              f"|writes={writes}"
+          )
+
+          raise SystemExit(0 if ok else 1)
+          PY
+
+            VALIDATION_EXIT=$?
+
+            if [ "$PROCESS_EXIT" -ne 0 ] || [ "$VALIDATION_EXIT" -ne 0 ]; then
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          echo "CANARY_SYMBOLS=3"
+          echo "CANARY_FAILURES=$FAILED"
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "US_SI_3SYMBOL_CANARY=COMPLETED_WITH_WARNINGS"
+            exit 1
+          fi
+
+          echo "US_SI_3SYMBOL_CANARY=PASS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: us-si-3symbol-canary-${{ github.run_id }}
+          path: ${{ runner.temp }}/us_si_canary_*.json
+          if-no-files-found: warn
+          retention-days: 14
